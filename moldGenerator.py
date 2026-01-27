@@ -199,8 +199,8 @@ def main():
     and exports the result.
     """
     # Configuration
-    inputStlPath = "cube.stl"
-    outputPath = "cube.mold.stl"
+    inputStlPath = "cube2vertical.stl"
+    outputPath = "cube2vertical.mold.stl"
     config = {
         "boundingBoxOffset": 5.0,
         "supportAngle": 45.0,
