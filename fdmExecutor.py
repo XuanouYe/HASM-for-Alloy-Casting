@@ -418,7 +418,7 @@ def main():
     testConfig = {
         "wsl_engine_path": "/mnt/c/users/xuanouye/desktop/thesis/04-implementation/pc/external/curaengine/build/release/CuraEngine",
         "stl_path": "C:\\Users\\XuanouYe\\Desktop\\Thesis\\04-Implementation\\PC\\src\\monk.stl",
-        "output_path": "C:\\Users\\XuanouYe\\Desktop\\output.gcode",
+        "output_path": "C:\\Users\\XuanouYe\\Desktop\\Thesis\\04-Implementation\\PC\\src\\output.gcode",
         "definition_files": [
             "C:\\Users\\XuanouYe\\Desktop\\Thesis\\04-Implementation\\PC\\external\\Cura\\resources\\definitions\\fdmprinter.def.json",
             "C:\\Users\\XuanouYe\\Desktop\\Thesis\\04-Implementation\\PC\\external\\Cura\\resources\\definitions\\fdmextruder.def.json",
