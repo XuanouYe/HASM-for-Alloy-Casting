@@ -1,280 +1,227 @@
 """
-支撑区域检测模块
-基于CuraEngine投影法实现悬垂检测
+Support Region Detection Module
+
+This module provides functionality to detect overhang regions in a 3D mesh that require support structures
+during 3D printing processes, based on configurable support angle and layer parameters.
 """
 
 import numpy as np
 import trimesh
-from typing import List, Tuple
-from shapely.geometry import Polygon, MultiPolygon
+from typing import List, Optional, Union
 from shapely import ops
+from shapely.geometry.base import BaseGeometry
 
 
 class SupportRegionDetector:
-    def __init__(self, config=None):
+    """
+    Detects regions in a 3D mesh that require support structures during additive manufacturing.
+
+    The detection algorithm identifies overhang areas by comparing consecutive layers
+    and applying geometric offset operations based on configurable support angles.
+    """
+
+    def __init__(self, config: Optional[dict] = None):
+        """
+        Initialize the support region detector with configuration parameters.
+
+        Args:
+            config (dict, optional): Configuration dictionary with the following keys:
+                - supportAngle: Maximum overhang angle (in degrees) that can be printed without support.
+                  Default: 45.0
+                - layerHeight: Height of each printing layer in millimeters. Default: 0.2
+                - smoothHeight: Height range to consider for support detection smoothing. Default: 0.4
+                - areaEps: Minimum area threshold for considering a region as significant. Default: 1e-6
+        """
         self.config = config or {}
         self.supportAngle = float(self.config.get("supportAngle", 45.0))
         self.layerHeight = float(self.config.get("layerHeight", 0.2))
         self.smoothHeight = float(self.config.get("smoothHeight", 0.4))
+        self.areaEps = float(self.config.get("areaEps", 1e-6))
 
-    def calculateSupportRegions(self, mesh: trimesh.Trimesh, sliceHeights: List[float] = None) -> List[
-        trimesh.path.Path2D]:
+    def calculateSupportRegions(self, mesh: trimesh.Trimesh,
+                                sliceHeights: Optional[List[float]] = None) -> List[Optional[BaseGeometry]]:
         """
-        计算需要支撑的区域
-        输入: 三角网格模型
-        输出: 每层需要支撑的2D轮廓列表
+        Calculate support regions for each layer of the mesh.
+
+        The algorithm works by:
+        1. Slicing the mesh into horizontal layers
+        2. For each layer, comparing with previous layers within the smoothing height range
+        3. Identifying areas that are not supported by lower layers based on the support angle
+
+        Args:
+            mesh (trimesh.Trimesh): The 3D mesh to analyze for support requirements
+            sliceHeights (List[float], optional): Specific heights at which to slice the mesh.
+                If None, heights are automatically generated based on layerHeight.
+
+        Returns:
+            List[Optional[BaseGeometry]]: List of support regions for each layer, 
+                where None indicates no support needed for that layer.
         """
         if sliceHeights is None:
             sliceHeights = self._generateSliceHeights(mesh)
 
-        layerOutlines = self._sliceMeshToLayers(mesh, sliceHeights)
-        supportRegionsPerLayer = []
+        # Slice mesh into 2D contours for each layer
+        layerPaths = self._sliceMeshToLayers(mesh, sliceHeights)
 
+        # Convert 2D paths to Shapely geometries
+        layerGeoms = [self._path2DToShapely(p) for p in layerPaths]
+
+        # Calculate how many layers to look below for support consideration
         layersBelow = int(round(self.smoothHeight / self.layerHeight))
         maxDistFromLowerLayer = self._calculateMaxBridgeDistance()
 
-        for layerIdx in range(1, len(layerOutlines)):
-            basicOverhang = self._computeBasicOverhang(
-                layerOutlines,
-                layerIdx,
-                layersBelow,
-                maxDistFromLowerLayer
-            )
-            supportRegionsPerLayer.append(basicOverhang)
+        supportRegionsPerLayer = []
+
+        # Analyze each layer for support requirements (starting from layer 1)
+        for layerIdx in range(1, len(layerGeoms)):
+            cur = layerGeoms[layerIdx]
+
+            # Skip empty layers
+            if cur is None or cur.is_empty:
+                supportRegionsPerLayer.append(None)
+                continue
+
+            # Get merged geometry from lower layers within smoothing range
+            mergedBelow = self._getMergedGeomsBelow(layerGeoms, layerIdx, layersBelow, maxDistFromLowerLayer)
+
+            # If no geometry below, entire current layer needs support
+            if mergedBelow is None or mergedBelow.is_empty:
+                supportRegionsPerLayer.append(cur)
+                continue
+
+            # Calculate difference between current layer and supported areas from below
+            diff = cur.difference(mergedBelow)
+
+            # Check if the difference area is significant
+            if diff.is_empty or diff.area < self.areaEps:
+                supportRegionsPerLayer.append(None)
+            else:
+                supportRegionsPerLayer.append(diff)
 
         return supportRegionsPerLayer
 
     def _generateSliceHeights(self, mesh: trimesh.Trimesh) -> np.ndarray:
-        """生成切片高度序列"""
+        """
+        Generate equally spaced slicing heights based on mesh bounds and layer height.
+
+        Args:
+            mesh (trimesh.Trimesh): Input 3D mesh
+
+        Returns:
+            np.ndarray: Array of slicing heights
+        """
         zMin, zMax = mesh.bounds[:, 2]
-        numLayers = int(np.ceil((zMax - zMin) / self.layerHeight))
-        return np.linspace(zMin + self.layerHeight / 2, zMax, numLayers)
+        return np.arange(zMin + self.layerHeight / 2, zMax, self.layerHeight)
 
-    def _sliceMeshToLayers(self, mesh: trimesh.Trimesh, heights: np.ndarray) -> List[trimesh.path.Path2D]:
+    def _sliceMeshToLayers(self, mesh: trimesh.Trimesh, heights: np.ndarray) -> List:
         """
-        将网格按指定高度切片为2D轮廓
-        参考CuraEngine中逐层切片的实现
+        Slice the 3D mesh at specified heights to obtain 2D contours.
+
+        Args:
+            mesh (trimesh.Trimesh): 3D mesh to slice
+            heights (np.ndarray): Array of Z-heights at which to slice
+
+        Returns:
+            List: List of 2D path objects (or None for heights with no intersection)
         """
-        layerOutlines = []
+        out = []
+        for h in heights:
+            # Create horizontal slice at height h
+            s = mesh.section(plane_origin=[0, 0, float(h)], plane_normal=[0, 0, 1])
+            if s is None:
+                out.append(None)
+                continue
 
-        for height in heights:
-            try:
-                sliceResult = mesh.section(plane_origin=[0, 0, height], plane_normal=[0, 0, 1])
-
-                if sliceResult is None:
-                    layerOutlines.append(None)
-                    continue
-
-                path2d, _ = sliceResult.to_planar()
-                layerOutlines.append(path2d)
-
-            except Exception:
-                layerOutlines.append(None)
-
-        return layerOutlines
+            # Convert 3D section to 2D polygon
+            p2d, _ = s.to_2D(normal=[0, 0, 1])
+            out.append(p2d)
+        return out
 
     def _calculateMaxBridgeDistance(self) -> float:
         """
-        计算最大可桥接距离
-        对应CuraEngine中的 max_dist_from_lower_layer = tan(support_angle) * layer_height
-        """
-        angleRad = np.deg2rad(self.supportAngle)
-        tanAngle = np.tan(angleRad)
-        return tanAngle * self.layerHeight
+        Calculate the maximum horizontal distance that can be bridged without support.
 
-    def _computeBasicOverhang(
-            self,
-            layerOutlines: List[trimesh.path.Path2D],
-            layerIdx: int,
-            layersBelow: int,
-            maxDistFromLowerLayer: float
-    ) -> trimesh.path.Path2D:
-        """
-        计算基础悬垂区域
-        对应CuraEngine的computeBasicAndFullOverhang函数核心逻辑
+        Based on the support angle and layer height using trigonometric relationship:
+        maxDistance = tan(supportAngle) * layerHeight
 
-        算法原理:
-        1. 获取当前层轮廓 outlines
-        2. 获取下方若干层的并集并外扩 maxDist，得到 outlinesBelow
-        3. basicOverhang = outlines - outlinesBelow
+        Returns:
+            float: Maximum bridge distance in the XY plane
         """
-        currentOutline = layerOutlines[layerIdx]
+        return np.tan(np.deg2rad(self.supportAngle)) * self.layerHeight
 
-        if currentOutline is None:
+    def _path2DToShapely(self, path2d) -> Optional[BaseGeometry]:
+        """
+        Convert a trimesh Path2D object to a Shapely geometry.
+
+        Args:
+            path2d: trimesh Path2D object containing polygon contours
+
+        Returns:
+            Optional[BaseGeometry]: Shapely geometry representing the union of all polygons,
+                or None if input is empty
+        """
+        if path2d is None or path2d.is_empty:
             return None
 
-        mergedBelow = self._getMergedOutlinesBelow(
-            layerOutlines,
-            layerIdx,
-            layersBelow,
-            maxDistFromLowerLayer
-        )
-
-        if mergedBelow is None:
-            return currentOutline
-
-        overhangPolygons = self._subtractPolygons(currentOutline, mergedBelow)
-
-        return overhangPolygons
-
-    def _getMergedOutlinesBelow(
-            self,
-            layerOutlines: List[trimesh.path.Path2D],
-            currentLayerIdx: int,
-            layersBelow: int,
-            offsetDist: float
-    ) -> trimesh.path.Path2D:
-        """
-        获取下方多层轮廓的并集（带移动平均平滑）
-        对应CuraEngine中的多层投影合并逻辑
-        """
-        if currentLayerIdx == 0:
+        # Extract all polygons from the path
+        polys = list(path2d.polygons_full)
+        if len(polys) == 0:
             return None
 
-        mergedPath = None
+        # Combine all polygons into a single geometry
+        return ops.unary_union(polys)
 
+    def _getMergedGeomsBelow(self, layerGeoms: List[Optional[BaseGeometry]],
+                             currentLayerIdx: int, layersBelow: int,
+                             offsetDist: float) -> Optional[BaseGeometry]:
+        """
+        Merge and offset geometries from layers below the current layer.
+
+        Lower layers are progressively offset (expanded) based on their distance
+        from the current layer to account for the support angle.
+
+        Args:
+            layerGeoms (List[Optional[BaseGeometry]]): List of Shapely geometries for all layers
+            currentLayerIdx (int): Index of the current layer being analyzed
+            layersBelow (int): Number of lower layers to consider for support
+            offsetDist (float): Base offset distance for the first layer below
+
+        Returns:
+            Optional[BaseGeometry]: Merged and offset geometry from lower layers,
+                or None if no valid geometries found
+        """
+        merged = None
+
+        # Process layers below current layer, up to layersBelow count
         for offset in range(1, min(layersBelow + 1, currentLayerIdx + 1)):
-            belowIdx = currentLayerIdx - offset
-            belowOutline = layerOutlines[belowIdx]
+            g = layerGeoms[currentLayerIdx - offset]
 
-            if belowOutline is None:
+            if g is None or g.is_empty:
                 continue
 
-            expandedOutline = self._offsetPolygon(belowOutline, offsetDist * offset)
+            # Apply larger offset for layers further below
+            expanded = g.buffer(offsetDist * offset)
 
-            if mergedPath is None:
-                mergedPath = expandedOutline
+            # Union with previously processed lower layers
+            if merged is None:
+                merged = expanded
             else:
-                mergedPath = self._unionPolygons(mergedPath, expandedOutline)
+                merged = merged.union(expanded)
 
-        return mergedPath
-
-    def _offsetPolygon(self, path: trimesh.path.Path2D, distance: float) -> trimesh.path.Path2D:
-        """多边形外扩操作"""
-        try:
-            if hasattr(path, 'buffer'):
-                buffered = path.buffer(distance)
-                return buffered
-
-            polygons = []
-            for entity in path.entities:
-                if hasattr(entity, 'points'):
-                    coords = path.vertices[entity.points]
-                    if len(coords) >= 3:
-                        polygons.append(Polygon(coords))
-
-            if not polygons:
-                return None
-
-            multiPoly = ops.unary_union(polygons)
-            buffered = multiPoly.buffer(distance)
-
-            return self._shapelyToPath2D(buffered)
-
-        except Exception:
-            return path
-
-    def _unionPolygons(self, path1: trimesh.path.Path2D, path2: trimesh.path.Path2D) -> trimesh.path.Path2D:
-        """多边形并集操作"""
-        try:
-            poly1 = self._path2DToShapely(path1)
-            poly2 = self._path2DToShapely(path2)
-
-            if poly1 is None or poly2 is None:
-                return path1 if path2 is None else path2
-
-            union = ops.unary_union([poly1, poly2])
-            return self._shapelyToPath2D(union)
-
-        except Exception:
-            return path1
-
-    def _subtractPolygons(self, path1: trimesh.path.Path2D, path2: trimesh.path.Path2D) -> trimesh.path.Path2D:
-        """多边形差集操作（path1 - path2）"""
-        try:
-            poly1 = self._path2DToShapely(path1)
-            poly2 = self._path2DToShapely(path2)
-
-            if poly1 is None:
-                return None
-            if poly2 is None:
-                return path1
-
-            difference = poly1.difference(poly2)
-            return self._shapelyToPath2D(difference)
-
-        except Exception:
-            return path1
-
-    def _path2DToShapely(self, path: trimesh.path.Path2D):
-        """根据多边形方向判断外轮廓和孔洞"""
-        try:
-            if path is None:
-                return None
-
-            exteriors = []
-            holes = []
-
-            for entity in path.entities:
-                if hasattr(entity, 'points'):
-                    coords = path.vertices[entity.points]
-                    if len(coords) >= 3:
-                        poly = Polygon(coords)
-                        if poly.exterior.is_ccw:
-                            exteriors.append(poly)
-                        else:
-                            holes.append(poly)
-
-            if not exteriors:
-                return None
-
-            result = ops.unary_union(exteriors)
-
-            for hole in holes:
-                result = result.difference(hole)
-
-            return result
-
-        except Exception:
-            return None
-
-    def _shapelyToPath2D(self, geom):
-        """将shapely几何对象转换为trimesh.Path2D"""
-        try:
-            if geom is None or geom.is_empty:
-                return None
-
-            vertices = []
-            entities = []
-
-            polygons = []
-            if isinstance(geom, Polygon):
-                polygons = [geom]
-            elif isinstance(geom, MultiPolygon):
-                polygons = list(geom.geoms)
-
-            for poly in polygons:
-                coords = np.array(poly.exterior.coords[:-1])
-                startIdx = len(vertices)
-                vertices.extend(coords)
-                entities.append(trimesh.path.entities.Line(
-                    points=list(range(startIdx, startIdx + len(coords)))
-                ))
-
-            if not vertices:
-                return None
-
-            return trimesh.path.Path2D(
-                vertices=np.array(vertices),
-                entities=entities
-            )
-
-        except Exception:
-            return None
+        return merged
 
 
-def calculateSupportRegions(moldShell: trimesh.Trimesh, config: dict):
+def calculateSupportRegions(moldShell: trimesh.Trimesh, config: dict) -> List[BaseGeometry]:
+    """
+    Convenience function to calculate support regions for a given mesh and configuration.
+
+    Args:
+        moldShell (trimesh.Trimesh): The 3D mesh/geometry to analyze
+        config (dict): Configuration parameters for support detection
+
+    Returns:
+        List[BaseGeometry]: List of support regions (excluding None values)
+    """
     detector = SupportRegionDetector(config)
     supportRegions = detector.calculateSupportRegions(moldShell)
-    validRegions = [region for region in supportRegions if region is not None]
-    return validRegions
+    return [r for r in supportRegions if r is not None]
