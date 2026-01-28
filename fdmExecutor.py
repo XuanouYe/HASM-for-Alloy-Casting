@@ -42,9 +42,6 @@ class CuraEngineController:
             raise SliceException(f"WSL validation failed: {str(e)}")
 
     def _getStlBoundingBox(self, stlPath: str) -> Tuple[float, float, float, float, float, float]:
-        """
-        读取STL文件的边界框，返回 (min_x, max_x, min_y, max_y, min_z, max_z)
-        """
         try:
             with open(stlPath, 'rb') as f:
                 header = f.read(80)
@@ -57,7 +54,7 @@ class CuraEngineController:
                 max_x = max_y = max_z = float('-inf')
                 
                 for _ in range(num_triangles):
-                    f.read(12) # Normal
+                    f.read(12)
                     for _ in range(3):
                         x, y, z = struct.unpack('<fff', f.read(12))
                         min_x = min(min_x, x)
@@ -66,7 +63,7 @@ class CuraEngineController:
                         max_y = max(max_y, y)
                         min_z = min(min_z, z)
                         max_z = max(max_z, z)
-                    f.read(2) # Attribute byte count
+                    f.read(2)
                 
                 return (min_x, max_x, min_y, max_y, min_z, max_z)
         except struct.error as e:
@@ -170,36 +167,22 @@ class CuraEngineController:
         settings: Optional[Dict[str, str]] = None,
         definitionFiles: Optional[List[str]] = None,
         autoDropToBuildPlate: bool = True,
-        autoCenterXY: bool = True, # 新增参数控制XY居中
+        autoCenterXY: bool = True,
     ) -> str:
-        """
-        生成G代码
-        
-        Args:
-            autoDropToBuildPlate: 是否自动将Z轴落地 (MinZ -> 0)
-            autoCenterXY: 是否自动将XY平面居中 (CenterXY -> 0,0)
-        """
         wslStlPath = self._validateInputFile(stlPath, ".stl")
         wslOutputPath = self._ensureOutputDirectory(outputPath)
-
-        # 读取边界框
         if autoDropToBuildPlate or autoCenterXY:
             min_x, max_x, min_y, max_y, min_z, max_z = self._getStlBoundingBox(stlPath)
             if settings is None:
                 settings = {}
             
-            # --- Z轴落地逻辑 ---
             if autoDropToBuildPlate and "mesh_position_z" not in settings:
-                # 平移量 = -min_z (使最低点位于0)
                 settings["mesh_position_z"] = str(-min_z)
                 
-            # --- XY轴居中逻辑 ---
             if autoCenterXY:
-                # 1. 计算当前几何中心
                 center_x = (min_x + max_x) / 2.0
                 center_y = (min_y + max_y) / 2.0
                 
-                # 2. 如果用户没有手动指定位置，则施加反向平移
                 if "mesh_position_x" not in settings:
                     settings["mesh_position_x"] = str(-center_x)
                     
@@ -251,3 +234,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
