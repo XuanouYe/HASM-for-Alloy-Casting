@@ -5,8 +5,10 @@ import struct
 from pathlib import Path, PureWindowsPath
 from typing import Dict, Optional, List, Tuple
 
+
 class SliceException(Exception):
     pass
+
 
 class CuraEngineController:
     def __init__(self, wslEnginePath: str):
@@ -47,12 +49,12 @@ class CuraEngineController:
                 header = f.read(80)
                 if header.startswith(b'solid'):
                     raise SliceException("ASCII STL format not supported. Please use binary STL.")
-                
+
                 num_triangles = struct.unpack('<I', f.read(4))[0]
-                
+
                 min_x = min_y = min_z = float('inf')
                 max_x = max_y = max_z = float('-inf')
-                
+
                 for _ in range(num_triangles):
                     f.read(12)
                     for _ in range(3):
@@ -64,7 +66,7 @@ class CuraEngineController:
                         min_z = min(min_z, z)
                         max_z = max(max_z, z)
                     f.read(2)
-                
+
                 return (min_x, max_x, min_y, max_y, min_z, max_z)
         except struct.error as e:
             raise SliceException(f"Invalid STL file format: {str(e)}")
@@ -122,7 +124,8 @@ class CuraEngineController:
                 pass
         return wslPath
 
-    def _buildCommandArgs(self, stlPath: str, outputPath: str, definitionFiles: Optional[List[str]] = None, settings: Optional[Dict[str, str]] = None) -> list:
+    def _buildCommandArgs(self, stlPath: str, outputPath: str, definitionFiles: Optional[List[str]] = None,
+                          settings: Optional[Dict[str, str]] = None) -> list:
         cmd = ["wsl", self.wslEnginePath, "slice", "-v"]
         if definitionFiles:
             for f in definitionFiles:
@@ -161,13 +164,13 @@ class CuraEngineController:
             raise SliceException(f"Output validation failed: {str(e)}")
 
     def generateGcode(
-        self,
-        stlPath: str,
-        outputPath: str,
-        settings: Optional[Dict[str, str]] = None,
-        definitionFiles: Optional[List[str]] = None,
-        autoDropToBuildPlate: bool = True,
-        autoCenterXY: bool = True,
+            self,
+            stlPath: str,
+            outputPath: str,
+            settings: Optional[Dict[str, str]] = None,
+            definitionFiles: Optional[List[str]] = None,
+            autoDropToBuildPlate: bool = True,
+            autoCenterXY: bool = True,
     ) -> str:
         wslStlPath = self._validateInputFile(stlPath, ".stl")
         wslOutputPath = self._ensureOutputDirectory(outputPath)
@@ -175,17 +178,17 @@ class CuraEngineController:
             min_x, max_x, min_y, max_y, min_z, max_z = self._getStlBoundingBox(stlPath)
             if settings is None:
                 settings = {}
-            
+
             if autoDropToBuildPlate and "mesh_position_z" not in settings:
                 settings["mesh_position_z"] = str(-min_z)
-                
+
             if autoCenterXY:
                 center_x = (min_x + max_x) / 2.0
                 center_y = (min_y + max_y) / 2.0
-                
+
                 if "mesh_position_x" not in settings:
                     settings["mesh_position_x"] = str(-center_x)
-                    
+
                 if "mesh_position_y" not in settings:
                     settings["mesh_position_y"] = str(-center_y)
 
@@ -199,6 +202,7 @@ class CuraEngineController:
         self._executeSlice(cmdArgs)
         self._validateOutputFile(finalWslOutputPath)
         return self._wslPathToWindows(finalWslOutputPath)
+
 
 def main():
     testConfig = {
@@ -232,6 +236,6 @@ def main():
     except Exception as e:
         print(f"Error: {e}")
 
+
 if __name__ == "__main__":
     main()
-
