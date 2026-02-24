@@ -1,15 +1,19 @@
+import json
 import sys
 from datetime import timedelta
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QApplication, QMessageBox,
     QVBoxLayout, QSplitter, QTabWidget, QLabel, QProgressBar,
-    QAction
+    QAction, QPushButton, QFileDialog, QGroupBox, QScrollArea,
+    QToolButton, QHBoxLayout
 )
 from guiModelViewer import ModelViewerWidget
 from guiMoldProcessPanel import MoldProcessPanel
 from guiParameterPanel import ProcessParameterPanel
+from guiWorkerThread import WorkerThread
 from controlConfig import ConfigManager
+from fdmExecutor import generateGcodeInterface
 
 
 class MainWindow(QMainWindow):
@@ -22,7 +26,9 @@ class MainWindow(QMainWindow):
         self.elapsedTime = timedelta(0)
         self.isProcessing = False
         self.currentCastingTrimesh = None
+        self.currentStlPath = None
         self.configManager = ConfigManager()
+        self.currentConfigDict = self.configManager.getDefaultConfig()
 
         self.initUI()
         self.initMenuBar()
@@ -36,30 +42,77 @@ class MainWindow(QMainWindow):
         centralWidget = QWidget()
         mainLayout = QVBoxLayout()
 
-        horizontalSplitter = QSplitter(Qt.Horizontal)
+        self.horizontalSplitter = QSplitter(Qt.Horizontal)
 
         self.dualModelViewer = ModelViewerWidget()
-        horizontalSplitter.addWidget(self.dualModelViewer)
+        self.horizontalSplitter.addWidget(self.dualModelViewer)
 
-        rightPanel = QWidget()
+        self.rightPanel = QWidget()
         rightLayout = QVBoxLayout()
         rightLayout.setContentsMargins(0, 0, 0, 0)
+
+        self.toggleRightPanelButton = QToolButton()
+        self.toggleRightPanelButton.setText("◀")
+        self.toggleRightPanelButton.setToolTip("折叠/展开右侧面板")
+        self.toggleRightPanelButton.clicked.connect(self.onToggleRightPanel)
+        toolbarLayout = QHBoxLayout()
+        toolbarLayout.addWidget(self.toggleRightPanelButton)
+        toolbarLayout.addStretch()
+        toolbarWidget = QWidget()
+        toolbarWidget.setLayout(toolbarLayout)
+        rightLayout.addWidget(toolbarWidget)
+
+        self.rightScrollArea = QScrollArea()
+        self.rightScrollArea.setWidgetResizable(True)
+        self.rightScrollContent = QWidget()
+        scrollContentLayout = QVBoxLayout()
+        scrollContentLayout.setContentsMargins(4, 4, 4, 4)
 
         tabWidget = QTabWidget()
         self.moldProcessPanel = MoldProcessPanel()
         tabWidget.addTab(self.moldProcessPanel, "模具生成")
         self.parameterPanel = ProcessParameterPanel()
         tabWidget.addTab(self.parameterPanel, "工艺参数")
+        scrollContentLayout.addWidget(tabWidget)
 
-        rightLayout.addWidget(tabWidget)
-        rightPanel.setLayout(rightLayout)
-        horizontalSplitter.addWidget(rightPanel)
+        self.unifiedConfigGroup = QGroupBox()
+        unifiedConfigLayout = QHBoxLayout()
+        self.loadUnifiedConfigButton = QPushButton("加载配置")
+        self.loadUnifiedConfigButton.clicked.connect(self.onLoadUnifiedConfigClicked)
+        self.saveUnifiedConfigButton = QPushButton("保存配置")
+        self.saveUnifiedConfigButton.clicked.connect(self.onSaveUnifiedConfigClicked)
+        self.resetUnifiedConfigButton = QPushButton("重置为默认")
+        self.resetUnifiedConfigButton.clicked.connect(self.onResetUnifiedConfigClicked)
+        unifiedConfigLayout.addWidget(self.loadUnifiedConfigButton)
+        unifiedConfigLayout.addWidget(self.saveUnifiedConfigButton)
+        unifiedConfigLayout.addWidget(self.resetUnifiedConfigButton)
+        unifiedConfigLayout.addStretch()
+        self.unifiedConfigGroup.setLayout(unifiedConfigLayout)
+        scrollContentLayout.addWidget(self.unifiedConfigGroup)
 
-        horizontalSplitter.setSizes([1000, 600])
-        horizontalSplitter.setCollapsible(0, False)
-        horizontalSplitter.setCollapsible(1, False)
+        gcodeGroup = QGroupBox()
+        gcodeLayout = QVBoxLayout()
+        self.generateGcodeButton = QPushButton("生成G代码")
+        self.generateGcodeButton.setEnabled(False)
+        self.generateGcodeButton.clicked.connect(self.onGenerateGcodeClicked)
+        gcodeLayout.addWidget(self.generateGcodeButton)
+        gcodeGroup.setLayout(gcodeLayout)
+        scrollContentLayout.addWidget(gcodeGroup)
 
-        mainLayout.addWidget(horizontalSplitter, 1)
+        scrollContentLayout.addStretch()
+        self.rightScrollContent.setLayout(scrollContentLayout)
+        self.rightScrollArea.setWidget(self.rightScrollContent)
+        rightLayout.addWidget(self.rightScrollArea, 1)
+
+        self.rightPanel.setLayout(rightLayout)
+        self.rightPanelCollapsed = False
+        self.horizontalSplitter.addWidget(self.rightPanel)
+
+        self.horizontalSplitter.setSizes([1000, 600])
+        self.horizontalSplitter.setCollapsible(0, False)
+        self.horizontalSplitter.setCollapsible(1, False)
+
+        mainLayout.addWidget(self.horizontalSplitter, 1)
         centralWidget.setLayout(mainLayout)
         self.setCentralWidget(centralWidget)
 
@@ -151,6 +204,8 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "偏好设置", "该功能将在后续版本中实现")
 
     def onModelLoaded(self, modelInfo):
+        self.currentStlPath = modelInfo.get("filePath")
+        self.generateGcodeButton.setEnabled(bool(self.currentStlPath))
         self.statusLabel.setText(
             f"铸件模型已加载 | 顶点: {modelInfo['vertices']} | "
             f"面数: {modelInfo['faces']}"
@@ -171,6 +226,113 @@ class MainWindow(QMainWindow):
 
     def onParametersChanged(self, parameters):
         pass
+
+    def onLoadUnifiedConfigClicked(self):
+        filePath, _ = QFileDialog.getOpenFileName(
+            self, "加载配置", "", "JSON Files (*.json);;All Files (*)"
+        )
+        if not filePath:
+            return
+        try:
+            with open(filePath, "r", encoding="utf-8") as f:
+                configDict = json.load(f)
+            errors = self.configManager.validate(configDict)
+            if errors:
+                QMessageBox.warning(
+                    self, "配置验证失败",
+                    "配置文件存在以下问题:\n" + "\n".join(errors[:10])
+                )
+                return
+            self.currentConfigDict = configDict
+            self.parameterPanel.loadConfiguration(configDict)
+            self.moldProcessPanel.loadConfiguration(configDict)
+            QMessageBox.information(self, "成功", f"配置已加载: {filePath}")
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"加载失败: {str(e)}")
+
+    def onSaveUnifiedConfigClicked(self):
+        panelConfig = self.parameterPanel.getConfiguration()
+        moldSection = self.moldProcessPanel.getMoldConfigurationSection()
+        self.currentConfigDict["additive"] = panelConfig.get("additive", {})
+        self.currentConfigDict["casting"] = panelConfig.get("casting", {})
+        self.currentConfigDict["subtractive"] = panelConfig.get("subtractive", {})
+        self.currentConfigDict["mold"] = moldSection
+        filePath, _ = QFileDialog.getSaveFileName(
+            self, "保存配置", "", "JSON Files (*.json);;All Files (*)"
+        )
+        if not filePath:
+            return
+        try:
+            with open(filePath, "w", encoding="utf-8") as f:
+                json.dump(self.currentConfigDict, f, indent=2, ensure_ascii=False)
+            QMessageBox.information(self, "成功", f"配置已保存: {filePath}")
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"保存失败: {str(e)}")
+
+    def onResetUnifiedConfigClicked(self):
+        reply = QMessageBox.question(
+            self, "重置为默认",
+            "确定要重置为默认配置吗?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        )
+        if reply != QMessageBox.Yes:
+            return
+        self.currentConfigDict = self.configManager.getDefaultConfig()
+        self.parameterPanel.loadConfiguration(self.currentConfigDict)
+        self.moldProcessPanel.loadConfiguration(self.currentConfigDict)
+        QMessageBox.information(self, "成功", "已重置为默认配置")
+
+    def onToggleRightPanel(self):
+        if self.rightPanelCollapsed:
+            self.rightPanel.setMaximumWidth(16777215)
+            self.rightScrollArea.show()
+            self.toggleRightPanelButton.setText("◀")
+            self.horizontalSplitter.setSizes([1000, 600])
+            self.rightPanelCollapsed = False
+        else:
+            self.rightPanel.setMaximumWidth(40)
+            self.rightScrollArea.hide()
+            self.toggleRightPanelButton.setText("▶")
+            self.rightPanelCollapsed = True
+
+    def onGenerateGcodeClicked(self):
+        if not self.currentStlPath:
+            return
+        config = self.parameterPanel.getConfiguration()
+        outputPath, _ = QFileDialog.getSaveFileName(
+            self,
+            "保存G代码",
+            "",
+            "G-code Files (*.gcode);;All Files (*)"
+        )
+        if not outputPath:
+            return
+        self.generateGcodeButton.setEnabled(False)
+
+        def taskCallable():
+            return generateGcodeInterface(
+                stlPath=self.currentStlPath,
+                outputPath=outputPath,
+                processConfig=config,
+            )
+
+        worker = WorkerThread(taskCallable)
+        worker.taskCompleted.connect(self.onGenerateGcodeCompleted)
+        worker.taskError.connect(self.onGenerateGcodeError)
+        worker.start()
+        self.currentGcodeWorker = worker
+
+    def onGenerateGcodeCompleted(self, result):
+        self.generateGcodeButton.setEnabled(True)
+        gcodePath = result.get("result") if "result" in result else result.get("gcodePath", "")
+        if gcodePath:
+            QMessageBox.information(self, "成功", f"G代码已生成:\n{gcodePath}")
+        else:
+            QMessageBox.information(self, "完成", "生成完成")
+
+    def onGenerateGcodeError(self, errorMsg):
+        self.generateGcodeButton.setEnabled(True)
+        QMessageBox.critical(self, "错误", f"生成G代码失败:\n{errorMsg}")
 
     def updateTimer(self):
         self.elapsedTime += timedelta(seconds=1)

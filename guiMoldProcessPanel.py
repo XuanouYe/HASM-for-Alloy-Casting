@@ -42,7 +42,6 @@ class MoldProcessPanel(QWidget):
         titleLabel.setFont(titleFont)
         mainLayout.addWidget(titleLabel)
 
-        mainLayout.addWidget(self.createConfigManagementGroup())
         mainLayout.addWidget(self.createLoadModelGroup())
         mainLayout.addWidget(self.createAddGatingGroup())
         mainLayout.addWidget(self.createMoldGenerationGroup())
@@ -54,28 +53,11 @@ class MoldProcessPanel(QWidget):
         self.setLayout(mainLayout)
         self.setStyleSheet(self.getStylesheet())
 
-    def createConfigManagementGroup(self) -> QGroupBox:
-        group = QGroupBox("配置管理")
-        layout = QHBoxLayout()
-
-        self.loadConfigButton = QPushButton("加载配置")
-        self.loadConfigButton.clicked.connect(self.onLoadConfig)
-        layout.addWidget(self.loadConfigButton)
-
-        self.saveConfigButton = QPushButton("保存配置")
-        self.saveConfigButton.clicked.connect(self.onSaveConfig)
-        layout.addWidget(self.saveConfigButton)
-
-        layout.addStretch()
-        group.setLayout(layout)
-        return group
-
     def createLoadModelGroup(self) -> QGroupBox:
         group = QGroupBox("模型加载")
         layout = QVBoxLayout()
 
         self.loadSTLButton = QPushButton("加载STL文件")
-        self.loadSTLButton.setMinimumHeight(40)
         self.loadSTLButton.clicked.connect(self.onLoadSTL)
         layout.addWidget(self.loadSTLButton)
 
@@ -106,7 +88,6 @@ class MoldProcessPanel(QWidget):
         layout.addLayout(paramLayout)
 
         self.generateMoldButton = QPushButton("生成模具")
-        self.generateMoldButton.setMinimumHeight(40)
         self.generateMoldButton.setEnabled(False)
         self.generateMoldButton.clicked.connect(self.onGenerateMold)
         layout.addWidget(self.generateMoldButton)
@@ -230,61 +211,21 @@ class MoldProcessPanel(QWidget):
             self.currentConfig["mold"] = {}
         self.currentConfig["mold"]["sprueInletOffset"] = self.sprueOffsetSpinBox.value()
 
-    def onLoadConfig(self):
-        filePath, _ = QFileDialog.getOpenFileName(
-            self, "加载配置文件", "", "JSON Files (*.json);;All Files (*)"
-        )
-        if not filePath:
-            return
+    def loadConfiguration(self, configDict):
+        moldConfig = configDict.get("mold") or {}
+        if "mold" not in self.currentConfig:
+            self.currentConfig["mold"] = {}
+        self.currentConfig["mold"].update(moldConfig)
+        self.boundingBoxOffsetSpinBox.setValue(moldConfig.get("boundingBoxOffset", 2.0))
+        self.fillTimeSpinBox.setValue(moldConfig.get("targetFillTime", 5.0))
+        self.sprueOffsetSpinBox.setValue(moldConfig.get("sprueInletOffset", 5.0))
 
-        try:
-            import json
-            with open(filePath, 'r', encoding='utf-8') as f:
-                config = json.load(f)
-
-            errors = self.configManager.validate(config)
-            if errors:
-                QMessageBox.warning(
-                    self, "配置验证失败",
-                    f"配置文件存在以下问题:\n" + "\n".join(errors[:5])
-                )
-                return
-
-            self.currentConfig = config
-            moldConfig = config.get("mold", {})
-            self.boundingBoxOffsetSpinBox.setValue(moldConfig.get("boundingBoxOffset", 2.0))
-            self.fillTimeSpinBox.setValue(moldConfig.get("targetFillTime", 5.0))
-            self.sprueOffsetSpinBox.setValue(moldConfig.get("sprueInletOffset", 10.0))
-
-            QMessageBox.information(self, "成功", f"配置已加载: {filePath}")
-        except Exception as e:
-            QMessageBox.critical(self, "错误", f"加载失败: {str(e)}")
-
-    def onSaveConfig(self):
-        filePath, _ = QFileDialog.getSaveFileName(
-            self, "保存配置文件", "", "JSON Files (*.json);;All Files (*)"
-        )
-        if not filePath:
-            return
-
-        try:
-            import json
-            errors = self.configManager.validate(self.currentConfig)
-            if errors:
-                reply = QMessageBox.question(
-                    self, "配置验证警告",
-                    f"配置存在以下问题,是否继续保存?\n" + "\n".join(errors[:5]),
-                    QMessageBox.Yes | QMessageBox.No
-                )
-                if reply == QMessageBox.No:
-                    return
-
-            with open(filePath, 'w', encoding='utf-8') as f:
-                json.dump(self.currentConfig, f, indent=2, ensure_ascii=False)
-
-            QMessageBox.information(self, "成功", f"配置已保存到: {filePath}")
-        except Exception as e:
-            QMessageBox.critical(self, "错误", f"保存失败: {str(e)}")
+    def getMoldConfigurationSection(self):
+        return {
+            "boundingBoxOffset": self.boundingBoxOffsetSpinBox.value(),
+            "targetFillTime": self.fillTimeSpinBox.value(),
+            "sprueInletOffset": self.sprueOffsetSpinBox.value(),
+        }
 
     def clearMoldViewer(self):
         mainWindow = self.window()

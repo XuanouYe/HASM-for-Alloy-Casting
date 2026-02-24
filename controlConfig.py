@@ -357,6 +357,28 @@ parameterSchema = {
             "unit": "%",
             "required": True
         },
+    },
+    "fdm": {
+        "wslEnginePath": {
+            "type": str,
+            "default": "",
+            "required": False
+        },
+        "definitionFiles": {
+            "type": list,
+            "default": [],
+            "required": False
+        },
+        "autoDropToBuildPlate": {
+            "type": bool,
+            "default": True,
+            "required": False
+        },
+        "autoCenterXY": {
+            "type": bool,
+            "default": True,
+            "required": False
+        },
     }
 }
 

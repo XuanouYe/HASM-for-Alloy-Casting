@@ -132,7 +132,7 @@ class AutoGatingSystem:
         section = cavityMesh.section(plane_origin=planeOrigin, plane_normal=planeNormal)
         if section is None:
             return np.array([]).reshape(0, 3)
-        path2D, to3D = section.to_planar()
+        path2D, to3D = section.to_2D()
         if path2D is None or len(path2D.entities) == 0:
             return np.array([]).reshape(0, 3)
         polygons = path2D.polygons_full
@@ -334,7 +334,7 @@ class AutoGatingSystem:
         maxAllowed = float(np.min(bboxMax - bboxMin)) * 0.25
         return float(min(finalRadius, maxAllowed))
 
-    def _generateRunnerPath(self, gateSurface: np.ndarray, gateNormal: np.ndarray, runnerZ: float, runnerRadius: float) -> List[np.ndarray]:
+    def _generateRunnerPath(self, gateSurface: np.ndarray, gateNormal: np.ndarray, runnerZ: float, runnerRadius: float, sprueInletZ: Optional[float] = None) -> List[np.ndarray]:
         gateDir2D = np.array([gateNormal[0], gateNormal[1]])
         gateDir2DNorm = np.linalg.norm(gateDir2D)
         if gateDir2DNorm < 1e-9:
@@ -350,7 +350,7 @@ class AutoGatingSystem:
                 runnerOutside[1] < bboxMin[1] - bboxExpand or runnerOutside[1] > bboxMax[1] + bboxExpand):
                 break
             outsideOffset += self.bufferDistance
-        sprueZ = float(bboxMax[2]) + self.boundingBoxOffset
+        sprueZ = float(sprueInletZ) if sprueInletZ is not None else (float(bboxMax[2]) + self.boundingBoxOffset)
         sprueInlet = np.array([runnerOutside[0], runnerOutside[1], sprueZ])
         sprueBottom = np.array([runnerOutside[0], runnerOutside[1], runnerZ])
         adjGateSurface = np.array([gateSurface[0], gateSurface[1], runnerZ])
@@ -374,15 +374,90 @@ class AutoGatingSystem:
         combined.fix_normals()
         return combined
 
+    def _proposeRiserAttachmentPoint(self, cavityMesh: trimesh.Trimesh, gateSurface: np.ndarray) -> np.ndarray:
+        bboxMin, bboxMax = cavityMesh.bounds[0], cavityMesh.bounds[1]
+        zMax = float(bboxMax[2])
+        modelScale = float(np.max(cavityMesh.bounding_box.extents))
+        zTol = modelScale * 0.002
+        V = cavityMesh.vertices[cavityMesh.faces]
+        topMask = np.all(np.abs(V[:, :, 2] - zMax) <= zTol, axis=1)
+        topFaceIndices = np.where(topMask)[0]
+        if topFaceIndices.size == 0:
+            centers = cavityMesh.triangles.mean(axis=1)
+            topFaceIndices = np.where((centers[:, 2] >= zMax - zTol) & (centers[:, 2] <= zMax))[0]
+        if topFaceIndices.size == 0:
+            bestTopPoint = np.array([(bboxMin[0] + bboxMax[0]) / 2.0, (bboxMin[1] + bboxMax[1]) / 2.0, zMax])
+            projPoints, _, _ = cavityMesh.nearest.on_surface([bestTopPoint])
+            return projPoints[0]
+        topArea = float(cavityMesh.area_faces[topFaceIndices].sum())
+        bboxArea2D = (float(bboxMax[0]) - float(bboxMin[0])) * (float(bboxMax[1]) - float(bboxMin[1]))
+        centersTop = cavityMesh.triangles[topFaceIndices].mean(axis=1)
+        areasTop = cavityMesh.area_faces[topFaceIndices]
+        if bboxArea2D > 1e-12 and topArea / bboxArea2D >= 0.05:
+            nCandidates = min(200, len(centersTop))
+            indices = np.linspace(0, len(centersTop) - 1, nCandidates, dtype=int)
+            candidates = centersTop[indices]
+            dist2D = np.hypot(candidates[:, 0] - gateSurface[0], candidates[:, 1] - gateSurface[1])
+            bestIdx = int(np.argmax(dist2D))
+            bestTopPoint = candidates[bestIdx]
+        else:
+            areaSum = areasTop.sum()
+            if areaSum > 1e-12:
+                bestTopPoint = np.average(centersTop, axis=0, weights=areasTop)
+            else:
+                bestTopPoint = centersTop.mean(axis=0)
+        projPoints, _, _ = cavityMesh.nearest.on_surface([bestTopPoint])
+        return projPoints[0]
+
+    def _computeRiserDimensions(self, runnerRadius: float, attachmentZ: float, sprueInletZ: float, modelScale: float, bboxExtents: np.ndarray) -> Dict:
+        riserTopZ = sprueInletZ
+        neckLength = 2.0 * runnerRadius
+        neckDiameter = 2.0 * runnerRadius
+        riserDiameter = 4.0 * runnerRadius
+        minRiserD = 2.5 * runnerRadius
+        maxRiserD = float(np.min(bboxExtents)) * 0.4
+        riserDiameter = float(np.clip(riserDiameter, minRiserD, maxRiserD))
+        minRiserTopZ = attachmentZ + neckLength + runnerRadius
+        if riserTopZ <= minRiserTopZ:
+            riserTopZ = max(minRiserTopZ, sprueInletZ)
+        return {
+            'riserTopZ': riserTopZ,
+            'neckLength': neckLength,
+            'neckDiameter': neckDiameter,
+            'riserDiameter': riserDiameter,
+        }
+
+    def _createRiserMesh(self, attachmentPoint: np.ndarray, riserTopZ: float, riserDiameter: float, neckDiameter: float, neckLength: float, runnerRadius: float) -> trimesh.Trimesh:
+        x, y = float(attachmentPoint[0]), float(attachmentPoint[1])
+        neckStartZ = float(attachmentPoint[2]) - 0.2 * runnerRadius
+        neckEndZ = float(attachmentPoint[2]) + neckLength
+        neckRadius = neckDiameter / 2.0
+        riserRadius = riserDiameter / 2.0
+        neckCylinder = trimesh.creation.cylinder(radius=neckRadius, segment=[(x, y, neckStartZ), (x, y, neckEndZ)], sections=32)
+        riserCylinder = trimesh.creation.cylinder(radius=riserRadius, segment=[(x, y, neckEndZ), (x, y, riserTopZ)], sections=32)
+        combined = trimesh.util.concatenate([neckCylinder, riserCylinder])
+        combined.fix_normals()
+        return combined
+
     def generate(self, visualize: bool = False) -> trimesh.Trimesh:
         gateSurface, gateNormal = self._proposeGateLocation()
         runnerRadius = self._computeRheologyRadius()
         runnerZ = self._computeTargetGateZ(runnerRadius)
-        runnerPath = self._generateRunnerPath(gateSurface, gateNormal, runnerZ, runnerRadius)
+        cavityMesh = self._getCavityMesh()
+        modelScale = float(np.max(cavityMesh.bounding_box.extents))
+        bboxExtents = np.array(cavityMesh.bounding_box.extents)
+        bboxMin, bboxMax = self.moldConfig.boundingBox
+        baseZ = float(bboxMax[2]) + self.boundingBoxOffset
+        attachmentPoint = self._proposeRiserAttachmentPoint(cavityMesh, gateSurface)
+        dims = self._computeRiserDimensions(runnerRadius, float(attachmentPoint[2]), baseZ, modelScale, bboxExtents)
+        riserMesh = self._createRiserMesh(attachmentPoint, dims['riserTopZ'], dims['riserDiameter'], dims['neckDiameter'], dims['neckLength'], runnerRadius)
+        runnerPath = self._generateRunnerPath(gateSurface, gateNormal, runnerZ, runnerRadius, sprueInletZ=dims['riserTopZ'])
         gatingMesh = self._createGatingMesh(runnerPath, runnerRadius)
+        resultMesh = trimesh.util.concatenate([riserMesh, gatingMesh])
+        resultMesh.fix_normals()
         if visualize:
-            GatingVisualizer().visualize(self._originalMesh, gatingMesh, {'radius': runnerRadius, 'fillTime': self.targetFillTime, 'gatePoint': gateSurface, 'runnerPath': runnerPath})
-        return gatingMesh
+            GatingVisualizer().visualize(self._originalMesh, resultMesh, {'radius': runnerRadius, 'fillTime': self.targetFillTime, 'gatePoint': gateSurface, 'runnerPath': runnerPath, 'riserMesh': riserMesh})
+        return resultMesh
 
 class GatingVisualizer:
     def __init__(self, windowSize: Tuple[int, int] = (1200, 800)):

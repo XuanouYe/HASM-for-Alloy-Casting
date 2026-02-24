@@ -3,7 +3,14 @@ import posixpath
 import subprocess
 import struct
 from pathlib import Path, PureWindowsPath
-from typing import Dict, Optional, List, Tuple
+from typing import Dict, Optional, List, Tuple, Any
+
+from controlConfig import ConfigManager
+
+defaultWslEnginePath = ""
+defaultDefinitionFiles = []
+defaultAutoDropToBuildPlate = True
+defaultAutoCenterXy = True
 
 
 class SliceException(Exception):
@@ -202,6 +209,28 @@ class CuraEngineController:
         self._executeSlice(cmdArgs)
         self._validateOutputFile(finalWslOutputPath)
         return self._wslPathToWindows(finalWslOutputPath)
+
+
+def generateGcodeInterface(
+    stlPath: str,
+    outputPath: str,
+    processConfig: Dict[str, Any],
+) -> str:
+    cm = ConfigManager()
+    defaultConfig = cm.getDefaultConfig()
+    additiveConfig = processConfig.get("additive") or defaultConfig.get("additive") or {}
+    settings = cm.generateCuraConfig(additiveConfig)
+    if not defaultWslEnginePath:
+        raise SliceException("defaultWslEnginePath not configured in fdmExecutor")
+    controller = CuraEngineController(defaultWslEnginePath)
+    return controller.generateGcode(
+        stlPath=stlPath,
+        outputPath=outputPath,
+        settings=settings,
+        definitionFiles=defaultDefinitionFiles,
+        autoDropToBuildPlate=defaultAutoDropToBuildPlate,
+        autoCenterXY=defaultAutoCenterXy,
+    )
 
 
 def main():

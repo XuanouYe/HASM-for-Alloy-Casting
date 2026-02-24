@@ -4,9 +4,8 @@ from PyQt5.QtCore import pyqtSignal
 from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
-    QPushButton, QLabel, QGroupBox, QTabWidget, QScrollArea,
+    QLabel, QGroupBox, QTabWidget, QScrollArea,
     QCheckBox, QSpinBox, QDoubleSpinBox, QComboBox, QLineEdit,
-    QMessageBox, QFileDialog
 )
 from controlConfig import parameterSchema, ConfigManager
 
@@ -37,7 +36,6 @@ class ProcessParameterPanel(QWidget):
         mainLayout.addWidget(titleLabel)
 
         mainLayout.addWidget(self.createParameterTabs())
-        mainLayout.addWidget(self.createActionBar())
         mainLayout.addStretch()
 
         self.setLayout(mainLayout)
@@ -165,26 +163,6 @@ class ProcessParameterPanel(QWidget):
 
         return control
 
-    def createActionBar(self) -> QGroupBox:
-        group = QGroupBox("操作")
-        layout = QHBoxLayout()
-
-        self.loadCfgButton = QPushButton("导入配置")
-        self.loadCfgButton.clicked.connect(self.onLoadConfiguration)
-        layout.addWidget(self.loadCfgButton)
-
-        self.saveCfgButton = QPushButton("导出配置")
-        self.saveCfgButton.clicked.connect(self.onSaveConfiguration)
-        layout.addWidget(self.saveCfgButton)
-
-        self.resetButton = QPushButton("重置为默认")
-        self.resetButton.clicked.connect(self.onReset)
-        layout.addWidget(self.resetButton)
-
-        layout.addStretch()
-        group.setLayout(layout)
-        return group
-
     def onParameterChanged(self) -> None:
         self.updateCurrentConfig()
         self.parametersChanged.emit(self.parameters)
@@ -195,78 +173,6 @@ class ProcessParameterPanel(QWidget):
         if self.configManager:
             defaultConfig = self.configManager.getDefaultConfig()
             self.loadConfiguration(defaultConfig)
-
-    def onLoadConfiguration(self) -> None:
-        filePath, _ = QFileDialog.getOpenFileName(
-            self,
-            "导入工艺配置",
-            "",
-            "JSON Files (*.json);;All Files (*)"
-        )
-        if not filePath:
-            return
-
-        try:
-            with open(filePath, 'r', encoding='utf-8') as f:
-                config = json.load(f)
-
-            if self.configManager:
-                errors = self.configManager.validate(config)
-                if errors:
-                    QMessageBox.warning(
-                        self,
-                        "配置验证失败",
-                        f"配置文件存在以下问题:\n" + "\n".join(errors[:5])
-                    )
-                    return
-
-            self.loadConfiguration(config)
-            QMessageBox.information(self, "成功", f"配置已加载: {filePath}")
-        except json.JSONDecodeError as e:
-            QMessageBox.critical(self, "错误", f"JSON解析失败: {str(e)}")
-        except Exception as e:
-            QMessageBox.critical(self, "错误", f"加载失败: {str(e)}")
-
-    def onSaveConfiguration(self) -> None:
-        filePath, _ = QFileDialog.getSaveFileName(
-            self,
-            "导出工艺配置",
-            "",
-            "JSON Files (*.json);;All Files (*)"
-        )
-        if not filePath:
-            return
-
-        try:
-            self.updateCurrentConfig()
-
-            if self.configManager:
-                errors = self.configManager.validate(self.parameters)
-                if errors:
-                    reply = QMessageBox.question(
-                        self,
-                        "配置验证警告",
-                        f"配置存在以下问题,是否继续导出?\n" + "\n".join(errors[:5]),
-                        QMessageBox.Yes | QMessageBox.No
-                    )
-                    if reply == QMessageBox.No:
-                        return
-
-            with open(filePath, 'w', encoding='utf-8') as f:
-                json.dump(self.parameters, f, indent=2, ensure_ascii=False)
-
-            QMessageBox.information(self, "成功", f"配置已导出到: {filePath}")
-        except Exception as e:
-            QMessageBox.critical(self, "错误", f"导出失败: {str(e)}")
-
-    def onReset(self) -> None:
-        reply = QMessageBox.question(
-            self, "确认重置",
-            "确定要重置为默认参数吗?",
-            QMessageBox.Yes | QMessageBox.No
-        )
-        if reply == QMessageBox.Yes:
-            self.loadDefaultConfig()
 
     def updateCurrentConfig(self) -> None:
         self.parameters = {

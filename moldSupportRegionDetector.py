@@ -234,13 +234,7 @@ def main():
     }
 
     stlPath = "testModels/hollow.cylinder.down.stl"
-
-    try:
-        mesh = trimesh.load_mesh(stlPath)
-    except Exception as e:
-        print(f"Error loading mesh: {e}")
-        return
-
+    mesh = trimesh.load_mesh(stlPath)
     detector = SupportRegionDetector(config)
     supportRegions = detector.calculateSupportRegions(mesh)
     validLayers = sum(1 for r in supportRegions if r is not None)
