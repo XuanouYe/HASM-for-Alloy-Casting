@@ -143,7 +143,8 @@ class FiveAxisCncPathGenerator:
         step2 = self.generateStep(stepId=2, stepType="partFinishing", targetMesh=partMesh, keepOutManager=keepOutManager,
                                   toolParams=toolParams, stepParam=stepParams[1], candidateAxes=candidateAxes,
                                   mode=str(stepParams[1].get("mode", "waterline")), toolRadius=toolRadius, safetyMargin=safetyMargin)
-        step3 = self.generateStep(stepId=3, stepType="gatingRemoval", targetMesh=gatingMesh, keepOutManager=None,
+        partKeepOutManager = KeepOutZoneManager(partMesh, safetyMargin)
+        step3 = self.generateStep(stepId=3, stepType="gatingRemoval", targetMesh=gatingMesh, keepOutManager=partKeepOutManager,
                                   toolParams=toolParams, stepParam=stepParams[2], candidateAxes=candidateAxes,
                                   mode=str(stepParams[2].get("mode", "dropRaster")), toolRadius=toolRadius, safetyMargin=safetyMargin)
         out = {"version": self.version, "wcsId": str(wcsId), "steps": [step1, step2, step3]}
