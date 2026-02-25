@@ -3,7 +3,6 @@ from dataclasses import dataclass
 from typing import List, Dict, Optional, Any
 import numpy as np
 import trimesh
-from shapely.geometry import Polygon, MultiPolygon
 import vtk
 
 def normalizeVector(vec: np.ndarray) -> np.ndarray:
