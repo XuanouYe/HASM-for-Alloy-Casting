@@ -271,7 +271,7 @@ def analyzeMoldAccessibility(
 
 
 def main():
-    stlFilePath = "hollow.cylinder.down.stl"
+    stlFilePath = "testModels/hollow.cylinder.down.stl"
 
     results = analyzeMoldAccessibility(
         meshPath    = stlFilePath,

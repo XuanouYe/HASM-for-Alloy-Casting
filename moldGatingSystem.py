@@ -4,6 +4,8 @@ import numpy as np
 import trimesh
 import vtk
 from scipy.spatial import KDTree
+from pathlib import Path
+
 
 @dataclass
 class MoldConfig:
@@ -439,7 +441,7 @@ class AutoGatingSystem:
         combined.fix_normals()
         return combined
 
-    def generate(self, visualize: bool = False) -> trimesh.Trimesh:
+    def generateComponents(self, visualize: bool = False) -> Dict:
         gateSurface, gateNormal = self._proposeGateLocation()
         runnerRadius = self._computeRheologyRadius()
         runnerZ = self._computeTargetGateZ(runnerRadius)
@@ -447,17 +449,37 @@ class AutoGatingSystem:
         modelScale = float(np.max(cavityMesh.bounding_box.extents))
         bboxExtents = np.array(cavityMesh.bounding_box.extents)
         bboxMin, bboxMax = self.moldConfig.boundingBox
-        baseZ = float(bboxMax[2]) + self.boundingBoxOffset
+        sprueInletZ = float(bboxMax[2]) + self.boundingBoxOffset
         attachmentPoint = self._proposeRiserAttachmentPoint(cavityMesh, gateSurface)
-        dims = self._computeRiserDimensions(runnerRadius, float(attachmentPoint[2]), baseZ, modelScale, bboxExtents)
-        riserMesh = self._createRiserMesh(attachmentPoint, dims['riserTopZ'], dims['riserDiameter'], dims['neckDiameter'], dims['neckLength'], runnerRadius)
-        runnerPath = self._generateRunnerPath(gateSurface, gateNormal, runnerZ, runnerRadius, sprueInletZ=dims['riserTopZ'])
-        gatingMesh = self._createGatingMesh(runnerPath, runnerRadius)
-        resultMesh = trimesh.util.concatenate([riserMesh, gatingMesh])
-        resultMesh.fix_normals()
+        dims = self._computeRiserDimensions(runnerRadius, float(attachmentPoint[2]), sprueInletZ, modelScale,
+                                            bboxExtents)
+        riserMesh = self._createRiserMesh(attachmentPoint, dims['riserTopZ'], dims['riserDiameter'],
+                                          dims['neckDiameter'], dims['neckLength'], runnerRadius)
+        runnerPath = self._generateRunnerPath(gateSurface, gateNormal, runnerZ, runnerRadius,
+                                              sprueInletZ=dims['riserTopZ'])
+        gateMesh = self._createGatingMesh(runnerPath, runnerRadius)
+        systemMesh = trimesh.util.concatenate([riserMesh, gateMesh])
+        systemMesh.fix_normals()
+        castingWithRiserMesh = trimesh.util.concatenate([self._originalMesh.copy(), riserMesh])
+        castingWithRiserMesh.fix_normals()
         if visualize:
-            GatingVisualizer().visualize(self._originalMesh, resultMesh, {'radius': runnerRadius, 'fillTime': self.targetFillTime, 'gatePoint': gateSurface, 'runnerPath': runnerPath, 'riserMesh': riserMesh})
-        return resultMesh
+            GatingVisualizer().visualize(self._originalMesh, systemMesh,
+                                         {'radius': runnerRadius, 'fillTime': self.targetFillTime,
+                                          'gatePoint': gateSurface, 'runnerPath': runnerPath, 'riserMesh': riserMesh})
+        return {
+            'gateMesh': gateMesh,
+            'riserMesh': riserMesh,
+            'castingWithRiserMesh': castingWithRiserMesh,
+            'systemMesh': systemMesh,
+            'gateSurface': gateSurface,
+            'runnerPath': runnerPath,
+            'runnerRadius': runnerRadius
+        }
+
+    def generate(self, visualize: bool = False) -> trimesh.Trimesh:
+        components = self.generateComponents(visualize=visualize)
+        return components['systemMesh']
+
 
 class GatingVisualizer:
     def __init__(self, windowSize: Tuple[int, int] = (1200, 800)):
@@ -531,6 +553,26 @@ class GatingVisualizer:
         interactor.TerminateApp()
         del renderWindow, interactor, renderer
 
+def exportGatingAndRiserFromStl(inputStlPath: str, config: Optional[Dict] = None, visualize: bool = False) -> Dict:
+    if config is None:
+        config = {}
+    castingMesh = trimesh.load_mesh(inputStlPath)
+    gatingSystem = AutoGatingSystem(castingMesh, config)
+    components = gatingSystem.generateComponents(visualize=visualize)
+    inputPathObj = Path(inputStlPath)
+    if inputPathObj.suffix.lower() == '.stl':
+        basePath = inputPathObj.with_suffix('')
+    else:
+        basePath = inputPathObj
+    gateStlPath = str(basePath) + '.gating.stl'
+    withRiserStlPath = str(basePath) + '.with.riser.stl'
+    components['gateMesh'].export(gateStlPath)
+    components['castingWithRiserMesh'].export(withRiserStlPath)
+    return {
+        'gateStlPath': gateStlPath,
+        'withRiserStlPath': withRiserStlPath
+    }
+
 def createGatingSystem(castingMesh: trimesh.Trimesh, config: Optional[Dict] = None, outputStlPath: Optional[str] = None, visualize: bool = False) -> trimesh.Trimesh:
     if config is None:
         config = {}
@@ -541,8 +583,7 @@ def createGatingSystem(castingMesh: trimesh.Trimesh, config: Optional[Dict] = No
     return gatingMesh
 
 if __name__ == '__main__':
-    moldPath = "testModels/hollow.cylinder.left.stl"
-    castingMesh = trimesh.load_mesh(moldPath)
+    inputStlPath = "testModels/hollow.cylinder.left.stl"
     config = {
         "targetFillTime": 3.0,
         "sprueInletOffset": 5.0,
@@ -553,4 +594,4 @@ if __name__ == '__main__':
             "maxPressureDrop": 1e5
         }
     }
-    gatingMesh = createGatingSystem(castingMesh=castingMesh, config=config, outputStlPath="hollow.cylinder.down.gating.system.stl", visualize=True)
+    exportGatingAndRiserFromStl(inputStlPath=inputStlPath, config=config, visualize=True)
