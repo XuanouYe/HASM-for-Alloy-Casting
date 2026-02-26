@@ -337,25 +337,54 @@ parameterSchema = {
             "type": int,
             "min": 1,
             "max": 5000,
-            "default": 100,
+            "default": 500,
             "unit": "mm/min",
             "required": True
         },
-        "depthOfCut": {
+        "toolDiameter": {
             "type": float,
-            "min": 0.05,
+            "min": 0.1,
             "max": 20.0,
-            "default": 1.0,
+            "default": 6.0,
+            "unit": "mm",
+            "required": True
+        },
+        "toolSafetyMargin": {
+            "type": float,
+            "min": 0.01,
+            "max": 5.0,
+            "default": 0.5,
             "unit": "mm",
             "required": True
         },
         "stepOver": {
             "type": float,
-            "min": 0.1,
-            "max": 100.0,
-            "default": 10.0,
-            "unit": "%",
+            "min": 0.01,
+            "max": 10.0,
+            "default": 1.5,
+            "unit": "mm",
             "required": True
+        },
+        "waterlineStepDown": {
+            "type": float,
+            "min": 0.01,
+            "max": 5.0,
+            "default": 0.5,
+            "unit": "mm",
+            "required": True
+        },
+        "safeHeight": {
+            "type": float,
+            "min": 1.0,
+            "max": 100.0,
+            "default": 5.0,
+            "unit": "mm",
+            "required": True
+        },
+        "candidateAxes": {
+            "type": list,
+            "default": [[0.0, 0.0, 1.0]],
+            "required": False
         },
     },
     "fdm": {
@@ -452,6 +481,8 @@ class ConfigManager:
                         params[paramName] = value.lower() in ['true', '1', 'yes', 'on']
                     except:
                         errors.append(f"{section}.{paramName}: Type error")
+                elif expectedType == list and isinstance(value, list):
+                    pass # List type check passed
                 else:
                     errors.append(f"{section}.{paramName}: Type error")
                 continue
