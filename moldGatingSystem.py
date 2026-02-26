@@ -452,24 +452,15 @@ def createGatingSystem(castingMesh: trimesh.Trimesh, config: Optional[Dict] = No
     return gatingMesh
 
 
-def createGatingComponents(castingMesh: trimesh.Trimesh, config: Optional[Dict] = None, gatingStlPath: Optional[str] = None, withRiserStlPath: Optional[str] = None) -> GatingComponents:
+def createGatingComponents(castingMesh: trimesh.Trimesh, config: Optional[Dict] = None) -> GatingComponents:
     if config is None:
         config = {}
     return AutoGatingSystem(castingMesh, config).generateComponents()
-        # Export meshes if paths provided
-    components = AutoGatingSystem(castingMesh, config).generateComponents()
-    if gatingStlPath:
-        from geometryAdapters import exportMeshToStl
-        exportMeshToStl(components.gateMesh, gatingStlPath)
-    if withRiserStlPath:
-        from geometryAdapters import exportMeshToStl
-        exportMeshToStl(components.castingWithRiserMesh, withRiserStlPath)
-    return components
 
 
 if __name__ == '__main__':
     from geometryAdapters import loadMeshFromFile, exportMeshToStl
-    inputStlPath = "testModels/cube.with.groove.stl"
+    inputStlPath = "testModels/cylinder.down.stl"
     config = {
         "targetFillTime": 3.0,
         "sprueInletOffset": 5.0,
@@ -478,5 +469,5 @@ if __name__ == '__main__':
     }
     castingMesh = loadMeshFromFile(inputStlPath)
     components = createGatingComponents(castingMesh, config)
-    exportMeshToStl(components.gateMesh, "cube.with.groove.gating.stl")
-    exportMeshToStl(components.castingWithRiserMesh, "cube.with.groove.with.riser.stl")
+    exportMeshToStl(components.gateMesh, "testModels/cylinder.down.gating.stl")
+    exportMeshToStl(components.castingWithRiserMesh, "testModels/cylinder.down.with.riser.stl")
