@@ -1,5 +1,5 @@
 from pathlib import Path
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import pyqtSignal
 from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
@@ -10,8 +10,6 @@ from controlConfig import ConfigManager
 
 
 class MoldProcessPanel(QWidget):
-    # ==== 意图信号 (Intent Signals) ====
-    # 将用户的操作意图以及参数打包发送给 Controller
     intentLoadModel = pyqtSignal(str)
     intentGenerateMold = pyqtSignal(dict)
     intentAddGating = pyqtSignal(dict)
@@ -22,8 +20,6 @@ class MoldProcessPanel(QWidget):
         super().__init__(parent)
         self.configManager = ConfigManager()
         self.currentConfig = self.configManager.getDefaultConfig()
-
-        # 纯 UI 状态，仅用于构建底部的状态文本显示
         self.statusFlags = {
             "loaded": False,
             "gated": False,
@@ -170,7 +166,6 @@ class MoldProcessPanel(QWidget):
         group.setLayout(layout)
         return group
 
-    # ====== 1. 用户交互 -> 发射意图信号 (Action) ======
     def onLoadSTLClick(self):
         filePath, _ = QFileDialog.getOpenFileName(self, "打开STL文件", "", "STL Files (*.stl);;All Files (*)")
         if filePath:
@@ -215,7 +210,6 @@ class MoldProcessPanel(QWidget):
         self.statusLabel.setStyleSheet("color: #0078d4; padding: 5px;")
         self.intentAdjustStructure.emit({"offsetValue": val})
 
-    # ====== 2. 接收 Controller 反馈 -> 更新 UI 状态 (Response) ======
     def onModelLoadedSuccess(self):
         self.statusFlags["loaded"] = True
         self.statusFlags["molded"] = False
@@ -237,7 +231,7 @@ class MoldProcessPanel(QWidget):
 
     def onGatingAddedSuccess(self):
         self.statusFlags["gated"] = True
-        self.statusFlags["molded"] = False  # 加了浇道后需要重新生成模具
+        self.statusFlags["molded"] = False
         self.addGatingButton.setEnabled(True)
         self.generateMoldButton.setEnabled(True)
         self._updateStatusText()
@@ -256,7 +250,6 @@ class MoldProcessPanel(QWidget):
         QMessageBox.information(self, "提示", f"表面偏移已完成 ({offsetVal} mm)")
 
     def onProcessError(self, title: str, errMsg: str):
-        # 发生错误时，恢复按钮可用状态
         if self.statusFlags["loaded"]:
             self.generateMoldButton.setEnabled(True)
             self.addGatingButton.setEnabled(True)
@@ -268,7 +261,6 @@ class MoldProcessPanel(QWidget):
         self.statusLabel.setStyleSheet("color: red; padding: 5px;")
         QMessageBox.critical(self, title, f"{title}:\n{errMsg}")
 
-    # ====== 辅助方法 ======
     def loadConfiguration(self, configDict):
         moldConfig = configDict.get("mold") or {}
         if "mold" not in self.currentConfig:

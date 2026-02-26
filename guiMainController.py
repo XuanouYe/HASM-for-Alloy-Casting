@@ -13,26 +13,20 @@ class MainController(QObject):
         self.mainWindow = mainWindow
         self.moldController = moldController
         self.parameterPanel = parameterPanel
-
         self.configManager = ConfigManager()
         self.currentConfigDict = self.configManager.getDefaultConfig()
-
-        # 全局应用状态
         self.elapsedTime = timedelta(0)
         self.currentManifestData = None
         self.partStlPath = None
         self.moldStlPath = None
         self.gatingStlPath = None
-        self.currentStlPath = None  # FDM 依赖的单独模型路径
-
+        self.currentStlPath = None
         self.timer = QTimer()
         self.timer.timeout.connect(self._updateTimer)
         self.timer.start(1000)
-
         self._initConnections()
 
     def _initConnections(self):
-        # 1. 绑定 Main View 的意图
         self.mainWindow.intentNewProject.connect(self.handleNewProject)
         self.mainWindow.intentSaveProject.connect(self.handleSaveProject)
         self.mainWindow.intentLoadManifest.connect(self.handleLoadManifest)
@@ -41,9 +35,6 @@ class MainController(QObject):
         self.mainWindow.intentResetConfig.connect(self.handleResetConfig)
         self.mainWindow.intentGenerateGcode.connect(self.handleGenerateGcode)
         self.mainWindow.intentGenerateCnc.connect(self.handleGenerateCnc)
-
-        # 2. 监听子模块的状态变化，并更新主窗口UI
-        # 当 MoldController 加载了最初的模型时，记录该路径供 FDM 使用
         self.moldController.modelLoadedPath.connect(self._onModelLoaded)
 
     def _updateTimer(self):
@@ -63,7 +54,6 @@ class MainController(QObject):
         self.mainWindow.setCncButtonEnabled(False)
         self.mainWindow.setGcodeButtonEnabled(False)
         self.mainWindow.setStatusText("新项目已创建")
-        # 可以在这里通过调用 moldController 的清理方法重置模型画面
 
     def handleSaveProject(self):
         self.mainWindow.setStatusText("项目正在保存...")
@@ -104,7 +94,6 @@ class MainController(QObject):
                 return
             self.currentConfigDict = configDict
             self.parameterPanel.loadConfiguration(configDict)
-            # 通知 MoldProcessPanel 加载配置
             self.mainWindow.moldProcessPanel.loadConfiguration(configDict)
             self.mainWindow.showMessage("成功", f"配置已加载: {filePath}")
         except Exception as e:

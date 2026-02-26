@@ -8,12 +8,9 @@ from geometryAdapters import trimeshToPyVista
 
 
 class ModelViewerWidget(QWidget):
-    # ==========================================
-    # 必须在这里（类级别）定义所有的信号
-    # ==========================================
     modelLoaded = pyqtSignal(dict)
     moldLoaded = pyqtSignal(dict)
-    viewError = pyqtSignal(str)  # <--- 确保这一行存在
+    viewError = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -37,7 +34,6 @@ class ModelViewerWidget(QWidget):
         container = QWidget()
         layout = QVBoxLayout()
         layout.setContentsMargins(5, 5, 5, 5)
-
         titleLabel = QLabel(title)
         titleFont = QFont()
         titleFont.setPointSize(10)
@@ -97,7 +93,6 @@ class ModelViewerWidget(QWidget):
             pvMesh = trimeshToPyVista(self.castingTriMesh)
 
             self.castingPlotter.clear_actors()
-
             self.castingPlotter.add_mesh(
                 pvMesh,
                 name="casting_mesh_actor",
@@ -122,7 +117,6 @@ class ModelViewerWidget(QWidget):
             self.castingPlotter.reset_camera()
             self.castingPlotter.camera.zoom(1.3)
             self.castingPlotter.update()
-
             modelInfo = self.getCastingModelInfo()
             if modelInfo:
                 self.modelLoaded.emit(modelInfo)
@@ -138,9 +132,7 @@ class ModelViewerWidget(QWidget):
         self.moldTriMesh = moldMesh.copy()
         try:
             pvMesh = trimeshToPyVista(self.moldTriMesh)
-
             self.moldPlotter.clear_actors()
-
             self.moldPlotter.add_mesh(
                 pvMesh,
                 name="mold_mesh_actor",
@@ -157,7 +149,6 @@ class ModelViewerWidget(QWidget):
             self.moldPlotter.reset_camera()
             self.moldPlotter.camera.zoom(1.3)
             self.moldPlotter.update()
-
             moldInfo = {
                 "vertices": len(self.moldTriMesh.vertices),
                 "faces": len(self.moldTriMesh.faces),

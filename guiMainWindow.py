@@ -1,4 +1,3 @@
-import sys
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QMessageBox,
@@ -158,7 +157,6 @@ class MainWindow(QMainWindow):
         self.timerLabel.setMinimumWidth(80)
         self.statusBar().addPermanentWidget(self.timerLabel)
 
-    # --- 按钮点击转为意图信号 ---
     def onLoadManifestClicked(self):
         filePath, _ = QFileDialog.getOpenFileName(self, "加载制造清单", "", "Manifest Files (*.json);;All Files (*)")
         if filePath:
