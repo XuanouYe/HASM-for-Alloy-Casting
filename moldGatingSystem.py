@@ -583,7 +583,7 @@ def createGatingSystem(castingMesh: trimesh.Trimesh, config: Optional[Dict] = No
     return gatingMesh
 
 if __name__ == '__main__':
-    inputStlPath = "testModels/hollow.cylinder.left.stl"
+    inputStlPath = "testModels/cube.with.groove.stl"
     config = {
         "targetFillTime": 3.0,
         "sprueInletOffset": 5.0,

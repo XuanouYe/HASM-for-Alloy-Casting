@@ -98,8 +98,8 @@ class MoldGenerator:
 
 
 def main():
-    inputStlPath = "testModels/hollow.cylinder.left.stl"
-    outputPath = "testModels/hollow.cylinder.left.mold.stl"
+    inputStlPath = "testModels/cube.with.groove.stl"
+    outputPath = "testModels/cube.with.groove.mold.stl"
 
     config = {
         "boundingBoxOffset": 2.0,

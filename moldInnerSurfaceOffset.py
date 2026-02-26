@@ -1,9 +1,9 @@
 import numpy as np
+import vtk
 import trimesh
 from typing import Optional, Tuple
 from shapely.geometry import Polygon, MultiPolygon
 from shapely.geometry.base import BaseGeometry
-import vtk
 from moldSupportRegionDetector import SupportRegionDetector
 
 
@@ -224,7 +224,7 @@ def main():
         "maxIterations": 20
     }
 
-    stlPath = "testModels/hollow.cylinder.down.stl"
+    stlPath = "testModels/hollow.cylinder.left.stl"
     mesh = trimesh.load_mesh(stlPath)
     print(f"Loaded mesh: {mesh.vertices.shape[0]} vertices, {mesh.faces.shape[0]} faces")
     print(f"Original mesh watertight: {mesh.is_watertight}")
