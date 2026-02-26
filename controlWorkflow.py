@@ -47,6 +47,18 @@ class WorkflowManager:
 
     def _registerBuiltinHandlers(self):
         self._handlers["CreateJob"] = self._handleCreateJob
+        self._handlers["GenerateMold"] = self._handleGenerateMold
+
+    def _handleGenerateMold(self, payload: Dict[str, Any]):
+        import moldGenerator
+        if not self.jobContext:
+            raise ValueError("Job context is not initialized")
+
+        jobOverrides = payload.get("jobOverrides", {})
+        if "mold" in jobOverrides:
+            self.jobContext.configSnapshot.mold.update(jobOverrides["mold"])
+
+        return moldGenerator.generateMold(self.jobContext)
 
     def registerHandler(self, eventName: str, handler: Callable):
         self._handlers[eventName] = handler
@@ -110,5 +122,8 @@ class WorkflowManager:
         ctx.ncProgramSet = NcProgramSet()
 
         self.jobContext = ctx
+        if inputGeometryRef and os.path.exists(inputGeometryRef):
+            ctx.registerArtifact("partMesh", inputGeometryRef, "CreateJob")
+
         ctx.saveToJson()
         return ctx

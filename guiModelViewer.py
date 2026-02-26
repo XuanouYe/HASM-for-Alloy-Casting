@@ -60,11 +60,17 @@ class ModelViewerWidget(QWidget):
     def loadFromJobContext(self, jobContext):
         partPath = jobContext.getArtifactPath("partMesh")
         moldPath = jobContext.getArtifactPath("moldShell")
+        gatingPath = jobContext.getArtifactPath("gatingMesh")
 
         if partPath and self.castingPlotter:
             mesh = pv.read(partPath)
             self.castingPlotter.clear()
             self.castingPlotter.add_mesh(mesh, color="lightblue", show_edges=True)
+
+            if gatingPath:
+                gatingMesh = pv.read(gatingPath)
+                self.castingPlotter.add_mesh(gatingMesh, color="yellow", show_edges=True)
+
             self.castingPlotter.reset_camera()
 
         if moldPath and self.moldPlotter:

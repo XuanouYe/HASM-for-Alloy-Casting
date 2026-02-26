@@ -17,7 +17,6 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("镓合金3D打印控制系统")
         self.setGeometry(100, 100, 1400, 800)
 
-        # 核心：持有唯一的 WorkflowManager 实例
         self.workflowManager = WorkflowManager()
 
         self.initUI()
@@ -29,11 +28,9 @@ class MainWindow(QMainWindow):
 
         self.horizontalSplitter = QSplitter(Qt.Horizontal)
 
-        # 左侧：模型预览
         self.modelViewer = ModelViewerWidget()
         self.horizontalSplitter.addWidget(self.modelViewer)
 
-        # 右侧：控制面板
         self.rightPanel = QWidget()
         rightLayout = QVBoxLayout()
 
@@ -45,7 +42,6 @@ class MainWindow(QMainWindow):
         self.tabWidget.addTab(self.parameterPanel, "工艺参数")
         rightLayout.addWidget(self.tabWidget)
 
-        # 底部后处理按钮
         btnLayout = QHBoxLayout()
         self.btnGenerateGcode = QPushButton("生成 FDM G代码")
         self.btnGenerateGcode.setEnabled(False)
@@ -62,7 +58,6 @@ class MainWindow(QMainWindow):
 
         mainLayout.addWidget(self.horizontalSplitter)
 
-        # 状态栏
         self.statusBar = self.statusBar()
         self.statusLabel = QLabel("就绪")
         self.statusBar.addWidget(self.statusLabel)
@@ -71,15 +66,15 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(centralWidget)
 
     def initConnections(self):
-        # 面板事件绑定到 Workflow Dispatch
         self.moldProcessPanel.requestLoadModel.connect(self.dispatchCreateJob)
         self.moldProcessPanel.requestMoldGenerate.connect(self.dispatchGenerateMold)
-        # TODO: AddGating, Optimize, Adjust 等事件若后续细分，可在此接入
+
+        self.moldProcessPanel.requestAddGating.connect(self.dispatchGenerateMold)
+        self.moldProcessPanel.requestOrientationOptimize.connect(self.dispatchGenerateMold)
+        self.moldProcessPanel.requestAdjustStructure.connect(self.dispatchGenerateMold)
 
         self.btnGenerateGcode.clicked.connect(self.dispatchStartPrint)
         self.btnGenerateCnc.clicked.connect(self.dispatchPlanToolpath)
-
-    # ---------------- 统一的 Dispatch 封装 ---------------- #
 
     def _runWorker(self, eventName: str, payload: dict, onSuccess):
         self.statusLabel.setText(f"正在执行: {eventName}...")
@@ -92,10 +87,8 @@ class MainWindow(QMainWindow):
         QMessageBox.critical(self, "错误", f"执行失败:\n{err}")
         self.statusLabel.setText("执行出错")
 
-    # ---------------- 具体流程节点 ---------------- #
-
     def dispatchCreateJob(self, filePath: str):
-        # UI提取参数作为 Overrides
+        self.workflowManager.jobContext = None
         jobOverrides = self.parameterPanel.getConfiguration()
         payload = {
             "workspaceDir": "./workspace_gui",
@@ -105,19 +98,17 @@ class MainWindow(QMainWindow):
         self._runWorker("CreateJob", payload, self.onCreateJobDone)
 
     def onCreateJobDone(self, result):
+        self.modelViewer.loadFromJobContext(self.workflowManager.jobContext)
         self.moldProcessPanel.updateStatus("项目已创建，请生成模具。")
         self.statusLabel.setText("项目就绪")
 
     def dispatchGenerateMold(self, moldOverrides: dict):
-        # 将面板局部设置合并到全局 overrides
         fullOverrides = self.parameterPanel.getConfiguration()
         fullOverrides["mold"] = moldOverrides
-
         payload = {"jobOverrides": fullOverrides}
         self._runWorker("GenerateMold", payload, self.onGenerateMoldDone)
 
     def onGenerateMoldDone(self, result):
-        # 从 WorkflowContext 读取更新后的状态渲染 UI
         self.modelViewer.loadFromJobContext(self.workflowManager.jobContext)
         self.moldProcessPanel.updateStatus("模具生成完毕。", enableNext=True)
         self.btnGenerateGcode.setEnabled(True)
