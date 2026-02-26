@@ -1,8 +1,8 @@
 import numpy as np
 import trimesh
+from typing import Tuple, Optional
 from moldGatingSystem import createGatingSystem
 from moldSupportRegionDetector import calculateSupportRegions
-
 
 class MoldGenerator:
     def __init__(self, config=None):
@@ -30,8 +30,7 @@ class MoldGenerator:
         bounds = np.array(mesh.bounds, dtype=float)
         offset = float(self.boundingBoxOffset)
         bounds[0, :] -= offset
-        bounds[1, 0] += offset
-        bounds[1, 1] += offset
+        bounds[1, :] += offset 
         eps = 1e-6
         bounds[1, :] = np.maximum(bounds[1, :], bounds[0, :] + eps)
         return bounds
@@ -75,7 +74,7 @@ class MoldGenerator:
             "Try installing/configuring a backend (manifold or blender) and ensure meshes are watertight."
         ) from lastError
 
-    def addGating(self, castingMesh: trimesh.Trimesh, config: dict) -> trimesh.Trimesh:
+    def generateGating(self, castingMesh: trimesh.Trimesh, config: dict) -> trimesh.Trimesh:
         gatingConfig = {
             "targetFillTime": config.get("targetFillTime", 5.0),
             "sprueInletOffset": config.get("sprueInletOffset", 5.0),
@@ -86,20 +85,71 @@ class MoldGenerator:
             config=gatingConfig,
             visualize=False
         )
-        combinedMesh = trimesh.util.concatenate([castingMesh, gatingMesh])
-        combinedMesh.fix_normals()
-        return combinedMesh
+        return gatingMesh
 
-    def optimizeOrientation(moldShell: trimesh.Trimesh, config: dict) -> trimesh.Trimesh:
+    def optimizeOrientation(self, moldShell: trimesh.Trimesh, config: dict) -> trimesh.Trimesh:
         return moldShell
 
-    def adjustStructure(moldShell: trimesh.Trimesh, config: dict) -> trimesh.Trimesh:
+    def adjustStructure(self, moldShell: trimesh.Trimesh, config: dict) -> trimesh.Trimesh:
         return moldShell
 
+    def normalizeMeshes(self, partMesh: trimesh.Trimesh, moldMesh: trimesh.Trimesh, gatingMesh: Optional[trimesh.Trimesh]) -> Tuple[trimesh.Trimesh, trimesh.Trimesh, Optional[trimesh.Trimesh], np.ndarray]:
+        meshesToConsider = [partMesh, moldMesh]
+        if gatingMesh is not None:
+            meshesToConsider.append(gatingMesh)
+            
+        minZ = min(mesh.bounds[0][2] for mesh in meshesToConsider)
+        minX = min(mesh.bounds[0][0] for mesh in meshesToConsider)
+        maxX = max(mesh.bounds[1][0] for mesh in meshesToConsider)
+        minY = min(mesh.bounds[0][1] for mesh in meshesToConsider)
+        maxY = max(mesh.bounds[1][1] for mesh in meshesToConsider)
+        
+        centerX = (minX + maxX) / 2.0
+        centerY = (minY + maxY) / 2.0
+        
+        translation = np.array([-centerX, -centerY, -minZ])
+        matrix = np.eye(4)
+        matrix[:3, 3] = translation
+        
+        partMesh.apply_transform(matrix)
+        moldMesh.apply_transform(matrix)
+        if gatingMesh is not None:
+            gatingMesh.apply_transform(matrix)
+            
+        return partMesh, moldMesh, gatingMesh, translation
+
+    def generateMoldAssets(self, inputStlPath: str, paths: dict, config: dict) -> np.ndarray:
+        inputMesh = trimesh.load(inputStlPath)
+        partMesh = self.ensureTrimesh(inputMesh)
+        
+        moldShell = self.generateMoldShell(partMesh)
+        
+        gatingMesh = None
+        if config.get("addGating", False):
+            gatingMesh = self.generateGating(partMesh, config)
+
+        if config.get("optimizeOrientation", False):
+            moldShell = self.optimizeOrientation(moldShell, config)
+
+        if config.get("adjustStructure", False):
+            moldShell = self.adjustStructure(moldShell, config)
+
+        partMesh, moldShell, gatingMesh, translation = self.normalizeMeshes(partMesh, moldShell, gatingMesh)
+
+        partMesh.export(paths["part"])
+        moldShell.export(paths["moldShell"])
+        if gatingMesh is not None:
+            gatingMesh.export(paths["gating"])
+            
+        return translation
 
 def main():
+    from dataModel import ManifestManager
     inputStlPath = "testModels/cube.with.groove.stl"
-    outputPath = "testModels/cube.with.groove.mold.stl"
+    
+    workspace = "workspace_test"
+    manifestMgr = ManifestManager(workspace)
+    paths = manifestMgr.getFilePaths()
 
     config = {
         "boundingBoxOffset": 2.0,
@@ -107,41 +157,21 @@ def main():
         "layerHeight": 0.2,
         "smoothHeight": 0.4,
         "booleanEngine": None,
-        "addGating": False,
+        "addGating": True,
         "optimizeOrientation": False,
         "adjustStructure": False,
         "targetFillTime": 5.0,
         "sprueInletOffset": 5.0
     }
 
-    inputMesh = trimesh.load(inputStlPath)
     moldGen = MoldGenerator(config=config)
-    moldShell = moldGen.generateMoldShell(inputMesh)
-
-    if config.get("addGating", False):
-        castingMesh = moldGen.ensureTrimesh(inputMesh)
-        castingWithGating = moldGen.addGating(castingMesh, config)
-        castingWithGating.export("casting.with.gating.stl")
-
-    supportRegions = calculateSupportRegions(moldShell, config)
-    print(f"Support regions: {len(supportRegions)}")
-
-    if config.get("optimizeOrientation", False):
-        moldShell = moldGen.optimizeOrientation(moldShell, config)
-
-    if config.get("adjustStructure", False):
-        moldShell = moldGen.adjustStructure(moldShell, config)
-
-    moldShell.export(outputPath)
-
-    inputMeshObj = moldGen.ensureTrimesh(inputMesh)
-    print(f"Model bounds: {inputMeshObj.bounds}")
-    print(f"Mold shell bounds: {moldShell.bounds}")
-    print(f"Mold shell watertight: {moldShell.is_watertight}")
-    print(f"Mold shell vertices: {len(moldShell.vertices)}")
-    print(f"Mold shell faces: {len(moldShell.faces)}")
-    print(f"Output file: {outputPath}")
-
+    translation = moldGen.generateMoldAssets(inputStlPath, paths, config)
+    
+    manifestMgr.setWcsTransform(translation.tolist())
+    manifestMgr.setConfigSnapshot(config)
+    manifestPath = manifestMgr.save()
+    
+    print(f"Assets generated and normalized. Manifest saved to {manifestPath}")
 
 if __name__ == "__main__":
     main()
