@@ -1,23 +1,24 @@
-from typing import Any, Dict
+from typing import Callable
 from PyQt5.QtCore import QThread, pyqtSignal
 
 class WorkerThread(QThread):
     taskStarted = pyqtSignal()
-    taskCompleted = pyqtSignal(object)
+    taskProgress = pyqtSignal(int)
+    taskCompleted = pyqtSignal(dict)
     taskError = pyqtSignal(str)
 
-    def __init__(self, workflowManager, eventName: str, payload: Dict[str, Any], parent=None):
-        super().__init__(parent)
-        self.workflowManager = workflowManager
-        self.eventName = eventName
-        self.payload = payload
+    def __init__(self, task: Callable, *args, **kwargs):
+        super().__init__()
+        self.task = task
+        self.args = args
+        self.kwargs = kwargs
         self.shouldStop = False
 
     def run(self):
         try:
             self.taskStarted.emit()
-            result = self.workflowManager.dispatch(self.eventName, self.payload)
-            self.taskCompleted.emit(result)
+            result = self.task(*self.args, **self.kwargs)
+            self.taskCompleted.emit(result if isinstance(result, dict) else {"result": result})
         except Exception as e:
             self.taskError.emit(str(e))
 

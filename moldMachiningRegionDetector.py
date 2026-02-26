@@ -33,7 +33,14 @@ class AccessibilityAnalyzer:
     def _checkPlaneIntersection(self, origins: np.ndarray, directions: np.ndarray) -> np.ndarray:
         return directions[:, 2] < -1e-6
 
-    def analyze(self, numSamples: int = 10000, raysPerPoint: int = 180, batchSize: int = 100, normalOffset: float = 1e-6, exportCsv: bool = False, csvPath: str = None) -> MachiningRegionResult:
+    def analyze(
+            self,
+            numSamples: int = 10000,
+            raysPerPoint: int = 180,
+            batchSize: int = 100,
+            normalOffset: float = 1e-6,
+            exportCsv: bool = False
+    ) -> MachiningRegionResult:
         points, faceIndices = trimesh.sample.sample_surface(self.mesh, numSamples)
         normals = self.mesh.face_normals[faceIndices]
         unmachinableMask = np.zeros(numSamples, dtype=bool)
@@ -43,7 +50,7 @@ class AccessibilityAnalyzer:
             if abs(point[2] - self.zMin) < 1.0:
                 unmachinableMask[i] = True
                 continue
-            rayDirections = self.generateHemisphereDirections(normal, raysPerPoint)
+            rayDirections = self._generateHemisphereDirections(normal, raysPerPoint)
             numValidRays = len(rayDirections)
             if numValidRays == 0:
                 unmachinableMask[i] = True
@@ -55,17 +62,17 @@ class AccessibilityAnalyzer:
                 batchOrigins = rayOrigins[batchStart:batchEnd]
                 batchDirections = rayDirections[batchStart:batchEnd]
                 meshHits = self.mesh.ray.intersects_any(batchOrigins, batchDirections)
-                planeHits = self.checkPlaneIntersection(batchOrigins, batchDirections)
+                planeHits = self._checkPlaneIntersection(batchOrigins, batchDirections)
                 totalHits = np.logical_or(meshHits, planeHits)
                 hitCount += np.sum(totalHits)
-            if hitCount > numValidRays * 0.2:
+            if hitCount >= numValidRays:
                 unmachinableMask[i] = True
         unmachinablePoints = points[unmachinableMask]
-        unmachinablePercent = len(unmachinablePoints) / len(points) * 100
+        unmachinablePercent = (len(unmachinablePoints) / len(points)) * 100
         if exportCsv:
-            data = np.column_stack((points, unmachinableMask.astype(int)))
-            outputTarget = csvPath if csvPath else "accessibility_scores.csv"
-            np.savetxt(outputTarget, data, delimiter=",", header="x,y,z,unmachining", comments="", fmt="%.6f")
+            data = np.column_stack([points, unmachinableMask.astype(int)])
+            np.savetxt("accessibility_scores.csv", data, delimiter=",",
+                       header="x,y,z,unmachining", comments="", fmt="%.6f")
         return MachiningRegionResult(
             points=points,
             unmachinableMask=unmachinableMask,
