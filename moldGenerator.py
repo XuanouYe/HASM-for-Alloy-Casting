@@ -2,7 +2,6 @@ import numpy as np
 import trimesh
 from typing import Tuple, Optional
 from moldGatingSystem import createGatingSystem
-from moldSupportRegionDetector import calculateSupportRegions
 
 class MoldGenerator:
     def __init__(self, config=None):
