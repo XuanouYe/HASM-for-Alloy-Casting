@@ -1,4 +1,3 @@
-# guiMainWindow.py
 import sys
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QApplication, QMessageBox, QVBoxLayout,
@@ -9,8 +8,6 @@ from guiModelViewer import ModelViewerWidget
 from guiMoldProcessPanel import MoldProcessPanel
 from guiParameterPanel import ProcessParameterPanel
 from guiWorkerThread import WorkerThread
-
-# 引入状态管理和工作流总入口
 from controlWorkflow import WorkflowManager
 
 
