@@ -97,6 +97,7 @@ class MoldGenerator:
         centerY = (minY + maxY) / 2.0
         translation = np.array([-centerX, -centerY, -minZ])
         matrix = np.eye(4)
+                                 
         matrix[:3, 3] = translation
         partMesh.apply_transform(matrix)
         moldMesh.apply_transform(matrix)
