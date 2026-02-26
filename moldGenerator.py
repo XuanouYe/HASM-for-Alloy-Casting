@@ -30,7 +30,8 @@ class MoldGenerator:
         bounds = np.array(mesh.bounds, dtype=float)
         offset = float(self.boundingBoxOffset)
         bounds[0, :] -= offset
-        bounds[1, :] += offset
+        bounds[1, 0] += offset
+        bounds[1, 1] += offset
         eps = 1e-6
         bounds[1, :] = np.maximum(bounds[1, :], bounds[0, :] + eps)
         return bounds

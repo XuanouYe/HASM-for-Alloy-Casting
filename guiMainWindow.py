@@ -14,6 +14,7 @@ from guiParameterPanel import ProcessParameterPanel
 from guiWorkerThread import WorkerThread
 from controlConfig import ConfigManager
 from fdmExecutor import generateGcodeInterface
+from cncPathDesigner import generateCncJobInterface
 
 
 class MainWindow(QMainWindow):
@@ -27,6 +28,13 @@ class MainWindow(QMainWindow):
         self.isProcessing = False
         self.currentCastingTrimesh = None
         self.currentStlPath = None
+
+        # Track normalized asset paths to feed into CNC step
+        self.currentManifestData = None
+        self.partStlPath = None
+        self.moldStlPath = None
+        self.gatingStlPath = None
+
         self.configManager = ConfigManager()
         self.currentConfigDict = self.configManager.getDefaultConfig()
 
@@ -90,12 +98,18 @@ class MainWindow(QMainWindow):
         self.unifiedConfigGroup.setLayout(unifiedConfigLayout)
         scrollContentLayout.addWidget(self.unifiedConfigGroup)
 
-        gcodeGroup = QGroupBox()
+        gcodeGroup = QGroupBox("制造文件生成")
         gcodeLayout = QVBoxLayout()
-        self.generateGcodeButton = QPushButton("生成G代码")
+        self.generateGcodeButton = QPushButton("生成FDM G代码")
         self.generateGcodeButton.setEnabled(False)
         self.generateGcodeButton.clicked.connect(self.onGenerateGcodeClicked)
         gcodeLayout.addWidget(self.generateGcodeButton)
+
+        self.generateCncButton = QPushButton("生成CNC刀位(CL-JSON)")
+        self.generateCncButton.setEnabled(False)
+        self.generateCncButton.clicked.connect(self.onGenerateCncClicked)
+        gcodeLayout.addWidget(self.generateCncButton)
+
         gcodeGroup.setLayout(gcodeLayout)
         scrollContentLayout.addWidget(gcodeGroup)
 
@@ -129,6 +143,10 @@ class MainWindow(QMainWindow):
         saveAction.setShortcut("Ctrl+S")
         saveAction.triggered.connect(self.onSaveProject)
         fileMenu.addAction(saveAction)
+
+        loadManifestAction = QAction("加载制造清单(Manifest)", self)
+        loadManifestAction.triggered.connect(self.onLoadManifest)
+        fileMenu.addAction(loadManifestAction)
 
         fileMenu.addSeparator()
 
@@ -195,6 +213,11 @@ class MainWindow(QMainWindow):
             self.statusLabel.setText("新项目已创建")
             self.progressBar.setValue(0)
             self.elapsedTime = timedelta(0)
+            self.currentManifestData = None
+            self.partStlPath = None
+            self.moldStlPath = None
+            self.gatingStlPath = None
+            self.generateCncButton.setEnabled(False)
 
     def onSaveProject(self):
         self.statusLabel.setText("项目正在保存...")
@@ -202,6 +225,32 @@ class MainWindow(QMainWindow):
 
     def onPreferences(self):
         QMessageBox.information(self, "偏好设置", "该功能将在后续版本中实现")
+
+    def onLoadManifest(self):
+        filePath, _ = QFileDialog.getOpenFileName(
+            self, "加载制造清单", "", "Manifest Files (*.json);;All Files (*)"
+        )
+        if not filePath:
+            return
+
+        try:
+            with open(filePath, "r", encoding="utf-8") as f:
+                manifestData = json.load(f)
+
+            self.currentManifestData = manifestData
+            files = manifestData.get("files", {})
+            self.partStlPath = files.get("partStl")
+            self.moldStlPath = files.get("moldStl")
+            self.gatingStlPath = files.get("gatingStl")
+
+            if self.partStlPath and self.moldStlPath:
+                self.generateCncButton.setEnabled(True)
+                QMessageBox.information(self, "成功", "制造清单加载成功，可以生成CNC路径")
+            else:
+                QMessageBox.warning(self, "警告", "制造清单缺少必要的部件模型或模具模型路径")
+
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"加载清单失败: {str(e)}")
 
     def onModelLoaded(self, modelInfo):
         self.currentStlPath = modelInfo.get("filePath")
@@ -221,6 +270,7 @@ class MainWindow(QMainWindow):
         success = self.dualModelViewer.loadMoldModel(moldShell)
         if success:
             self.statusLabel.setText("模具已生成并显示")
+            QMessageBox.information(self, "提示", "请先通过脚本生成Manifest及标准化几何以启用CNC功能。")
         else:
             self.statusLabel.setText("模具已生成(显示失败)")
 
@@ -333,6 +383,60 @@ class MainWindow(QMainWindow):
     def onGenerateGcodeError(self, errorMsg):
         self.generateGcodeButton.setEnabled(True)
         QMessageBox.critical(self, "错误", f"生成G代码失败:\n{errorMsg}")
+
+    def onGenerateCncClicked(self):
+        if not self.partStlPath or not self.moldStlPath:
+            QMessageBox.warning(self, "错误", "缺少必要的标准化STL模型路径。请先加载Manufacturing Manifest。")
+            return
+
+        config = self.parameterPanel.getConfiguration()
+        outputPath, _ = QFileDialog.getSaveFileName(
+            self,
+            "保存CNC刀位文件",
+            "",
+            "JSON Files (*.json);;All Files (*)"
+        )
+        if not outputPath:
+            return
+
+        # Ask for visualization
+        reply = QMessageBox.question(
+            self, "可视化",
+            "是否在生成后启动VTK可视化窗口检查刀路？",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes
+        )
+        visualize = (reply == QMessageBox.Yes)
+
+        self.generateCncButton.setEnabled(False)
+        self.statusLabel.setText("正在计算CNC刀位...")
+
+        def taskCallable():
+            # If gating is missing, use part to avoid crash
+            gatingPathToUse = self.gatingStlPath if self.gatingStlPath else self.partStlPath
+            return generateCncJobInterface(
+                partStl=self.partStlPath,
+                moldStl=self.moldStlPath,
+                gatingStl=gatingPathToUse,
+                outputJsonPath=outputPath,
+                processConfig=config,
+                visualize=visualize
+            )
+
+        worker = WorkerThread(taskCallable)
+        worker.taskCompleted.connect(self.onGenerateCncCompleted)
+        worker.taskError.connect(self.onGenerateCncError)
+        worker.start()
+        self.currentCncWorker = worker
+
+    def onGenerateCncCompleted(self, result):
+        self.generateCncButton.setEnabled(True)
+        self.statusLabel.setText("CNC刀位生成完成")
+        QMessageBox.information(self, "完成", "CNC刀位JSON已成功生成。")
+
+    def onGenerateCncError(self, errorMsg):
+        self.generateCncButton.setEnabled(True)
+        self.statusLabel.setText("CNC刀位生成失败")
+        QMessageBox.critical(self, "错误", f"生成CNC刀位失败:\n{errorMsg}")
 
     def updateTimer(self):
         self.elapsedTime += timedelta(seconds=1)

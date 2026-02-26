@@ -355,7 +355,8 @@ class MoldProcessPanel(QWidget):
                 "boundingBoxOffset": boundingBoxOffset
             }
             moldGen = MoldGenerator(config=config)
-            combinedMesh = moldGen.addGating(self.currentCastingMesh, config)
+            gatingMesh = moldGen.generateGating(self.currentCastingMesh, config)
+            combinedMesh = trimesh.util.concatenate([self.currentCastingMesh, gatingMesh])
             return {"castingMesh": combinedMesh}
 
         worker = WorkerThread(gatingTask)
@@ -429,7 +430,8 @@ class MoldProcessPanel(QWidget):
 
         def orientationTask():
             config = {"optimizationType": optimizationType}
-            updatedMold = MoldGenerator.optimizeOrientation(self.currentMoldShell, config)
+            moldGen = MoldGenerator(config=config)
+            updatedMold = moldGen.optimizeOrientation(self.currentMoldShell, config)
             return {"moldShell": updatedMold, "type": optimizationType}
 
         worker = WorkerThread(orientationTask)
@@ -473,7 +475,8 @@ class MoldProcessPanel(QWidget):
 
         def adjustTask():
             config = {"offsetValue": offsetValue}
-            updatedMold = MoldGenerator.adjustStructure(self.currentMoldShell, config)
+            moldGen = MoldGenerator(config=config)
+            updatedMold = moldGen.adjustStructure(self.currentMoldShell, config)
             return {"moldShell": updatedMold, "offset": offsetValue}
 
         worker = WorkerThread(adjustTask)
