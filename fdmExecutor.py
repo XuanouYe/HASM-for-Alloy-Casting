@@ -2,15 +2,17 @@ import time
 import posixpath
 import subprocess
 import struct
+import os
 from pathlib import Path, PureWindowsPath
 from typing import Dict, Optional, List, Tuple, Any
 
 from controlConfig import ConfigManager
+from dataModel import ManifestManager
 
 defaultWslEnginePath = ""
 defaultDefinitionFiles = []
-defaultAutoDropToBuildPlate = True
-defaultAutoCenterXy = True
+defaultAutoDropToBuildPlate = False
+defaultAutoCenterXy = False
 
 
 class SliceException(Exception):
@@ -176,15 +178,17 @@ class CuraEngineController:
             outputPath: str,
             settings: Optional[Dict[str, str]] = None,
             definitionFiles: Optional[List[str]] = None,
-            autoDropToBuildPlate: bool = True,
-            autoCenterXY: bool = True,
+            autoDropToBuildPlate: bool = False,
+            autoCenterXY: bool = False,
     ) -> str:
         wslStlPath = self._validateInputFile(stlPath, ".stl")
         wslOutputPath = self._ensureOutputDirectory(outputPath)
+        
+        if settings is None:
+            settings = {}
+            
         if autoDropToBuildPlate or autoCenterXY:
             min_x, max_x, min_y, max_y, min_z, max_z = self._getStlBoundingBox(stlPath)
-            if settings is None:
-                settings = {}
 
             if autoDropToBuildPlate and "mesh_position_z" not in settings:
                 settings["mesh_position_z"] = str(-min_z)
@@ -198,6 +202,13 @@ class CuraEngineController:
 
                 if "mesh_position_y" not in settings:
                     settings["mesh_position_y"] = str(-center_y)
+        else:
+            if "mesh_position_x" not in settings:
+                settings["mesh_position_x"] = "0.0"
+            if "mesh_position_y" not in settings:
+                settings["mesh_position_y"] = "0.0"
+            if "mesh_position_z" not in settings:
+                settings["mesh_position_z"] = "0.0"
 
         finalWslOutputPath = wslOutputPath
         cmdArgs = self._buildCommandArgs(
@@ -220,24 +231,41 @@ def generateGcodeInterface(
     defaultConfig = cm.getDefaultConfig()
     additiveConfig = processConfig.get("additive") or defaultConfig.get("additive") or {}
     settings = cm.generateCuraConfig(additiveConfig)
-    if not defaultWslEnginePath:
-        raise SliceException("defaultWslEnginePath not configured in fdmExecutor")
-    controller = CuraEngineController(defaultWslEnginePath)
+    
+    enginePath = processConfig.get("wslEnginePath", defaultWslEnginePath)
+    if not enginePath:
+        raise SliceException("wslEnginePath not configured in processConfig or defaults")
+        
+    defs = processConfig.get("definitionFiles", defaultDefinitionFiles)
+    autoDrop = processConfig.get("autoDropToBuildPlate", defaultAutoDropToBuildPlate)
+    autoCenter = processConfig.get("autoCenterXY", defaultAutoCenterXy)
+    
+    controller = CuraEngineController(enginePath)
     return controller.generateGcode(
         stlPath=stlPath,
         outputPath=outputPath,
         settings=settings,
-        definitionFiles=defaultDefinitionFiles,
-        autoDropToBuildPlate=defaultAutoDropToBuildPlate,
-        autoCenterXY=defaultAutoCenterXy,
+        definitionFiles=defs,
+        autoDropToBuildPlate=autoDrop,
+        autoCenterXY=autoCenter,
     )
 
 
 def main():
+    workspace = "workspace_test"
+    manifestPath = os.path.join(workspace, "manifest.json")
+    
+    if os.path.exists(manifestPath):
+        manifestMgr = ManifestManager.load(manifestPath)
+        files = manifestMgr["files"]
+        stlPath = files.get("moldShell")
+        outPath = files.get("fdmGcode")
+    else:
+        print("Run moldGenerator.py first to create manifest")
+        return
+        
     testConfig = {
         "wsl_engine_path": "/mnt/c/users/xuanouye/desktop/thesis/04-implementation/pc/external/curaengine/build/release/CuraEngine",
-        "stl_path": "C:\\Users\\XuanouYe\\Desktop\\Thesis\\04-Implementation\\PC\\src\\monk.stl",
-        "output_path": "C:\\Users\\XuanouYe\\Desktop\\output.gcode",
         "definition_files": [
             "C:\\Users\\XuanouYe\\Desktop\\Thesis\\04-Implementation\\PC\\external\\Cura\\resources\\definitions\\fdmprinter.def.json",
             "C:\\Users\\XuanouYe\\Desktop\\Thesis\\04-Implementation\\PC\\external\\Cura\\resources\\definitions\\fdmextruder.def.json",
@@ -249,17 +277,18 @@ def main():
             "bottom_layers": "4",
         },
     }
+    
     try:
         controller = CuraEngineController(testConfig["wsl_engine_path"])
         out = controller.generateGcode(
-            stlPath=testConfig["stl_path"],
-            outputPath=testConfig["output_path"],
+            stlPath=stlPath,
+            outputPath=outPath,
             settings=testConfig["settings"],
             definitionFiles=testConfig["definition_files"],
-            autoDropToBuildPlate=True,
-            autoCenterXY=True
+            autoDropToBuildPlate=False,
+            autoCenterXY=False
         )
-        print(f"Output: {out}")
+        print(f"Output generated at: {out}")
     except SliceException as e:
         print(f"Slicing failed: {e}")
     except Exception as e:
