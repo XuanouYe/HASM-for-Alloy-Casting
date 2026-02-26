@@ -1,10 +1,12 @@
 import json
+import os
 from dataclasses import dataclass
 from typing import List, Dict, Optional, Any
 import numpy as np
 import trimesh
 import vtk
 from scipy.spatial.distance import cdist
+from dataModel import ManifestManager
 
 def normalizeVector(vec: np.ndarray) -> np.ndarray:
     norm = float(np.linalg.norm(vec))
@@ -162,33 +164,58 @@ class FiveAxisCncPathGenerator:
         self.version = str(version)
         self.toolpathEngine = TrimeshToolpathEngine()
 
-    def loadMesh(self, stlPath: str) -> trimesh.Trimesh:
+    def loadMesh(self, stlPath: str) -> Optional[trimesh.Trimesh]:
+        if not stlPath or not os.path.exists(stlPath):
+            return None
         mesh = trimesh.load_mesh(stlPath)
         if isinstance(mesh, trimesh.Scene):
             mesh = trimesh.util.concatenate([g for g in mesh.geometry.values()])
         return mesh
 
-    def generateJob(self, partStl: str, moldStl: str, gatingStl: str, toolParams: Dict[str, Any], stepParams: List[Dict[str, Any]], axisStrategyParams: Dict[str, Any], wcsId: str = "WCS0", jobId: Optional[str] = None) -> Dict[str, Any]:
+    def generateJob(self, partStl: str, moldStl: str, gatingStl: Optional[str], toolParams: Dict[str, Any], stepParams: List[Dict[str, Any]], axisStrategyParams: Dict[str, Any], wcsId: str = "WCS0", jobId: Optional[str] = None) -> Dict[str, Any]:
         partMesh = self.loadMesh(partStl)
         moldMesh = self.loadMesh(moldStl)
-        gatingMesh = self.loadMesh(gatingStl)
-        globalMinZ = min([float(partMesh.bounds[0][2]), float(moldMesh.bounds[0][2]), float(gatingMesh.bounds[0][2])])
+        gatingMesh = self.loadMesh(gatingStl) if gatingStl else None
+        
+        validBounds = [float(partMesh.bounds[0][2]), float(moldMesh.bounds[0][2])]
+        if gatingMesh:
+            validBounds.append(float(gatingMesh.bounds[0][2]))
+        globalMinZ = min(validBounds)
+        
         candidateAxesRaw = axisStrategyParams.get("candidateAxes", [[0.0, 0.0, 1.0]])
         candidateAxesUnfiltered = [normalizeVector(np.array(a, dtype=float)) for a in candidateAxesRaw]
         candidateAxes = [ax for ax in candidateAxesUnfiltered if ax[2] >= 0.0]
         if not candidateAxes:
             candidateAxes = [np.array([0.0, 0.0, 1.0])]
+            
         safetyMargin = float(toolParams.get("safetyMargin", 0.5))
         toolDiameter = float(toolParams.get("diameter", 6.0))
         toolRadius = toolDiameter * 0.5
-        combinedObstacleMesh = trimesh.util.concatenate([partMesh, gatingMesh])
+        
+        obstacles = [partMesh]
+        if gatingMesh:
+            obstacles.append(gatingMesh)
+        combinedObstacleMesh = trimesh.util.concatenate(obstacles)
+        
+        steps = []
+        
         step1KeepOut = KeepOutZoneManager(combinedObstacleMesh, safetyMargin)
         step1 = self.generateStep(1, "shellRemoval", moldMesh, step1KeepOut, toolParams, stepParams[0], candidateAxes, str(stepParams[0].get("mode", "dropRaster")), toolRadius, safetyMargin, globalMinZ)
-        step2KeepOut = KeepOutZoneManager(gatingMesh, safetyMargin)
+        steps.append(step1)
+        
+        if gatingMesh:
+            step2KeepOut = KeepOutZoneManager(gatingMesh, safetyMargin)
+        else:
+            step2KeepOut = None
         step2 = self.generateStep(2, "partFinishing", partMesh, step2KeepOut, toolParams, stepParams[1], candidateAxes, str(stepParams[1].get("mode", "waterline")), toolRadius, safetyMargin, globalMinZ)
-        step3KeepOut = KeepOutZoneManager(partMesh, safetyMargin)
-        step3 = self.generateStep(3, "gatingRemoval", gatingMesh, step3KeepOut, toolParams, stepParams[2], candidateAxes, str(stepParams[2].get("mode", "dropRaster")), toolRadius, safetyMargin, globalMinZ)
-        out = {"version": self.version, "wcsId": str(wcsId), "steps": [step1, step2, step3]}
+        steps.append(step2)
+        
+        if gatingMesh:
+            step3KeepOut = KeepOutZoneManager(partMesh, safetyMargin)
+            step3 = self.generateStep(3, "gatingRemoval", gatingMesh, step3KeepOut, toolParams, stepParams[2], candidateAxes, str(stepParams[2].get("mode", "dropRaster")), toolRadius, safetyMargin, globalMinZ)
+            steps.append(step3)
+            
+        out = {"version": self.version, "wcsId": str(wcsId), "steps": steps}
         if jobId is not None:
             out["jobId"] = str(jobId)
         return out
@@ -369,18 +396,33 @@ def buildSampleConfig() -> Dict[str, Any]:
 def main():
     config = buildSampleConfig()
     generator = FiveAxisCncPathGenerator(version="1.0")
-    partMesh = generator.loadMesh("testModels/cube.with.groove.with.riser.stl")
+    
+    workspace = "workspace_test"
+    manifestPath = os.path.join(workspace, "manifest.json")
+    
+    if os.path.exists(manifestPath):
+        manifestMgr = ManifestManager.load(manifestPath)
+        files = manifestMgr["files"]
+        partStl = files.get("part")
+        moldStl = files.get("moldShell")
+        gatingStl = files.get("gating") if os.path.exists(files.get("gating", "")) else None
+        outPath = files.get("cncClJson", "output_cldata.json")
+    else:
+        print("Run moldGenerator.py first to create manifest")
+        return
+        
+    partMesh = generator.loadMesh(partStl)
     clData = generator.generateJob(
-        partStl="testModels/cube.with.groove.with.riser.stl",
-        moldStl="testModels/cube.with.groove.mold.stl",
-        gatingStl="testModels/cube.with.groove.gating.stl",
+        partStl=partStl,
+        moldStl=moldStl,
+        gatingStl=gatingStl,
         toolParams=config["toolParams"],
         stepParams=config["stepParams"],
         axisStrategyParams=config["axisStrategyParams"],
         wcsId="WCS_MAIN",
         jobId="JOB_001"
     )
-    generator.exportClJson(clData, "output_cldata.json")
+    generator.exportClJson(clData, outPath)
     visualizer = PathVisualizer()
     visualizer.visualize(partMesh, clData)
 
