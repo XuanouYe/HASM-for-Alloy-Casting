@@ -84,7 +84,8 @@ class MoldGenerator:
         return moldShell
 
     def normalizeMeshesToWcs(self, partMesh: trimesh.Trimesh, moldMesh: trimesh.Trimesh,
-                             gatingMesh: Optional[trimesh.Trimesh]) -> Tuple[trimesh.Trimesh, trimesh.Trimesh, Optional[trimesh.Trimesh], np.ndarray]:
+                             gatingMesh: Optional[trimesh.Trimesh]) -> Tuple[
+        trimesh.Trimesh, trimesh.Trimesh, Optional[trimesh.Trimesh], np.ndarray]:
         meshesToConsider = [partMesh, moldMesh]
         if gatingMesh is not None:
             meshesToConsider.append(gatingMesh)
@@ -97,6 +98,7 @@ class MoldGenerator:
         centerY = (minY + maxY) / 2.0
         translation = np.array([-centerX, -centerY, -minZ])
         matrix = np.eye(4)
+
         matrix[:3, 3] = translation
         partMesh.apply_transform(matrix)
         moldMesh.apply_transform(matrix)
@@ -125,7 +127,7 @@ class MoldGenerator:
 
 def main():
     from manufacturingManifest import ManufacturingManifest
-    inputStlPath = "testModels/cube.with.groove.stl"
+    inputStlPath = "testModels/cylinder.down.stl"
     projectId = "test_project_001"
     manifest = ManufacturingManifest(projectId)
     paths = {

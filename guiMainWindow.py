@@ -411,7 +411,6 @@ class MainWindow(QMainWindow):
         self.statusLabel.setText("正在计算CNC刀位...")
 
         def taskCallable():
-            # If gating is missing, use part to avoid crash
             gatingPathToUse = self.gatingStlPath if self.gatingStlPath else self.partStlPath
             return generateCncJobInterface(
                 partStl=self.partStlPath,

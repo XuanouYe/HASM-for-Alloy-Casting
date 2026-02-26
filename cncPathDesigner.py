@@ -483,15 +483,13 @@ def main():
     }
 
     generateCncJobInterface(
-        partStl="testModels/cube.with.groove.normalized.stl",
-        moldStl="testModels/cube.with.groove.mold.normalized.stl",
-        gatingStl="testModels/cube.with.groove.gating.normalized.stl",
-        outputJsonPath="test_cnc_output.json",
+        partStl="testModels/cylinder.down.stl",
+        moldStl="testModels/cylinder.down.mold.stl",
+        gatingStl="testModels/cylinder.down.gating.stl",
+        outputJsonPath="cnc.cylinder.down.json",
         processConfig=testConfig,
         visualize=True
     )
-    print("CNC Job generated successfully.")
-
 
 if __name__ == "__main__":
     main()
