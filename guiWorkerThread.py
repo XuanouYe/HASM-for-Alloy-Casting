@@ -4,7 +4,7 @@ from PyQt5.QtCore import QThread, pyqtSignal
 class WorkerThread(QThread):
     taskStarted = pyqtSignal()
     taskProgress = pyqtSignal(int)
-    taskCompleted = pyqtSignal(dict)
+    taskCompleted = pyqtSignal(object)
     taskError = pyqtSignal(str)
 
     def __init__(self, task: Callable, *args, **kwargs):
@@ -18,7 +18,7 @@ class WorkerThread(QThread):
         try:
             self.taskStarted.emit()
             result = self.task(*self.args, **self.kwargs)
-            self.taskCompleted.emit(result if isinstance(result, dict) else {"result": result})
+            self.taskCompleted.emit(result)
         except Exception as e:
             self.taskError.emit(str(e))
 

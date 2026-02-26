@@ -1,16 +1,19 @@
 from typing import Optional, Dict
-import numpy as np
 import trimesh
 from pyvistaqt import QtInteractor
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot
 from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import QWidget, QLabel, QHBoxLayout, QVBoxLayout
 from geometryAdapters import trimeshToPyVista
 
 
 class ModelViewerWidget(QWidget):
+    # ==========================================
+    # 必须在这里（类级别）定义所有的信号
+    # ==========================================
     modelLoaded = pyqtSignal(dict)
     moldLoaded = pyqtSignal(dict)
+    viewError = pyqtSignal(str)  # <--- 确保这一行存在
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -34,6 +37,7 @@ class ModelViewerWidget(QWidget):
         container = QWidget()
         layout = QVBoxLayout()
         layout.setContentsMargins(5, 5, 5, 5)
+
         titleLabel = QLabel(title)
         titleFont = QFont()
         titleFont.setPointSize(10)
@@ -42,6 +46,7 @@ class ModelViewerWidget(QWidget):
         titleLabel.setAlignment(Qt.AlignCenter)
         titleLabel.setStyleSheet("background-color: #f0f0f0; padding: 5px;")
         layout.addWidget(titleLabel)
+
         try:
             plotter = QtInteractor(container)
             plotter.set_background("white")
@@ -58,6 +63,7 @@ class ModelViewerWidget(QWidget):
                 self.castingPlotter = None
             else:
                 self.moldPlotter = None
+
         container.setLayout(layout)
         return container
 
@@ -66,81 +72,110 @@ class ModelViewerWidget(QWidget):
             return
         try:
             self.moldPlotter.renderer.camera = self.castingPlotter.camera
+
             def syncRenderMold(obj, event):
                 if self.syncEnabled:
                     self.moldPlotter.render()
+
             def syncRenderCasting(obj, event):
                 if self.syncEnabled:
                     self.castingPlotter.render()
+
             self.castingPlotter.iren.add_observer("InteractionEvent", syncRenderMold)
             self.moldPlotter.iren.add_observer("InteractionEvent", syncRenderCasting)
             self.castingPlotter.camera.AddObserver("ModifiedEvent", lambda o, e: self.moldPlotter.render())
         except Exception as e:
-            print(f"相机同步设置警告: {str(e)}")
+            self.viewError.emit(f"相机同步设置警告: {str(e)}")
 
-    def loadCastingModel(self, filePath: str) -> bool:
-        from geometryAdapters import loadMeshFromFile
-        self.castingTriMesh = loadMeshFromFile(filePath)
-        if self.castingPlotter is None:
-            return False
-        pvMesh = trimeshToPyVista(self.castingTriMesh)
-        self.castingPlotter.clear()
-        self.castingPlotter.add_mesh(
-            pvMesh,
-            color="lightblue",
-            opacity=1.0,
-            show_edges=True,
-            edge_color="navy",
-            line_width=2.0,
-            lighting=True,
-            smooth_shading=True,
-            specular=0.5,
-            specular_power=15,
-            ambient=0.3,
-            diffuse=0.8,
-            metallic=0.2,
-            roughness=0.5
-        )
-        self.castingPlotter.enable_shadows()
-        self.castingPlotter.enable_anti_aliasing()
-        self.castingPlotter.reset_camera()
-        self.castingPlotter.camera.zoom(1.3)
-        modelInfo = {
-            "filePath": filePath,
-            "vertices": len(self.castingTriMesh.vertices),
-            "faces": len(self.castingTriMesh.faces),
-            "bounds": self.castingTriMesh.bounds.tolist(),
-            "volume": float(self.castingTriMesh.volume),
-            "area": float(self.castingTriMesh.area)
-        }
-        self.modelLoaded.emit(modelInfo)
-        return True
+    @pyqtSlot(object)
+    def loadCastingMesh(self, mesh: trimesh.Trimesh):
+        if self.castingPlotter is None or mesh is None:
+            return
 
-    def loadMoldModel(self, moldMesh: trimesh.Trimesh) -> bool:
-        self.moldTriMesh = moldMesh
-        if self.moldPlotter is None:
-            return False
-        pvMesh = trimeshToPyVista(moldMesh)
-        self.moldPlotter.clear()
-        self.moldPlotter.add_mesh(
-            pvMesh,
-            color="lightcoral",
-            opacity=0.9,
-            show_edges=True,
-            edge_color="darkred",
-            line_width=1.5,
-            lighting=True,
-            smooth_shading=True
-        )
-        self.moldPlotter.render()
-        moldInfo = {
-            "vertices": len(moldMesh.vertices),
-            "faces": len(moldMesh.faces),
-            "bounds": moldMesh.bounds.tolist()
-        }
-        self.moldLoaded.emit(moldInfo)
-        return True
+        self.castingTriMesh = mesh.copy()
+        try:
+            pvMesh = trimeshToPyVista(self.castingTriMesh)
 
+            self.castingPlotter.clear_actors()
+
+            self.castingPlotter.add_mesh(
+                pvMesh,
+                name="casting_mesh_actor",
+                color="lightblue",
+                opacity=1.0,
+                show_edges=True,
+                edge_color="navy",
+                line_width=2.0,
+                lighting=True,
+                smooth_shading=True,
+                specular=0.5,
+                specular_power=15,
+                ambient=0.3,
+                diffuse=0.8,
+                metallic=0.2,
+                roughness=0.5,
+                reset_camera=True
+            )
+
+            self.castingPlotter.enable_shadows()
+            self.castingPlotter.enable_anti_aliasing()
+            self.castingPlotter.reset_camera()
+            self.castingPlotter.camera.zoom(1.3)
+            self.castingPlotter.update()
+
+            modelInfo = self.getCastingModelInfo()
+            if modelInfo:
+                self.modelLoaded.emit(modelInfo)
+
+        except Exception as e:
+            self.viewError.emit(f"渲染铸件模型失败: {str(e)}")
+
+    @pyqtSlot(object)
+    def loadMoldMesh(self, moldMesh: trimesh.Trimesh):
+        if self.moldPlotter is None or moldMesh is None:
+            return
+
+        self.moldTriMesh = moldMesh.copy()
+        try:
+            pvMesh = trimeshToPyVista(self.moldTriMesh)
+
+            self.moldPlotter.clear_actors()
+
+            self.moldPlotter.add_mesh(
+                pvMesh,
+                name="mold_mesh_actor",
+                color="lightcoral",
+                opacity=0.9,
+                show_edges=True,
+                edge_color="darkred",
+                line_width=1.5,
+                lighting=True,
+                smooth_shading=True,
+                reset_camera=True
+            )
+
+            self.moldPlotter.reset_camera()
+            self.moldPlotter.camera.zoom(1.3)
+            self.moldPlotter.update()
+
+            moldInfo = {
+                "vertices": len(self.moldTriMesh.vertices),
+                "faces": len(self.moldTriMesh.faces),
+                "bounds": self.moldTriMesh.bounds.tolist()
+            }
+            self.moldLoaded.emit(moldInfo)
+
+        except Exception as e:
+            self.viewError.emit(f"渲染模具模型失败: {str(e)}")
+
+    @pyqtSlot()
+    def clearMoldView(self):
+        if self.moldPlotter:
+            self.moldPlotter.clear()
+            self.moldTriMesh = None
+            self.moldPlotter.render()
+
+    @pyqtSlot()
     def resetView(self):
         if self.castingPlotter:
             self.castingPlotter.reset_camera()

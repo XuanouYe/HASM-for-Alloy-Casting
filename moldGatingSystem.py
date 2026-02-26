@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import List, Tuple, Optional, Dict
+from typing import List, Tuple, Optional, Dict, Union
 import numpy as np
 import trimesh
 from scipy.spatial import KDTree
@@ -426,41 +426,35 @@ class AutoGatingSystem:
         systemMesh.fix_normals()
         castingWithRiserMesh = trimesh.util.concatenate([self._originalMesh.copy(), riserMesh])
         castingWithRiserMesh.fix_normals()
+        castingWithSystemMesh = trimesh.util.concatenate([self._originalMesh.copy(), systemMesh])
+        castingWithSystemMesh.fix_normals()
         return GatingComponents(
             gateMesh=gateMesh,
             riserMesh=riserMesh,
-            castingWithRiserMesh=castingWithRiserMesh,
             systemMesh=systemMesh,
+            castingWithSystemMesh=castingWithSystemMesh,
             gateSurface=gateSurface,
             runnerPath=runnerPath,
             runnerRadius=runnerRadius
         )
 
-    def generate(self) -> trimesh.Trimesh:
-        components = self.generateComponents()
-        return components.systemMesh
-
 def createGatingSystem(
     castingMesh: trimesh.Trimesh,
     config: Optional[Dict] = None,
-    outputStlPath: Optional[Union[str, Path]] = None,
     componentStlDir: Optional[Union[str, Path]] = None
 ) -> GatingComponents:
     if config is None:
         config = {}
     gatingSystem = AutoGatingSystem(castingMesh, config)
     gatingComponents = gatingSystem.generateComponents()
-    if outputStlPath is not None:
-        from geometryAdapters import exportMeshToStl
-        exportMeshToStl(gatingComponents.systemMesh, str(outputStlPath))
     if componentStlDir is not None:
         from geometryAdapters import exportMeshToStl
         componentStlDir = Path(componentStlDir)
         componentStlDir.mkdir(parents=True, exist_ok=True)
-        exportMeshToStl(gatingComponents.gateMesh, str(componentStlDir / "gate.stl"))
+        exportMeshToStl(gatingComponents.gateMesh, str(componentStlDir /  "gate.stl"))
         exportMeshToStl(gatingComponents.riserMesh, str(componentStlDir / "riser.stl"))
-        exportMeshToStl(gatingComponents.castingWithRiserMesh, str(componentStlDir / "castingWithRiser.stl"))
-        exportMeshToStl(gatingComponents.systemMesh, str(componentStlDir / "system.stl"))
+        exportMeshToStl(gatingComponents.systemMesh, str(componentStlDir /  "system.stl"))
+        exportMeshToStl(gatingComponents.castingWithSystemMesh, str(componentStlDir / "casting.with.system.stl"))
     return gatingComponents
 
 
@@ -478,5 +472,5 @@ if __name__ == '__main__':
     components = createGatingSystem(
         castingMesh,
         config,
-        componentStlDir="testModels/cylinder.down.gatingOutputs"
+        componentStlDir="testModels/cylinder.down.gating.outputs"
     )

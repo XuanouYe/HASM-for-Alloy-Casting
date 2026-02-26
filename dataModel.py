@@ -28,12 +28,11 @@ class MachiningRegionResult:
 class GatingComponents:
     gateMesh: trimesh.Trimesh
     riserMesh: trimesh.Trimesh
-    castingWithRiserMesh: trimesh.Trimesh
     systemMesh: trimesh.Trimesh
+    castingWithSystemMesh: trimesh.Trimesh
     gateSurface: np.ndarray
     runnerPath: List[np.ndarray]
     runnerRadius: float
-
 
 @dataclass
 class MoldDesignContext:

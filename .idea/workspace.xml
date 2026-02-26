@@ -5,8 +5,16 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="6833bebc-2e84-41ea-8662-ab2b3d13e641" name="更改" comment="Merge remote-tracking branch 'origin/main'">
-      <change beforePath="$PROJECT_DIR$/cncPathDesigner.py" beforeDir="false" afterPath="$PROJECT_DIR$/cncPathDesigner.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/guiMainController.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/guiMoldProcessController.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/dataModel.py" beforeDir="false" afterPath="$PROJECT_DIR$/dataModel.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/geometryAdapters.py" beforeDir="false" afterPath="$PROJECT_DIR$/geometryAdapters.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/guiMainWindow.py" beforeDir="false" afterPath="$PROJECT_DIR$/guiMainWindow.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/guiModelViewer.py" beforeDir="false" afterPath="$PROJECT_DIR$/guiModelViewer.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/guiMoldProcessPanel.py" beforeDir="false" afterPath="$PROJECT_DIR$/guiMoldProcessPanel.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/guiWorkerThread.py" beforeDir="false" afterPath="$PROJECT_DIR$/guiWorkerThread.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/moldGatingSystem.py" beforeDir="false" afterPath="$PROJECT_DIR$/moldGatingSystem.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/moldGenerator.py" beforeDir="false" afterPath="$PROJECT_DIR$/moldGenerator.py" afterDir="false" />
     </list>
@@ -65,6 +73,7 @@
     "Python.cncPathDesigner.executor": "Run",
     "Python.controlConfig.executor": "Run",
     "Python.guiMainWindow.executor": "Run",
+    "Python.main.executor": "Run",
     "Python.moldGatingSystem.executor": "Run",
     "Python.moldGenerator.executor": "Run",
     "Python.x.executor": "Run",
@@ -167,7 +176,31 @@
       <option name="project" value="LOCAL" />
       <updated>1772104385012</updated>
     </task>
-    <option name="localTasksCounter" value="10" />
+    <task id="LOCAL-00010" summary="Merge remote-tracking branch 'origin/main'">
+      <option name="closed" value="true" />
+      <created>1772118743907</created>
+      <option name="number" value="00010" />
+      <option name="presentableId" value="LOCAL-00010" />
+      <option name="project" value="LOCAL" />
+      <updated>1772118743907</updated>
+    </task>
+    <task id="LOCAL-00011" summary="Merge remote-tracking branch 'origin/main'">
+      <option name="closed" value="true" />
+      <created>1772119873220</created>
+      <option name="number" value="00011" />
+      <option name="presentableId" value="LOCAL-00011" />
+      <option name="project" value="LOCAL" />
+      <updated>1772119873220</updated>
+    </task>
+    <task id="LOCAL-00012" summary="Merge remote-tracking branch 'origin/main'">
+      <option name="closed" value="true" />
+      <created>1772119879112</created>
+      <option name="number" value="00012" />
+      <option name="presentableId" value="LOCAL-00012" />
+      <option name="project" value="LOCAL" />
+      <updated>1772119879112</updated>
+    </task>
+    <option name="localTasksCounter" value="13" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">

@@ -1,13 +1,11 @@
 import numpy as np
 import trimesh
+import pyvista as pv
 
 
-def trimeshToPyVista(triMesh: trimesh.Trimesh):
-    import pyvista as pv
-    vertices = triMesh.vertices
-    faces = triMesh.faces
-    pvFaces = np.column_stack([np.full(len(faces), 3), faces]).flatten()
-    return pv.PolyData(vertices, pvFaces)
+def trimeshToPyVista(mesh: trimesh.Trimesh) -> pv.PolyData:
+    pv_mesh = pv.wrap(mesh)
+    return pv_mesh
 
 
 def trimeshToVtkPolyData(triMesh: trimesh.Trimesh):
