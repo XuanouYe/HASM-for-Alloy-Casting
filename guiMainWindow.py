@@ -83,7 +83,7 @@ class MainWindow(QMainWindow):
         tabWidget.addTab(self.parameterPanel, "工艺参数")
         scrollContentLayout.addWidget(tabWidget)
 
-        self.unifiedConfigGroup = QGroupBox()
+        self.unifiedConfigGroup = QGroupBox("配置文件")
         unifiedConfigLayout = QHBoxLayout()
         self.loadUnifiedConfigButton = QPushButton("加载配置")
         self.loadUnifiedConfigButton.clicked.connect(self.onLoadUnifiedConfigClicked)
@@ -98,7 +98,7 @@ class MainWindow(QMainWindow):
         self.unifiedConfigGroup.setLayout(unifiedConfigLayout)
         scrollContentLayout.addWidget(self.unifiedConfigGroup)
 
-        gcodeGroup = QGroupBox("制造文件生成")
+        gcodeGroup = QGroupBox("制造文件")
         gcodeLayout = QVBoxLayout()
         self.generateGcodeButton = QPushButton("生成FDM G代码")
         self.generateGcodeButton.setEnabled(False)

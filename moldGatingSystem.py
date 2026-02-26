@@ -2,9 +2,9 @@ from dataclasses import dataclass
 from typing import List, Tuple, Optional, Dict
 import numpy as np
 import trimesh
-import vtk
 from scipy.spatial import KDTree
 from pathlib import Path
+from dataModel import GatingComponents
 
 
 @dataclass
@@ -16,6 +16,7 @@ class MoldConfig:
     principalAxes: np.ndarray = None
     symmetryNormal: np.ndarray = None
 
+
 @dataclass
 class RheologyParams:
     meltViscosity: float = 2e-3
@@ -23,6 +24,7 @@ class RheologyParams:
     maxPressureDrop: float = 1e5
     heatTransferCoeff: float = 500.0
     meltOverheat: float = 30.0
+
 
 @dataclass
 class GateCandidate:
@@ -32,6 +34,7 @@ class GateCandidate:
     xWidth: float
     yWidth: float
     zHeight: float
+
 
 class DistanceField:
     def __init__(self, mesh: trimesh.Trimesh):
@@ -67,6 +70,7 @@ class DistanceField:
         containsMask = self.mesh.contains(pts)
         nearSurfMask = self._kdTree.query(pts)[0] < surfTol
         return containsMask | nearSurfMask
+
 
 class AutoGatingSystem:
     def __init__(self, mesh: trimesh.Trimesh, config: Optional[Dict] = None):
@@ -154,8 +158,7 @@ class AutoGatingSystem:
             return np.array([]).reshape(0, 3)
         sampledPoints2D = np.array(sampledPoints2D)
         sampledPoints2DPadded = np.column_stack([sampledPoints2D, np.zeros(len(sampledPoints2D))])
-        sampledPoints3D = trimesh.transform_points(sampledPoints2DPadded, to3D)
-        return sampledPoints3D
+        return trimesh.transform_points(sampledPoints2DPadded, to3D)
 
     def _projectAndGetNormal(self, cavityMesh: trimesh.Trimesh, points: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         if len(points) == 0:
@@ -181,11 +184,7 @@ class AutoGatingSystem:
 
     def _computeAxisExtentsByRays(self, cavityMesh: trimesh.Trimesh, pIn: np.ndarray) -> Tuple[float, float, float, float]:
         rayIntersector = trimesh.ray.ray_triangle.RayMeshIntersector(cavityMesh)
-        directions = np.array([
-            [1, 0, 0], [-1, 0, 0],
-            [0, 1, 0], [0, -1, 0],
-            [0, 0, 1], [0, 0, -1]
-        ])
+        directions = np.array([[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]])
         rayOrigins = np.tile(pIn, (6, 1))
         locations, indexRay, indexTri = rayIntersector.intersects_location(rayOrigins, directions, multiple_hits=False)
         dists = np.full(6, -1.0)
@@ -194,10 +193,7 @@ class AutoGatingSystem:
         xWidth = dists[0] + dists[1] if dists[0] >= 0 and dists[1] >= 0 else -1.0
         yWidth = dists[2] + dists[3] if dists[2] >= 0 and dists[3] >= 0 else -1.0
         zHeight = dists[4] + dists[5] if dists[4] >= 0 and dists[5] >= 0 else -1.0
-        diagDirs = np.array([
-            [1, 1, 0], [-1, -1, 0],
-            [1, -1, 0], [-1, 1, 0]
-        ])
+        diagDirs = np.array([[1,1,0],[-1,-1,0],[1,-1,0],[-1,1,0]], dtype=float)
         diagDirsNorm = diagDirs / np.linalg.norm(diagDirs, axis=1, keepdims=True)
         diagOrigins = np.tile(pIn, (4, 1))
         diagLocs, diagIdxRay, diagIdxTri = rayIntersector.intersects_location(diagOrigins, diagDirsNorm, multiple_hits=False)
@@ -213,16 +209,14 @@ class AutoGatingSystem:
         if xWidth < 0 or yWidth < 0 or zHeight < 0:
             return False, 0.0
         minDim = min(xWidth, yWidth, zHeight)
-        minThreshold = minThicknessFactor * 2.0 * runnerRadius
-        if minDim < minThreshold:
+        if minDim < minThicknessFactor * 2.0 * runnerRadius:
             return False, 0.0
         if diagMin > 0 and diagMin < diagFactor * 2.0 * runnerRadius:
             return False, 0.0
-        bulkScore = (xWidth * yWidth * zHeight) ** (1.0/3.0)
+        bulkScore = (xWidth * yWidth * zHeight) ** (1.0 / 3.0)
         maxDim = max(xWidth, yWidth, zHeight)
         slenderPenalty = minDim / (maxDim + 1e-9)
-        finalScore = bulkScore * (0.5 + 0.5 * slenderPenalty)
-        return True, finalScore
+        return True, bulkScore * (0.5 + 0.5 * slenderPenalty)
 
     def _selectBestGateCandidate(self, candidates: List[GateCandidate]) -> Optional[GateCandidate]:
         if len(candidates) == 0:
@@ -239,8 +233,6 @@ class AutoGatingSystem:
         targetZ = self._computeTargetGateZ(runnerRadius)
         sampleStep = max(runnerRadius * 0.5, modelScale * 0.005)
         zTol = modelScale * 0.02
-        normalZLimit = 0.3
-        outerAlignLimit = 0.3
         maxZShift = zMin + 0.5 * (zMax - zMin)
         dzStep = runnerRadius * 0.5
         epsIn = max(modelScale * 1e-4, 0.05)
@@ -252,7 +244,7 @@ class AutoGatingSystem:
                 currentZ += dzStep
                 continue
             projPoints, normals = self._projectAndGetNormal(cavityMesh, sectionPoints)
-            filteredPoints, filteredNormals = self._filterSideCandidates(projPoints, normals, currentZ, zTol, normalZLimit, outerAlignLimit, cavityMesh)
+            filteredPoints, filteredNormals = self._filterSideCandidates(projPoints, normals, currentZ, zTol, 0.3, 0.3, cavityMesh)
             for idx in range(len(filteredPoints)):
                 pSurf = filteredPoints[idx]
                 nSurf = filteredNormals[idx]
@@ -260,14 +252,7 @@ class AutoGatingSystem:
                 xWidth, yWidth, zHeight, diagMin = self._computeAxisExtentsByRays(cavityMesh, pIn)
                 isValid, score = self._scoreCandidateThickness(xWidth, yWidth, zHeight, diagMin, runnerRadius, minThicknessFactor=1.5)
                 if isValid:
-                    candidates.append(GateCandidate(
-                        surfacePoint=pSurf,
-                        surfaceNormal=nSurf,
-                        thicknessScore=score,
-                        xWidth=xWidth,
-                        yWidth=yWidth,
-                        zHeight=zHeight
-                    ))
+                    candidates.append(GateCandidate(surfacePoint=pSurf, surfaceNormal=nSurf, thicknessScore=score, xWidth=xWidth, yWidth=yWidth, zHeight=zHeight))
             if len(candidates) > 0:
                 break
             currentZ += dzStep
@@ -279,7 +264,7 @@ class AutoGatingSystem:
                     currentZ += dzStep
                     continue
                 projPoints, normals = self._projectAndGetNormal(cavityMesh, sectionPoints)
-                filteredPoints, filteredNormals = self._filterSideCandidates(projPoints, normals, currentZ, zTol, normalZLimit, outerAlignLimit, cavityMesh)
+                filteredPoints, filteredNormals = self._filterSideCandidates(projPoints, normals, currentZ, zTol, 0.3, 0.3, cavityMesh)
                 for idx in range(len(filteredPoints)):
                     pSurf = filteredPoints[idx]
                     nSurf = filteredNormals[idx]
@@ -287,14 +272,7 @@ class AutoGatingSystem:
                     xWidth, yWidth, zHeight, diagMin = self._computeAxisExtentsByRays(cavityMesh, pIn)
                     isValid, score = self._scoreCandidateThickness(xWidth, yWidth, zHeight, diagMin, runnerRadius, minThicknessFactor=0.8, diagFactor=0.5)
                     if isValid:
-                        candidates.append(GateCandidate(
-                            surfacePoint=pSurf,
-                            surfaceNormal=nSurf,
-                            thicknessScore=score,
-                            xWidth=xWidth,
-                            yWidth=yWidth,
-                            zHeight=zHeight
-                        ))
+                        candidates.append(GateCandidate(surfacePoint=pSurf, surfaceNormal=nSurf, thicknessScore=score, xWidth=xWidth, yWidth=yWidth, zHeight=zHeight))
                 if len(candidates) > 0:
                     break
                 currentZ += dzStep
@@ -400,14 +378,10 @@ class AutoGatingSystem:
             indices = np.linspace(0, len(centersTop) - 1, nCandidates, dtype=int)
             candidates = centersTop[indices]
             dist2D = np.hypot(candidates[:, 0] - gateSurface[0], candidates[:, 1] - gateSurface[1])
-            bestIdx = int(np.argmax(dist2D))
-            bestTopPoint = candidates[bestIdx]
+            bestTopPoint = candidates[int(np.argmax(dist2D))]
         else:
             areaSum = areasTop.sum()
-            if areaSum > 1e-12:
-                bestTopPoint = np.average(centersTop, axis=0, weights=areasTop)
-            else:
-                bestTopPoint = centersTop.mean(axis=0)
+            bestTopPoint = np.average(centersTop, axis=0, weights=areasTop) if areaSum > 1e-12 else centersTop.mean(axis=0)
         projPoints, _, _ = cavityMesh.nearest.on_surface([bestTopPoint])
         return projPoints[0]
 
@@ -415,183 +389,85 @@ class AutoGatingSystem:
         riserTopZ = sprueInletZ
         neckLength = 2.0 * runnerRadius
         neckDiameter = 2.0 * runnerRadius
-        riserDiameter = 4.0 * runnerRadius
-        minRiserD = 2.5 * runnerRadius
-        maxRiserD = float(np.min(bboxExtents)) * 0.4
-        riserDiameter = float(np.clip(riserDiameter, minRiserD, maxRiserD))
+        riserDiameter = float(np.clip(4.0 * runnerRadius, 2.5 * runnerRadius, float(np.min(bboxExtents)) * 0.4))
         minRiserTopZ = attachmentZ + neckLength + runnerRadius
         if riserTopZ <= minRiserTopZ:
             riserTopZ = max(minRiserTopZ, sprueInletZ)
-        return {
-            'riserTopZ': riserTopZ,
-            'neckLength': neckLength,
-            'neckDiameter': neckDiameter,
-            'riserDiameter': riserDiameter,
-        }
+        return {'riserTopZ': riserTopZ, 'neckLength': neckLength, 'neckDiameter': neckDiameter, 'riserDiameter': riserDiameter}
 
     def _createRiserMesh(self, attachmentPoint: np.ndarray, riserTopZ: float, riserDiameter: float, neckDiameter: float, neckLength: float, runnerRadius: float) -> trimesh.Trimesh:
         x, y = float(attachmentPoint[0]), float(attachmentPoint[1])
         neckStartZ = float(attachmentPoint[2]) - 0.2 * runnerRadius
         neckEndZ = float(attachmentPoint[2]) + neckLength
-        neckRadius = neckDiameter / 2.0
-        riserRadius = riserDiameter / 2.0
-        neckCylinder = trimesh.creation.cylinder(radius=neckRadius, segment=[(x, y, neckStartZ), (x, y, neckEndZ)], sections=32)
-        riserCylinder = trimesh.creation.cylinder(radius=riserRadius, segment=[(x, y, neckEndZ), (x, y, riserTopZ)], sections=32)
+        neckCylinder = trimesh.creation.cylinder(radius=neckDiameter / 2.0, segment=[(x, y, neckStartZ), (x, y, neckEndZ)], sections=32)
+        riserCylinder = trimesh.creation.cylinder(radius=riserDiameter / 2.0, segment=[(x, y, neckEndZ), (x, y, riserTopZ)], sections=32)
         combined = trimesh.util.concatenate([neckCylinder, riserCylinder])
         combined.fix_normals()
         return combined
 
-    def generateComponents(self, visualize: bool = False) -> Dict:
+    def generateComponents(self) -> GatingComponents:
         gateSurface, gateNormal = self._proposeGateLocation()
         runnerRadius = self._computeRheologyRadius()
         runnerZ = self._computeTargetGateZ(runnerRadius)
         cavityMesh = self._getCavityMesh()
-        modelScale = float(np.max(cavityMesh.bounding_box.extents))
         bboxExtents = np.array(cavityMesh.bounding_box.extents)
         bboxMin, bboxMax = self.moldConfig.boundingBox
         sprueInletZ = float(bboxMax[2]) + self.boundingBoxOffset
         attachmentPoint = self._proposeRiserAttachmentPoint(cavityMesh, gateSurface)
-        dims = self._computeRiserDimensions(runnerRadius, float(attachmentPoint[2]), sprueInletZ, modelScale,
-                                            bboxExtents)
-        riserMesh = self._createRiserMesh(attachmentPoint, dims['riserTopZ'], dims['riserDiameter'],
-                                          dims['neckDiameter'], dims['neckLength'], runnerRadius)
-        runnerPath = self._generateRunnerPath(gateSurface, gateNormal, runnerZ, runnerRadius,
-                                              sprueInletZ=dims['riserTopZ'])
+        dims = self._computeRiserDimensions(
+            runnerRadius, float(attachmentPoint[2]), sprueInletZ,
+            float(np.max(bboxExtents)), bboxExtents)
+        riserMesh = self._createRiserMesh(
+            attachmentPoint, dims['riserTopZ'], dims['riserDiameter'],
+            dims['neckDiameter'], dims['neckLength'], runnerRadius)
+        runnerPath = self._generateRunnerPath(gateSurface, gateNormal, runnerZ, runnerRadius, sprueInletZ=dims['riserTopZ'])
         gateMesh = self._createGatingMesh(runnerPath, runnerRadius)
         systemMesh = trimesh.util.concatenate([riserMesh, gateMesh])
         systemMesh.fix_normals()
         castingWithRiserMesh = trimesh.util.concatenate([self._originalMesh.copy(), riserMesh])
         castingWithRiserMesh.fix_normals()
-        if visualize:
-            GatingVisualizer().visualize(self._originalMesh, systemMesh,
-                                         {'radius': runnerRadius, 'fillTime': self.targetFillTime,
-                                          'gatePoint': gateSurface, 'runnerPath': runnerPath, 'riserMesh': riserMesh})
-        return {
-            'gateMesh': gateMesh,
-            'riserMesh': riserMesh,
-            'castingWithRiserMesh': castingWithRiserMesh,
-            'systemMesh': systemMesh,
-            'gateSurface': gateSurface,
-            'runnerPath': runnerPath,
-            'runnerRadius': runnerRadius
-        }
+        return GatingComponents(
+            gateMesh=gateMesh,
+            riserMesh=riserMesh,
+            castingWithRiserMesh=castingWithRiserMesh,
+            systemMesh=systemMesh,
+            gateSurface=gateSurface,
+            runnerPath=runnerPath,
+            runnerRadius=runnerRadius
+        )
 
-    def generate(self, visualize: bool = False) -> trimesh.Trimesh:
-        components = self.generateComponents(visualize=visualize)
-        return components['systemMesh']
+    def generate(self) -> trimesh.Trimesh:
+        components = self.generateComponents()
+        return components.systemMesh
 
 
-class GatingVisualizer:
-    def __init__(self, windowSize: Tuple[int, int] = (1200, 800)):
-        self.windowSize = windowSize
-
-    def _createVTKMeshActor(self, mesh: trimesh.Trimesh, color: Tuple[float, float, float], opacity: float) -> vtk.vtkActor:
-        vtkPoints = vtk.vtkPoints()
-        for v in mesh.vertices:
-            vtkPoints.InsertNextPoint(v)
-        vtkCells = vtk.vtkCellArray()
-        for f in mesh.faces:
-            tri = vtk.vtkTriangle()
-            tri.GetPointIds().SetId(0, f[0])
-            tri.GetPointIds().SetId(1, f[1])
-            tri.GetPointIds().SetId(2, f[2])
-            vtkCells.InsertNextCell(tri)
-        polyData = vtk.vtkPolyData()
-        polyData.SetPoints(vtkPoints)
-        polyData.SetPolys(vtkCells)
-        normalsFilter = vtk.vtkPolyDataNormals()
-        normalsFilter.SetInputData(polyData)
-        normalsFilter.ComputePointNormalsOn()
-        normalsFilter.Update()
-        mapper = vtk.vtkPolyDataMapper()
-        mapper.SetInputConnection(normalsFilter.GetOutputPort())
-        actor = vtk.vtkActor()
-        actor.SetMapper(mapper)
-        actor.GetProperty().SetColor(color)
-        actor.GetProperty().SetOpacity(opacity)
-        return actor
-
-    def visualize(self, moldMesh: trimesh.Trimesh, gatingMesh: trimesh.Trimesh, info: Dict) -> None:
-        renderer = vtk.vtkRenderer()
-        renderer.SetBackground(1.0, 1.0, 1.0)
-        moldActor = self._createVTKMeshActor(moldMesh, (0.7, 0.7, 0.7), 0.3)
-        moldActor.GetProperty().SetEdgeVisibility(True)
-        moldActor.GetProperty().SetEdgeColor(0.3, 0.3, 0.3)
-        renderer.AddActor(moldActor)
-        renderer.AddActor(self._createVTKMeshActor(gatingMesh, (0.8, 0.2, 0.2), 1.0))
-        textActor = vtk.vtkTextActor()
-        infoText = 'Grey: Mold Shell\nRed: Gating System'
-        if info:
-            infoText += f'\n\nRunner Radius: {info.get("radius", 0):.2f} mm'
-            infoText += f'\nFill Time: {info.get("fillTime", 0):.1f} s'
-            if 'gatePoint' in info:
-                gp = info['gatePoint']
-                infoText += f'\nGate Point: ({gp[0]:.1f}, {gp[1]:.1f}, {gp[2]:.1f})'
-        textActor.SetInput(infoText)
-        textActor.GetTextProperty().SetColor(0, 0, 0)
-        textActor.GetTextProperty().SetFontSize(14)
-        textActor.SetPosition(10, 10)
-        renderer.AddViewProp(textActor)
-        renderWindow = vtk.vtkRenderWindow()
-        renderWindow.AddRenderer(renderer)
-        renderWindow.SetSize(self.windowSize[0], self.windowSize[1])
-        renderWindow.SetWindowName('Gating System Visualization')
-        interactor = vtk.vtkRenderWindowInteractor()
-        interactor.SetRenderWindow(renderWindow)
-        axesWidget = vtk.vtkOrientationMarkerWidget()
-        axesWidget.SetOrientationMarker(vtk.vtkAxesActor())
-        axesWidget.SetInteractor(interactor)
-        axesWidget.SetEnabled(1)
-        axesWidget.InteractiveOff()
-        renderer.ResetCamera()
-        renderer.GetActiveCamera().Azimuth(30)
-        renderer.GetActiveCamera().Elevation(30)
-        interactor.Initialize()
-        renderWindow.Render()
-        interactor.Start()
-        renderWindow.Finalize()
-        interactor.TerminateApp()
-        del renderWindow, interactor, renderer
-
-def exportGatingAndRiserFromStl(inputStlPath: str, config: Optional[Dict] = None, visualize: bool = False) -> Dict:
-    if config is None:
-        config = {}
-    castingMesh = trimesh.load_mesh(inputStlPath)
-    gatingSystem = AutoGatingSystem(castingMesh, config)
-    components = gatingSystem.generateComponents(visualize=visualize)
-    inputPathObj = Path(inputStlPath)
-    if inputPathObj.suffix.lower() == '.stl':
-        basePath = inputPathObj.with_suffix('')
-    else:
-        basePath = inputPathObj
-    gateStlPath = str(basePath) + '.gating.stl'
-    withRiserStlPath = str(basePath) + '.with.riser.stl'
-    components['gateMesh'].export(gateStlPath)
-    components['castingWithRiserMesh'].export(withRiserStlPath)
-    return {
-        'gateStlPath': gateStlPath,
-        'withRiserStlPath': withRiserStlPath
-    }
-
-def createGatingSystem(castingMesh: trimesh.Trimesh, config: Optional[Dict] = None, outputStlPath: Optional[str] = None, visualize: bool = False) -> trimesh.Trimesh:
+def createGatingSystem(castingMesh: trimesh.Trimesh, config: Optional[Dict] = None, outputStlPath: Optional[str] = None) -> trimesh.Trimesh:
     if config is None:
         config = {}
     gatingSystem = AutoGatingSystem(castingMesh, config)
-    gatingMesh = gatingSystem.generate(visualize=visualize)
+    gatingMesh = gatingSystem.generate()
     if outputStlPath:
-        gatingMesh.export(outputStlPath)
+        from geometryAdapters import exportMeshToStl
+        exportMeshToStl(gatingMesh, outputStlPath)
     return gatingMesh
 
+
+def createGatingComponents(castingMesh: trimesh.Trimesh, config: Optional[Dict] = None) -> GatingComponents:
+    if config is None:
+        config = {}
+    return AutoGatingSystem(castingMesh, config).generateComponents()
+
+
 if __name__ == '__main__':
+    from geometryAdapters import loadMeshFromFile, exportMeshToStl
     inputStlPath = "testModels/cube.with.groove.stl"
     config = {
         "targetFillTime": 3.0,
         "sprueInletOffset": 5.0,
         "boundingBoxOffset": 2.0,
-        "rheology": {
-            "meltViscosity": 2e-3,
-            "solidificationFactor": 1.5,
-            "maxPressureDrop": 1e5
-        }
+        "rheology": {"meltViscosity": 2e-3, "solidificationFactor": 1.5, "maxPressureDrop": 1e5}
     }
-    exportGatingAndRiserFromStl(inputStlPath=inputStlPath, config=config, visualize=True)
+    castingMesh = loadMeshFromFile(inputStlPath)
+    components = createGatingComponents(castingMesh, config)
+    exportMeshToStl(components.gateMesh, "cube.with.groove.gating.stl")
+    exportMeshToStl(components.castingWithRiserMesh, "cube.with.groove.with.riser.stl")

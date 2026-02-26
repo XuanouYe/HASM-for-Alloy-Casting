@@ -1,11 +1,12 @@
 from typing import Optional, Dict
 import numpy as np
 import trimesh
-import pyvista as pv
 from pyvistaqt import QtInteractor
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import QWidget, QLabel, QHBoxLayout, QVBoxLayout
+from geometryAdapters import trimeshToPyVista
+
 
 class ModelViewerWidget(QWidget):
     modelLoaded = pyqtSignal(dict)
@@ -13,8 +14,8 @@ class ModelViewerWidget(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.castingModel = None
-        self.moldModel = None
+        self.castingTriMesh: Optional[trimesh.Trimesh] = None
+        self.moldTriMesh: Optional[trimesh.Trimesh] = None
         self.castingPlotter = None
         self.moldPlotter = None
         self.syncEnabled = True
@@ -78,78 +79,67 @@ class ModelViewerWidget(QWidget):
             print(f"相机同步设置警告: {str(e)}")
 
     def loadCastingModel(self, filePath: str) -> bool:
-        try:
-            self.castingModel = pv.read(filePath)
-            if self.castingPlotter is None:
-                return False
-            self.castingPlotter.clear()
-            self.castingPlotter.add_mesh(
-                self.castingModel,
-                color="lightblue",
-                opacity=1.0,
-                show_edges=True,
-                edge_color="navy",
-                line_width=2.0,
-                lighting=True,
-                smooth_shading=True,
-                specular=0.5,
-                specular_power=15,
-                ambient=0.3,
-                diffuse=0.8,
-                metallic=0.2,
-                roughness=0.5
-            )
-            self.castingPlotter.enable_shadows()
-            self.castingPlotter.enable_anti_aliasing()
-            self.castingPlotter.reset_camera()
-            self.castingPlotter.camera.zoom(1.3)
-            modelInfo = {
-                "filePath": filePath,
-                "vertices": self.castingModel.n_points,
-                "faces": self.castingModel.n_cells,
-                "bounds": self.castingModel.bounds,
-                "volume": self.castingModel.volume,
-                "area": self.castingModel.area
-            }
-            self.modelLoaded.emit(modelInfo)
-            return True
-        except Exception as e:
-            print(f"铸件模型加载错误: {e}")
+        from geometryAdapters import loadMeshFromFile
+        self.castingTriMesh = loadMeshFromFile(filePath)
+        if self.castingPlotter is None:
             return False
+        pvMesh = trimeshToPyVista(self.castingTriMesh)
+        self.castingPlotter.clear()
+        self.castingPlotter.add_mesh(
+            pvMesh,
+            color="lightblue",
+            opacity=1.0,
+            show_edges=True,
+            edge_color="navy",
+            line_width=2.0,
+            lighting=True,
+            smooth_shading=True,
+            specular=0.5,
+            specular_power=15,
+            ambient=0.3,
+            diffuse=0.8,
+            metallic=0.2,
+            roughness=0.5
+        )
+        self.castingPlotter.enable_shadows()
+        self.castingPlotter.enable_anti_aliasing()
+        self.castingPlotter.reset_camera()
+        self.castingPlotter.camera.zoom(1.3)
+        modelInfo = {
+            "filePath": filePath,
+            "vertices": len(self.castingTriMesh.vertices),
+            "faces": len(self.castingTriMesh.faces),
+            "bounds": self.castingTriMesh.bounds.tolist(),
+            "volume": float(self.castingTriMesh.volume),
+            "area": float(self.castingTriMesh.area)
+        }
+        self.modelLoaded.emit(modelInfo)
+        return True
 
-    def loadMoldModel(self, moldMesh) -> bool:
-        try:
-            if isinstance(moldMesh, trimesh.Trimesh):
-                vertices = moldMesh.vertices
-                faces = moldMesh.faces
-                pvFaces = np.column_stack([np.full(len(faces), 3), faces]).flatten()
-                self.moldModel = pv.PolyData(vertices, pvFaces)
-            elif isinstance(moldMesh, pv.PolyData):
-                self.moldModel = moldMesh
-            else:
-                raise TypeError(f"不支持的网格类型: {type(moldMesh)}")
-            self.moldPlotter.clear()
-            self.moldPlotter.add_mesh(
-                self.moldModel,
-                color="lightcoral",
-                opacity=0.9,
-                show_edges=True,
-                edge_color="darkred",
-                line_width=1.5,
-                lighting=True,
-                smooth_shading=True
-            )
-            self.moldPlotter.render()
-            moldInfo = {
-                "vertices": self.moldModel.n_points,
-                "faces": self.moldModel.n_cells,
-                "bounds": self.moldModel.bounds
-            }
-            self.moldLoaded.emit(moldInfo)
-            return True
-        except Exception as e:
-            print(f"模具模型加载失败: {e}")
+    def loadMoldModel(self, moldMesh: trimesh.Trimesh) -> bool:
+        self.moldTriMesh = moldMesh
+        if self.moldPlotter is None:
             return False
+        pvMesh = trimeshToPyVista(moldMesh)
+        self.moldPlotter.clear()
+        self.moldPlotter.add_mesh(
+            pvMesh,
+            color="lightcoral",
+            opacity=0.9,
+            show_edges=True,
+            edge_color="darkred",
+            line_width=1.5,
+            lighting=True,
+            smooth_shading=True
+        )
+        self.moldPlotter.render()
+        moldInfo = {
+            "vertices": len(moldMesh.vertices),
+            "faces": len(moldMesh.faces),
+            "bounds": moldMesh.bounds.tolist()
+        }
+        self.moldLoaded.emit(moldInfo)
+        return True
 
     def resetView(self):
         if self.castingPlotter:
@@ -158,12 +148,12 @@ class ModelViewerWidget(QWidget):
             self.moldPlotter.render()
 
     def getCastingModelInfo(self) -> Optional[Dict]:
-        if self.castingModel is None:
+        if self.castingTriMesh is None:
             return None
         return {
-            "vertices": self.castingModel.n_points,
-            "faces": self.castingModel.n_cells,
-            "bounds": self.castingModel.bounds,
-            "volume": self.castingModel.volume,
-            "area": self.castingModel.area
+            "vertices": len(self.castingTriMesh.vertices),
+            "faces": len(self.castingTriMesh.faces),
+            "bounds": self.castingTriMesh.bounds.tolist(),
+            "volume": float(self.castingTriMesh.volume),
+            "area": float(self.castingTriMesh.area)
         }

@@ -14,10 +14,9 @@ class MoldGenerator:
         inputMesh = self.ensureTrimesh(inputMesh)
         boundingBox = self._calculateBoundingBox(inputMesh)
         blankMesh = self._createBlankMesh(boundingBox)
-        moldShell = self._booleanDifference(blankMesh, inputMesh)
-        return moldShell
+        return self._booleanDifference(blankMesh, inputMesh)
 
-    def ensureTrimesh(self, meshOrScene):
+    def ensureTrimesh(self, meshOrScene) -> trimesh.Trimesh:
         if isinstance(meshOrScene, trimesh.Trimesh):
             return meshOrScene
         if isinstance(meshOrScene, trimesh.Scene):
@@ -46,15 +45,12 @@ class MoldGenerator:
         part = inputMesh.copy()
         blank.process(validate=True)
         part.process(validate=True)
-
         enginesToTry = []
         if self.booleanEngine is not None:
             enginesToTry.append(self.booleanEngine)
-
         for e in ["manifold", "blender", "scad", None]:
             if e not in enginesToTry:
                 enginesToTry.append(e)
-
         lastError = None
         for engine in enginesToTry:
             try:
@@ -64,15 +60,13 @@ class MoldGenerator:
                 if isinstance(result, trimesh.Scene):
                     result = result.dump(concatenate=True)
                 if not isinstance(result, trimesh.Trimesh):
-                    raise RuntimeError(f"Unexpected boolean result type: {type(result)} (engine={engine})")
+                    raise RuntimeError(f"Unexpected boolean result type: {type(result)}")
                 result.process(validate=True)
                 return result
             except Exception as exc:
                 lastError = exc
-
         raise RuntimeError(
-            "Boolean difference failed with all engines tried. "
-            "Try installing/configuring a backend (manifold or blender) and ensure meshes are watertight."
+            "Boolean difference failed with all engines tried."
         ) from lastError
 
     def generateGating(self, castingMesh: trimesh.Trimesh, config: dict) -> trimesh.Trimesh:
@@ -81,12 +75,7 @@ class MoldGenerator:
             "sprueInletOffset": config.get("sprueInletOffset", 5.0),
             "boundingBoxOffset": config.get("boundingBoxOffset", 2.0)
         }
-        gatingMesh = createGatingSystem(
-            castingMesh=castingMesh,
-            config=gatingConfig,
-            visualize=False
-        )
-        return gatingMesh
+        return createGatingSystem(castingMesh=castingMesh, config=gatingConfig)
 
     def optimizeOrientation(self, moldShell: trimesh.Trimesh, config: dict) -> trimesh.Trimesh:
         return moldShell
@@ -95,72 +84,55 @@ class MoldGenerator:
         return moldShell
 
     def normalizeMeshesToWcs(self, partMesh: trimesh.Trimesh, moldMesh: trimesh.Trimesh,
-                             gatingMesh: Optional[trimesh.Trimesh]) -> Tuple[
-        trimesh.Trimesh, trimesh.Trimesh, Optional[trimesh.Trimesh], np.ndarray]:
+                             gatingMesh: Optional[trimesh.Trimesh]) -> Tuple[trimesh.Trimesh, trimesh.Trimesh, Optional[trimesh.Trimesh], np.ndarray]:
         meshesToConsider = [partMesh, moldMesh]
         if gatingMesh is not None:
             meshesToConsider.append(gatingMesh)
-
         minZ = min(mesh.bounds[0][2] for mesh in meshesToConsider)
         minX = min(mesh.bounds[0][0] for mesh in meshesToConsider)
         maxX = max(mesh.bounds[1][0] for mesh in meshesToConsider)
         minY = min(mesh.bounds[0][1] for mesh in meshesToConsider)
         maxY = max(mesh.bounds[1][1] for mesh in meshesToConsider)
-
         centerX = (minX + maxX) / 2.0
         centerY = (minY + maxY) / 2.0
-
         translation = np.array([-centerX, -centerY, -minZ])
         matrix = np.eye(4)
         matrix[:3, 3] = translation
-
         partMesh.apply_transform(matrix)
         moldMesh.apply_transform(matrix)
         if gatingMesh is not None:
             gatingMesh.apply_transform(matrix)
-
         return partMesh, moldMesh, gatingMesh, matrix
 
     def generateMoldAssets(self, inputStlPath: str, paths: dict, config: dict) -> np.ndarray:
-        inputMesh = trimesh.load(inputStlPath)
-        partMesh = self.ensureTrimesh(inputMesh)
-
+        from geometryAdapters import loadMeshFromFile, exportMeshToStl
+        partMesh = loadMeshFromFile(inputStlPath)
         moldShell = self.generateMoldShell(partMesh)
-
         gatingMesh = None
         if config.get("addGating", False):
             gatingMesh = self.generateGating(partMesh, config)
-
         if config.get("optimizeOrientation", False):
             moldShell = self.optimizeOrientation(moldShell, config)
-
         if config.get("adjustStructure", False):
             moldShell = self.adjustStructure(moldShell, config)
-
         partMesh, moldShell, gatingMesh, transformMatrix = self.normalizeMeshesToWcs(partMesh, moldShell, gatingMesh)
-
-        partMesh.export(paths["part"])
-        moldShell.export(paths["moldShell"])
+        exportMeshToStl(partMesh, paths["part"])
+        exportMeshToStl(moldShell, paths["moldShell"])
         if gatingMesh is not None:
-            gatingMesh.export(paths["gating"])
-
+            exportMeshToStl(gatingMesh, paths["gating"])
         return transformMatrix
 
 
 def main():
     from manufacturingManifest import ManufacturingManifest
-
     inputStlPath = "testModels/cube.with.groove.stl"
-
     projectId = "test_project_001"
     manifest = ManufacturingManifest(projectId)
-
     paths = {
         "part": "testModels/cube.with.groove.normalized.stl",
         "moldShell": "testModels/cube.with.groove.mold.normalized.stl",
         "gating": "testModels/cube.with.groove.gating.normalized.stl"
     }
-
     config = {
         "boundingBoxOffset": 2.0,
         "supportAngle": 45.0,
@@ -173,17 +145,14 @@ def main():
         "targetFillTime": 5.0,
         "sprueInletOffset": 5.0
     }
-
     moldGen = MoldGenerator(config=config)
     transformMatrix = moldGen.generateMoldAssets(inputStlPath, paths, config)
-
     manifest.setWcsTransform(transformMatrix)
     manifest.addParameters("moldConfig", config)
     manifest.addFile("partStl", paths["part"])
     manifest.addFile("moldStl", paths["moldShell"])
     if config.get("addGating", False):
         manifest.addFile("gatingStl", paths["gating"])
-
     manifest.save(f"{projectId}_manifest.json")
 
 

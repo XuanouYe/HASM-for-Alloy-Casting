@@ -1,10 +1,9 @@
 import numpy as np
 import trimesh
-from typing import List, Optional, Tuple
+from typing import List, Optional
 from shapely import ops
-from shapely.geometry import Polygon, MultiPolygon
 from shapely.geometry.base import BaseGeometry
-import vtk
+from dataModel import SupportRegionResult
 
 
 class SupportRegionDetector:
@@ -16,29 +15,34 @@ class SupportRegionDetector:
         self.areaEps = float(self.config.get("areaEps", 1e-6))
 
     def calculateSupportRegions(self, mesh: trimesh.Trimesh,
-                                sliceHeights: Optional[List[float]] = None) -> List[Optional[BaseGeometry]]:
+                                sliceHeights: Optional[np.ndarray] = None) -> SupportRegionResult:
         if sliceHeights is None:
             sliceHeights = self._generateSliceHeights(mesh)
         layerPaths = self._sliceMeshToLayers(mesh, sliceHeights)
         layerGeoms = [self._path2DToShapely(p) for p in layerPaths]
         layersBelow = int(round(self.smoothHeight / self.layerHeight))
         maxDistFromLowerLayer = self._calculateMaxBridgeDistance()
-        supportRegionsPerLayer = []
+        supportGeoms = []
         for layerIdx in range(1, len(layerGeoms)):
             cur = layerGeoms[layerIdx]
             if cur is None or cur.is_empty:
-                supportRegionsPerLayer.append(None)
+                supportGeoms.append(None)
                 continue
             mergedBelow = self._getMergedGeomsBelow(layerGeoms, layerIdx, layersBelow, maxDistFromLowerLayer)
             if mergedBelow is None or mergedBelow.is_empty:
-                supportRegionsPerLayer.append(cur)
+                supportGeoms.append(cur)
                 continue
             diff = cur.difference(mergedBelow)
             if diff.is_empty or diff.area < self.areaEps:
-                supportRegionsPerLayer.append(None)
+                supportGeoms.append(None)
             else:
-                supportRegionsPerLayer.append(diff)
-        return supportRegionsPerLayer
+                supportGeoms.append(diff)
+        totalSupportArea = sum(g.area for g in supportGeoms if g is not None and not g.is_empty)
+        return SupportRegionResult(
+            layerGeoms=supportGeoms,
+            sliceHeights=sliceHeights,
+            totalSupportArea=float(totalSupportArea)
+        )
 
     def _generateSliceHeights(self, mesh: trimesh.Trimesh) -> np.ndarray:
         zMin, zMax = mesh.bounds[:, 2]
@@ -84,164 +88,21 @@ class SupportRegionDetector:
         return merged
 
 
-def calculateSupportRegions(moldShell: trimesh.Trimesh, config: dict) -> List[BaseGeometry]:
+def calculateSupportRegions(moldShell: trimesh.Trimesh, config: dict) -> SupportRegionResult:
     detector = SupportRegionDetector(config)
-    supportRegions = detector.calculateSupportRegions(moldShell)
-    return [r for r in supportRegions if r is not None]
+    return detector.calculateSupportRegions(moldShell)
 
 
-class SupportVisualizer:
-    def __init__(self, windowSize: Tuple[int, int] = (1200, 800)):
-        self.windowSize = windowSize
-
-    def _shapelyPolygonToTrimesh(self, polygon: BaseGeometry, zBottom: float, height: float) -> Optional[
-        trimesh.Trimesh]:
-        if polygon is None or polygon.is_empty:
-            return None
-        if isinstance(polygon, Polygon):
-            polys = [polygon]
-        elif isinstance(polygon, MultiPolygon):
-            polys = list(polygon.geoms)
-        else:
-            return None
-        meshes = []
-        for poly in polys:
-            if not poly.is_valid or poly.area < 1e-9:
-                continue
-            try:
-                mesh = trimesh.creation.extrude_polygon(poly, height=height)
-                mesh.apply_translation([0, 0, zBottom])
-                meshes.append(mesh)
-            except Exception:
-                continue
-        if not meshes:
-            return None
-        if len(meshes) == 1:
-            return meshes[0]
-        return trimesh.util.concatenate(meshes)
-
-    def _createVTKMeshActor(self, mesh: trimesh.Trimesh, color: Tuple[float, float, float],
-                            opacity: float) -> vtk.vtkActor:
-        vertices = mesh.vertices
-        faces = mesh.faces
-
-        vtkPoints = vtk.vtkPoints()
-        for v in vertices:
-            vtkPoints.InsertNextPoint(v)
-
-        vtkCells = vtk.vtkCellArray()
-        for f in faces:
-            triangle = vtk.vtkTriangle()
-            triangle.GetPointIds().SetId(0, f[0])
-            triangle.GetPointIds().SetId(1, f[1])
-            triangle.GetPointIds().SetId(2, f[2])
-            vtkCells.InsertNextCell(triangle)
-
-        polyData = vtk.vtkPolyData()
-        polyData.SetPoints(vtkPoints)
-        polyData.SetPolys(vtkCells)
-
-        normals = vtk.vtkPolyDataNormals()
-        normals.SetInputData(polyData)
-        normals.ComputePointNormalsOn()
-        normals.Update()
-
-        mapper = vtk.vtkPolyDataMapper()
-        mapper.SetInputConnection(normals.GetOutputPort())
-
-        actor = vtk.vtkActor()
-        actor.SetMapper(mapper)
-        actor.GetProperty().SetColor(color)
-        actor.GetProperty().SetOpacity(opacity)
-
-        return actor
-
-    def visualize(self, mesh: trimesh.Trimesh, supportRegions: List[Optional[BaseGeometry]], config: dict) -> None:
-        print("Generating visualization data...")
-
-        renderer = vtk.vtkRenderer()
-        renderer.SetBackground(1.0, 1.0, 1.0)
-
-        meshActor = self._createVTKMeshActor(mesh, color=(0.8, 0.8, 0.8), opacity=0.3)
-        meshActor.GetProperty().SetEdgeVisibility(True)
-        meshActor.GetProperty().SetEdgeColor(0.2, 0.2, 0.2)
-        renderer.AddActor(meshActor)
-
-        layerHeight = float(config.get("layerHeight", 0.2))
-        zMin = mesh.bounds[0, 2]
-
-        allSupportMeshes = []
-
-        print(f"Processing {len(supportRegions)} layers for support visualization...")
-
-        firstLayerZ = zMin + layerHeight / 2.0
-
-        for i, region in enumerate(supportRegions):
-            if region is None:
-                continue
-
-            currentZ = firstLayerZ + (i * layerHeight)
-
-            supportMesh = self._shapelyPolygonToTrimesh(region, zBottom=currentZ, height=layerHeight)
-            if supportMesh:
-                allSupportMeshes.append(supportMesh)
-
-        if allSupportMeshes:
-            print(f"Merging {len(allSupportMeshes)} support volumes...")
-            combinedSupport = trimesh.util.concatenate(allSupportMeshes)
-            supportActor = self._createVTKMeshActor(combinedSupport, color=(1.0, 0.2, 0.2), opacity=1.0)
-            renderer.AddActor(supportActor)
-        else:
-            print("No support regions detected to visualize.")
-
-        textActor = vtk.vtkTextActor()
-        textActor.SetInput("Grey: Mold Shell\nRed: Support Overhangs (>45 deg)")
-        textActor.GetTextProperty().SetColor(0, 0, 0)
-        textActor.GetTextProperty().SetFontSize(14)
-        textActor.SetPosition(10, 10)
-        renderer.AddViewProp(textActor)
-
-        renderWindow = vtk.vtkRenderWindow()
-        renderWindow.AddRenderer(renderer)
-        renderWindow.SetSize(self.windowSize[0], self.windowSize[1])
-        renderWindow.SetWindowName("Liquid Metal Mold Support Visualization")
-
-        interactor = vtk.vtkRenderWindowInteractor()
-        interactor.SetRenderWindow(renderWindow)
-
-        axes = vtk.vtkAxesActor()
-        axesWidget = vtk.vtkOrientationMarkerWidget()
-        axesWidget.SetOrientationMarker(axes)
-        axesWidget.SetInteractor(interactor)
-        axesWidget.SetEnabled(1)
-        axesWidget.InteractiveOff()
-
-        renderer.ResetCamera()
-        renderer.GetActiveCamera().Azimuth(30)
-        renderer.GetActiveCamera().Elevation(30)
-
-        interactor.Initialize()
-        renderWindow.Render()
-        interactor.Start()
-
-
-def main():
+if __name__ == "__main__":
     config = {
         "supportAngle": 45.0,
         "layerHeight": 0.5,
         "smoothHeight": 1.0,
         "areaEps": 1e-4
     }
-
     stlPath = "testModels/hollow.cylinder.down.stl"
     mesh = trimesh.load_mesh(stlPath)
-    detector = SupportRegionDetector(config)
-    supportRegions = detector.calculateSupportRegions(mesh)
-    validLayers = sum(1 for r in supportRegions if r is not None)
+    result = calculateSupportRegions(mesh, config)
+    validLayers = sum(1 for g in result.layerGeoms if g is not None)
     print(f"Found support regions on {validLayers} layers.")
-    visualizer = SupportVisualizer()
-    visualizer.visualize(mesh, supportRegions, config)
-
-
-if __name__ == "__main__":
-    main()
+    print(f"Total support area: {result.totalSupportArea:.4f}")

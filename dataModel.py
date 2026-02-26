@@ -1,7 +1,50 @@
 import json
 import os
 import time
+import numpy as np
+import trimesh
+from dataclasses import dataclass, field
 from typing import Dict, Any, List
+
+
+@dataclass
+class SupportRegionResult:
+    layerGeoms: List
+    sliceHeights: np.ndarray
+    totalSupportArea: float
+
+
+@dataclass
+class MachiningRegionResult:
+    points: np.ndarray
+    unmachinableMask: np.ndarray
+    unmachinablePoints: np.ndarray
+    unmachinablePercent: float
+    totalPoints: int
+    unmachinablePointsCount: int
+
+
+@dataclass
+class GatingComponents:
+    gateMesh: trimesh.Trimesh
+    riserMesh: trimesh.Trimesh
+    castingWithRiserMesh: trimesh.Trimesh
+    systemMesh: trimesh.Trimesh
+    gateSurface: np.ndarray
+    runnerPath: List[np.ndarray]
+    runnerRadius: float
+
+
+@dataclass
+class MoldDesignContext:
+    partMesh: trimesh.Trimesh = None
+    moldMesh: trimesh.Trimesh = None
+    innerCavityMesh: trimesh.Trimesh = None
+    gatingMesh: trimesh.Trimesh = None
+    supportRegionResult: SupportRegionResult = None
+    machiningRegionResult: MachiningRegionResult = None
+    gatingComponents: GatingComponents = None
+    wcsTransform: np.ndarray = field(default_factory=lambda: np.eye(4))
 
 
 class ManifestManager:
