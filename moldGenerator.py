@@ -3,6 +3,7 @@ import trimesh
 from typing import Tuple, Optional
 from moldGatingSystem import createGatingSystem
 
+
 class MoldGenerator:
     def __init__(self, config=None):
         self.config = config or {}
@@ -92,8 +93,9 @@ class MoldGenerator:
     def adjustStructure(self, moldShell: trimesh.Trimesh, config: dict) -> trimesh.Trimesh:
         return moldShell
 
-    def normalizeMeshes(self, partMesh: trimesh.Trimesh, moldMesh: trimesh.Trimesh,
-                        gatingMesh: Optional[trimesh.Trimesh]) -> Tuple[trimesh.Trimesh, trimesh.Trimesh, Optional[trimesh.Trimesh], np.ndarray]:
+    def normalizeMeshesToWcs(self, partMesh: trimesh.Trimesh, moldMesh: trimesh.Trimesh,
+                             gatingMesh: Optional[trimesh.Trimesh]) -> Tuple[
+        trimesh.Trimesh, trimesh.Trimesh, Optional[trimesh.Trimesh], np.ndarray]:
         meshesToConsider = [partMesh, moldMesh]
         if gatingMesh is not None:
             meshesToConsider.append(gatingMesh)
@@ -116,7 +118,7 @@ class MoldGenerator:
         if gatingMesh is not None:
             gatingMesh.apply_transform(matrix)
 
-        return partMesh, moldMesh, gatingMesh, translation
+        return partMesh, moldMesh, gatingMesh, matrix
 
     def generateMoldAssets(self, inputStlPath: str, paths: dict, config: dict) -> np.ndarray:
         inputMesh = trimesh.load(inputStlPath)
@@ -134,23 +136,29 @@ class MoldGenerator:
         if config.get("adjustStructure", False):
             moldShell = self.adjustStructure(moldShell, config)
 
-        partMesh, moldShell, gatingMesh, translation = self.normalizeMeshes(partMesh, moldShell, gatingMesh)
+        partMesh, moldShell, gatingMesh, transformMatrix = self.normalizeMeshesToWcs(partMesh, moldShell, gatingMesh)
 
         partMesh.export(paths["part"])
         moldShell.export(paths["moldShell"])
         if gatingMesh is not None:
             gatingMesh.export(paths["gating"])
 
-        return translation
+        return transformMatrix
 
 
 def main():
-    from dataModel import ManifestManager
-    inputStlPath = "testModels/hollow.cylinder.left.stl"
+    from manufacturingManifest import ManufacturingManifest
 
-    workspace = "workspace_test"
-    manifestMgr = ManifestManager(workspace)
-    paths = manifestMgr.getFilePaths()
+    inputStlPath = "testModels/cube.with.groove.stl"
+
+    projectId = "test_project_001"
+    manifest = ManufacturingManifest(projectId)
+
+    paths = {
+        "part": "testModels/cube.with.groove.normalized.stl",
+        "moldShell": "testModels/cube.with.groove.mold.normalized.stl",
+        "gating": "testModels/cube.with.groove.gating.normalized.stl"
+    }
 
     config = {
         "boundingBoxOffset": 2.0,
@@ -166,13 +174,16 @@ def main():
     }
 
     moldGen = MoldGenerator(config=config)
-    translation = moldGen.generateMoldAssets(inputStlPath, paths, config)
+    transformMatrix = moldGen.generateMoldAssets(inputStlPath, paths, config)
 
-    manifestMgr.setWcsTransform(translation.tolist())
-    manifestMgr.setConfigSnapshot(config)
-    manifestPath = manifestMgr.save()
+    manifest.setWcsTransform(transformMatrix)
+    manifest.addParameters("moldConfig", config)
+    manifest.addFile("partStl", paths["part"])
+    manifest.addFile("moldStl", paths["moldShell"])
+    if config.get("addGating", False):
+        manifest.addFile("gatingStl", paths["gating"])
 
-    print(f"Assets generated and normalized. Manifest saved to {manifestPath}")
+    manifest.save(f"{projectId}_manifest.json")
 
 
 if __name__ == "__main__":
