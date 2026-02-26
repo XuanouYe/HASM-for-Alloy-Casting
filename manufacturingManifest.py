@@ -1,68 +1,67 @@
+import os
 import json
-import numpy as np
-import trimesh
-from typing import Dict, Any, Tuple, Optional
-from datetime import datetime
+from typing import Dict, Any, Optional
+from dataModel import JobContext
 
 
-class ManufacturingManifest:
-    def __init__(self, projectId: str):
-        self.projectId = projectId
-        self.timestamp = datetime.now().isoformat()
-        self.wcsTransform = np.eye(4).tolist()
-        self.files = {}
-        self.parameters = {}
+class ManifestManager:
+    """
+    [Task A Refactoring]
+    Simplified ManifestManager acting as a compatibility layer and persistence handler
+    for JobContext. It no longer maintains independent state.
+    """
 
-    def setWcsTransform(self, transformMatrix: np.ndarray):
-        self.wcsTransform = transformMatrix.tolist()
+    def __init__(self, jobContext: JobContext):
+        self.jobContext = jobContext
+        self.workspaceDir = jobContext.workspaceDir
 
-    def addFile(self, key: str, path: str):
-        self.files[key] = path
+        # Ensure workspace exists
+        if not os.path.exists(self.workspaceDir):
+            os.makedirs(self.workspaceDir, exist_ok=True)
 
-    def addParameters(self, key: str, params: Dict[str, Any]):
-        self.parameters[key] = params
+    def registerArtifact(self, key: str, filePath: str, sourceStep: str,
+                         versionTag: str = "", metadata: Optional[Dict] = None):
+        """
+        Registers a production artifact into the JobContext.
+        """
+        self.jobContext.registerArtifact(
+            artifactKey=key,
+            filePath=filePath,
+            sourceStep=sourceStep,
+            versionTag=versionTag,
+            metrics=metadata
+        )
 
-    def save(self, outputPath: str):
-        data = {
-            "projectId": self.projectId,
-            "timestamp": self.timestamp,
-            "wcsTransform": self.wcsTransform,
-            "files": self.files,
-            "parameters": self.parameters
-        }
-        with open(outputPath, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
+    def getArtifactPath(self, key: str) -> str:
+        """
+        Retrieves the file path of a registered artifact from JobContext.
+        """
+        return self.jobContext.getArtifactPath(key)
 
+    def setConfigSnapshot(self, config: Dict[str, Any]):
+        """
+        Legacy compatibility: Updates the config snapshot in JobContext.
+        Ideally, config should be set during JobContext initialization via ConfigEngine.
+        """
+        # In the new architecture, configSnapshot is usually immutable after creation.
+        # This method is kept only if strictly necessary for legacy mutable flows,
+        # but normally we rely on the one already in jobContext.
+        pass
 
-def normalizeMeshesToWcs(
-        partMesh: trimesh.Trimesh,
-        moldMesh: trimesh.Trimesh,
-        gatingMesh: Optional[trimesh.Trimesh]
-) -> Tuple[trimesh.Trimesh, trimesh.Trimesh, Optional[trimesh.Trimesh], np.ndarray]:
-    meshesToBound = [partMesh, moldMesh]
-    if gatingMesh is not None:
-        meshesToBound.append(gatingMesh)
+    def save(self) -> str:
+        """
+        Persists the entire JobContext (including artifactsIndex and runtimeStatus) to disk.
+        Returns the path to the saved job file (job.json).
+        """
+        return self.jobContext.saveToJson()
 
-    combinedBounds = np.array([mesh.bounds for mesh in meshesToBound])
-    globalMin = np.min(combinedBounds[:, 0, :], axis=0)
-    globalMax = np.max(combinedBounds[:, 1, :], axis=0)
+    @classmethod
+    def load(cls, jobJsonPath: str) -> "ManifestManager":
+        """
+        Factory method to restore a manager from a serialized JobContext file.
+        """
+        if not os.path.exists(jobJsonPath):
+            raise FileNotFoundError(f"Job file not found: {jobJsonPath}")
 
-    centerX = (globalMin[0] + globalMax[0]) / 2.0
-    centerY = (globalMin[1] + globalMax[1]) / 2.0
-    minZ = globalMin[2]
-
-    translation = np.array([-centerX, -centerY, -minZ])
-    transformMatrix = trimesh.transformations.translation_matrix(translation)
-
-    partNormalized = partMesh.copy()
-    partNormalized.apply_transform(transformMatrix)
-
-    moldNormalized = moldMesh.copy()
-    moldNormalized.apply_transform(transformMatrix)
-
-    gatingNormalized = None
-    if gatingMesh is not None:
-        gatingNormalized = gatingMesh.copy()
-        gatingNormalized.apply_transform(transformMatrix)
-
-    return partNormalized, moldNormalized, gatingNormalized, transformMatrix
+        ctx = JobContext.loadFromJson(jobJsonPath)
+        return cls(ctx)

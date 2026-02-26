@@ -441,14 +441,17 @@ class AutoGatingSystem:
         return components.systemMesh
 
 
-def createGatingSystem(castingMesh: trimesh.Trimesh, config: Optional[Dict] = None, outputStlPath: Optional[str] = None) -> trimesh.Trimesh:
+def createGatingSystem(castingMesh: trimesh.Trimesh, config: Optional[Dict] = None,
+                       outputStlPath: Optional[str] = None) -> trimesh.Trimesh:
     if config is None:
         config = {}
     gatingSystem = AutoGatingSystem(castingMesh, config)
     gatingMesh = gatingSystem.generate()
+
     if outputStlPath:
         from geometryAdapters import exportMeshToStl
         exportMeshToStl(gatingMesh, outputStlPath)
+
     return gatingMesh
 
 
