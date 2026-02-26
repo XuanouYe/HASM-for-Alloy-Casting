@@ -3,12 +3,13 @@ import os
 import time
 from typing import Dict, Any, List
 
+
 class ManifestManager:
     def __init__(self, workspaceDir: str):
         self.workspaceDir = workspaceDir
         if not os.path.exists(self.workspaceDir):
             os.makedirs(self.workspaceDir, exist_ok=True)
-            
+
         self.manifest = {
             "timestamp": time.time(),
             "wcsTransform": {"translation": [0.0, 0.0, 0.0], "scale": 1.0},
@@ -22,16 +23,16 @@ class ManifestManager:
             },
             "configSnapshot": {}
         }
-        
+
     def getFilePaths(self) -> Dict[str, str]:
         return self.manifest["files"]
-        
+
     def setWcsTransform(self, translation: List[float], scale: float = 1.0):
         self.manifest["wcsTransform"] = {"translation": translation, "scale": scale}
-        
+
     def setConfigSnapshot(self, config: Dict[str, Any]):
         self.manifest["configSnapshot"] = config
-        
+
     def save(self):
         manifestPath = self.manifest["files"]["manifest"]
         with open(manifestPath, 'w', encoding='utf-8') as f:

@@ -183,10 +183,10 @@ class CuraEngineController:
     ) -> str:
         wslStlPath = self._validateInputFile(stlPath, ".stl")
         wslOutputPath = self._ensureOutputDirectory(outputPath)
-        
+
         if settings is None:
             settings = {}
-            
+
         if autoDropToBuildPlate or autoCenterXY:
             min_x, max_x, min_y, max_y, min_z, max_z = self._getStlBoundingBox(stlPath)
 
@@ -223,23 +223,23 @@ class CuraEngineController:
 
 
 def generateGcodeInterface(
-    stlPath: str,
-    outputPath: str,
-    processConfig: Dict[str, Any],
+        stlPath: str,
+        outputPath: str,
+        processConfig: Dict[str, Any],
 ) -> str:
     cm = ConfigManager()
     defaultConfig = cm.getDefaultConfig()
     additiveConfig = processConfig.get("additive") or defaultConfig.get("additive") or {}
     settings = cm.generateCuraConfig(additiveConfig)
-    
+
     enginePath = processConfig.get("wslEnginePath", defaultWslEnginePath)
     if not enginePath:
         raise SliceException("wslEnginePath not configured in processConfig or defaults")
-        
+
     defs = processConfig.get("definitionFiles", defaultDefinitionFiles)
     autoDrop = processConfig.get("autoDropToBuildPlate", defaultAutoDropToBuildPlate)
     autoCenter = processConfig.get("autoCenterXY", defaultAutoCenterXy)
-    
+
     controller = CuraEngineController(enginePath)
     return controller.generateGcode(
         stlPath=stlPath,
@@ -254,7 +254,7 @@ def generateGcodeInterface(
 def main():
     workspace = "workspace_test"
     manifestPath = os.path.join(workspace, "manifest.json")
-    
+
     if os.path.exists(manifestPath):
         manifestMgr = ManifestManager.load(manifestPath)
         files = manifestMgr["files"]
@@ -263,7 +263,7 @@ def main():
     else:
         print("Run moldGenerator.py first to create manifest")
         return
-        
+
     testConfig = {
         "wsl_engine_path": "/mnt/c/users/xuanouye/desktop/thesis/04-implementation/pc/external/curaengine/build/release/CuraEngine",
         "definition_files": [
@@ -277,22 +277,17 @@ def main():
             "bottom_layers": "4",
         },
     }
-    
-    try:
-        controller = CuraEngineController(testConfig["wsl_engine_path"])
-        out = controller.generateGcode(
-            stlPath=stlPath,
-            outputPath=outPath,
-            settings=testConfig["settings"],
-            definitionFiles=testConfig["definition_files"],
-            autoDropToBuildPlate=False,
-            autoCenterXY=False
-        )
-        print(f"Output generated at: {out}")
-    except SliceException as e:
-        print(f"Slicing failed: {e}")
-    except Exception as e:
-        print(f"Error: {e}")
+
+    controller = CuraEngineController(testConfig["wsl_engine_path"])
+    out = controller.generateGcode(
+        stlPath=stlPath,
+        outputPath=outPath,
+        settings=testConfig["settings"],
+        definitionFiles=testConfig["definition_files"],
+        autoDropToBuildPlate=False,
+        autoCenterXY=False
+    )
+    print(f"Output generated at: {out}")
 
 
 if __name__ == "__main__":

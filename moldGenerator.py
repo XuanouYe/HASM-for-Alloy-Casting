@@ -1,17 +1,20 @@
 import numpy as np
 import trimesh
-from typing import Tuple, Optional, Dict
+from typing import Tuple, Optional
 from moldGatingSystem import createGatingSystem
-from moldSupportRegionDetector import calculateSupportRegions
-from moldOrientationOptimizer import optimizeMoldOrientation
-from moldInnerSurfaceOffset import InnerSurfaceOffset
 
 class MoldGenerator:
     def __init__(self, config=None):
         self.config = config or {}
         self.boundingBoxOffset = float(self.config.get("boundingBoxOffset", 2.0))
         self.booleanEngine = self.config.get("booleanEngine", None)
-        self.intermediateResults = {}
+
+    def generateMoldShell(self, inputMesh: trimesh.Trimesh) -> trimesh.Trimesh:
+        inputMesh = self.ensureTrimesh(inputMesh)
+        boundingBox = self._calculateBoundingBox(inputMesh)
+        blankMesh = self._createBlankMesh(boundingBox)
+        moldShell = self._booleanDifference(blankMesh, inputMesh)
+        return moldShell
 
     def ensureTrimesh(self, meshOrScene):
         if isinstance(meshOrScene, trimesh.Trimesh):
@@ -26,7 +29,7 @@ class MoldGenerator:
         bounds = np.array(mesh.bounds, dtype=float)
         offset = float(self.boundingBoxOffset)
         bounds[0, :] -= offset
-        bounds[1, :] += offset 
+        bounds[1, :] += offset
         eps = 1e-6
         bounds[1, :] = np.maximum(bounds[1, :], bounds[0, :] + eps)
         return bounds
@@ -70,40 +73,7 @@ class MoldGenerator:
             "Try installing/configuring a backend (manifold or blender) and ensure meshes are watertight."
         ) from lastError
 
-    def optimizeOrientation(self, inputMesh: trimesh.Trimesh, config: dict) -> trimesh.Trimesh:
-        # Step 1: Optimization
-        print("Running Orientation Optimization...")
-        results = optimizeMoldOrientation(
-            inputCasting=inputMesh,
-            boundingBoxOffset=float(config.get("boundingBoxOffset", 2.0)),
-            supportAngle=float(config.get("supportAngle", 45.0)),
-            visualize=False
-        )
-        optimizedMesh = results.get("bestMesh", inputMesh)
-        self.intermediateResults["optimizedMesh"] = optimizedMesh
-        return optimizedMesh
-
-    def generateMoldShell(self, inputMesh: trimesh.Trimesh) -> trimesh.Trimesh:
-        # Step 2: Shell Generation
-        print("Generating Mold Shell...")
-        inputMesh = self.ensureTrimesh(inputMesh)
-        boundingBox = self._calculateBoundingBox(inputMesh)
-        blankMesh = self._createBlankMesh(boundingBox)
-        moldShell = self._booleanDifference(blankMesh, inputMesh)
-        self.intermediateResults["moldShell"] = moldShell
-        return moldShell
-
-    def adjustStructure(self, moldShell: trimesh.Trimesh, config: dict) -> trimesh.Trimesh:
-        # Step 3: Inner Surface Offset (Overhangs)
-        print("Adjusting Structure (Inner Surface Offset)...")
-        offsetProcessor = InnerSurfaceOffset(config)
-        adjustedMold = offsetProcessor.removeInnerSurfaceOverhangs(moldShell)
-        self.intermediateResults["adjustedMold"] = adjustedMold
-        return adjustedMold
-
     def generateGating(self, castingMesh: trimesh.Trimesh, config: dict) -> trimesh.Trimesh:
-        # Step 4: Gating System
-        print("Generating Gating System...")
         gatingConfig = {
             "targetFillTime": config.get("targetFillTime", 5.0),
             "sprueInletOffset": config.get("sprueInletOffset", 5.0),
@@ -114,72 +84,70 @@ class MoldGenerator:
             config=gatingConfig,
             visualize=False
         )
-        self.intermediateResults["gatingMesh"] = gatingMesh
         return gatingMesh
 
-    def normalizeMeshes(self, partMesh: trimesh.Trimesh, moldMesh: trimesh.Trimesh, gatingMesh: Optional[trimesh.Trimesh]) -> Tuple[trimesh.Trimesh, trimesh.Trimesh, Optional[trimesh.Trimesh], np.ndarray]:
+    def optimizeOrientation(self, moldShell: trimesh.Trimesh, config: dict) -> trimesh.Trimesh:
+        return moldShell
+
+    def adjustStructure(self, moldShell: trimesh.Trimesh, config: dict) -> trimesh.Trimesh:
+        return moldShell
+
+    def normalizeMeshes(self, partMesh: trimesh.Trimesh, moldMesh: trimesh.Trimesh,
+                        gatingMesh: Optional[trimesh.Trimesh]) -> Tuple[trimesh.Trimesh, trimesh.Trimesh, Optional[trimesh.Trimesh], np.ndarray]:
         meshesToConsider = [partMesh, moldMesh]
         if gatingMesh is not None:
             meshesToConsider.append(gatingMesh)
-            
+
         minZ = min(mesh.bounds[0][2] for mesh in meshesToConsider)
         minX = min(mesh.bounds[0][0] for mesh in meshesToConsider)
         maxX = max(mesh.bounds[1][0] for mesh in meshesToConsider)
         minY = min(mesh.bounds[0][1] for mesh in meshesToConsider)
         maxY = max(mesh.bounds[1][1] for mesh in meshesToConsider)
-        
+
         centerX = (minX + maxX) / 2.0
         centerY = (minY + maxY) / 2.0
-        
+
         translation = np.array([-centerX, -centerY, -minZ])
         matrix = np.eye(4)
         matrix[:3, 3] = translation
-        
+
         partMesh.apply_transform(matrix)
         moldMesh.apply_transform(matrix)
         if gatingMesh is not None:
             gatingMesh.apply_transform(matrix)
-            
+
         return partMesh, moldMesh, gatingMesh, translation
 
     def generateMoldAssets(self, inputStlPath: str, paths: dict, config: dict) -> np.ndarray:
-        self.intermediateResults = {} # Reset intermediate results
         inputMesh = trimesh.load(inputStlPath)
         partMesh = self.ensureTrimesh(inputMesh)
-        
-        # 1. Orientation Optimization
-        if config.get("optimizeOrientation", False):
-            partMesh = self.optimizeOrientation(partMesh, config)
 
-        # 2. Mold Shell Generation
         moldShell = self.generateMoldShell(partMesh)
-        
-        # 3. Inner Surface Adjustment
-        if config.get("adjustStructure", False):
-            moldShell = self.adjustStructure(moldShell, config)
 
-        # 4. Gating System
         gatingMesh = None
         if config.get("addGating", False):
             gatingMesh = self.generateGating(partMesh, config)
 
-        # 5. Normalization
+        if config.get("optimizeOrientation", False):
+            moldShell = self.optimizeOrientation(moldShell, config)
+
+        if config.get("adjustStructure", False):
+            moldShell = self.adjustStructure(moldShell, config)
+
         partMesh, moldShell, gatingMesh, translation = self.normalizeMeshes(partMesh, moldShell, gatingMesh)
 
         partMesh.export(paths["part"])
         moldShell.export(paths["moldShell"])
         if gatingMesh is not None:
             gatingMesh.export(paths["gating"])
-            
+
         return translation
 
-    def getIntermediateResult(self, stepName: str) -> Optional[trimesh.Trimesh]:
-        return self.intermediateResults.get(stepName)
 
 def main():
     from dataModel import ManifestManager
-    inputStlPath = "testModels/cube.with.groove.stl"
-    
+    inputStlPath = "testModels/hollow.cylinder.left.stl"
+
     workspace = "workspace_test"
     manifestMgr = ManifestManager(workspace)
     paths = manifestMgr.getFilePaths()
@@ -191,20 +159,21 @@ def main():
         "smoothHeight": 0.4,
         "booleanEngine": None,
         "addGating": True,
-        "optimizeOrientation": True,
-        "adjustStructure": True,
+        "optimizeOrientation": False,
+        "adjustStructure": False,
         "targetFillTime": 5.0,
         "sprueInletOffset": 5.0
     }
 
     moldGen = MoldGenerator(config=config)
     translation = moldGen.generateMoldAssets(inputStlPath, paths, config)
-    
+
     manifestMgr.setWcsTransform(translation.tolist())
     manifestMgr.setConfigSnapshot(config)
     manifestPath = manifestMgr.save()
-    
+
     print(f"Assets generated and normalized. Manifest saved to {manifestPath}")
+
 
 if __name__ == "__main__":
     main()
