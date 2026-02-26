@@ -1,12 +1,12 @@
 import sys
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import Qt
-from guiModelViewer import ModelViewerWidget
-from guiMoldProcessPanel import MoldProcessPanel
-from guiParameterPanel import ProcessParameterPanel
-from guiMainWindow import MainWindow
-from guiMainController import MainController
-from guiMoldProcessController import MoldProcessController
+from gui.modelViewer import ModelViewerWidget
+from gui.moldProcessPanel import MoldProcessPanel
+from gui.parameterPanel import ProcessParameterPanel
+from gui.mainWindow import MainWindow
+from gui.mainController import MainController
+from gui.moldProcessController import MoldProcessController
 
 
 def main():

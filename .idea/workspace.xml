@@ -5,18 +5,15 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="6833bebc-2e84-41ea-8662-ab2b3d13e641" name="更改" comment="Merge remote-tracking branch 'origin/main'">
-      <change afterPath="$PROJECT_DIR$/guiMainController.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/guiMoldProcessController.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/dataModel.py" beforeDir="false" afterPath="$PROJECT_DIR$/dataModel.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/geometryAdapters.py" beforeDir="false" afterPath="$PROJECT_DIR$/geometryAdapters.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/guiMainWindow.py" beforeDir="false" afterPath="$PROJECT_DIR$/guiMainWindow.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/guiModelViewer.py" beforeDir="false" afterPath="$PROJECT_DIR$/guiModelViewer.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/guiMoldProcessPanel.py" beforeDir="false" afterPath="$PROJECT_DIR$/guiMoldProcessPanel.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/guiWorkerThread.py" beforeDir="false" afterPath="$PROJECT_DIR$/guiWorkerThread.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/moldGatingSystem.py" beforeDir="false" afterPath="$PROJECT_DIR$/moldGatingSystem.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/moldGenerator.py" beforeDir="false" afterPath="$PROJECT_DIR$/moldGenerator.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/guiMainController.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/guiMainWindow.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/guiModelViewer.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/guiMoldProcessController.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/guiMoldProcessPanel.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/guiParameterPanel.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/guiWorkerThread.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -65,25 +62,25 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent"><![CDATA[{
-  "keyToString": {
-    "ASKED_SHARE_PROJECT_CONFIGURATION_FILES": "true",
-    "ModuleVcsDetector.initialDetectionPerformed": "true",
-    "Python.2602.executor": "Run",
-    "Python.cncPathDesigner.executor": "Run",
-    "Python.controlConfig.executor": "Run",
-    "Python.guiMainWindow.executor": "Run",
-    "Python.main.executor": "Run",
-    "Python.moldGatingSystem.executor": "Run",
-    "Python.moldGenerator.executor": "Run",
-    "Python.x.executor": "Run",
-    "Python.xx.executor": "Run",
-    "RunOnceActivity.ShowReadmeOnStart": "true",
-    "RunOnceActivity.git.unshallow": "true",
-    "git-widget-placeholder": "main",
-    "settings.editor.selected.configurable": "com.jetbrains.python.configuration.PyActiveSdkModuleConfigurable"
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;ASKED_SHARE_PROJECT_CONFIGURATION_FILES&quot;: &quot;true&quot;,
+    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
+    &quot;Python.2602.executor&quot;: &quot;Run&quot;,
+    &quot;Python.cncPathDesigner.executor&quot;: &quot;Run&quot;,
+    &quot;Python.controlConfig.executor&quot;: &quot;Run&quot;,
+    &quot;Python.guiMainWindow.executor&quot;: &quot;Run&quot;,
+    &quot;Python.main.executor&quot;: &quot;Run&quot;,
+    &quot;Python.moldGatingSystem.executor&quot;: &quot;Run&quot;,
+    &quot;Python.moldGenerator.executor&quot;: &quot;Run&quot;,
+    &quot;Python.x.executor&quot;: &quot;Run&quot;,
+    &quot;Python.xx.executor&quot;: &quot;Run&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;main&quot;,
+    &quot;settings.editor.selected.configurable&quot;: &quot;com.jetbrains.python.configuration.PyActiveSdkModuleConfigurable&quot;
   }
-}]]></component>
+}</component>
   <component name="RecentsManager">
     <key name="MoveFile.RECENT_KEYS">
       <recent name="$PROJECT_DIR$/testModels" />
@@ -200,7 +197,15 @@
       <option name="project" value="LOCAL" />
       <updated>1772119879112</updated>
     </task>
-    <option name="localTasksCounter" value="13" />
+    <task id="LOCAL-00013" summary="Merge remote-tracking branch 'origin/main'">
+      <option name="closed" value="true" />
+      <created>1772127413037</created>
+      <option name="number" value="00013" />
+      <option name="presentableId" value="LOCAL-00013" />
+      <option name="project" value="LOCAL" />
+      <updated>1772127413037</updated>
+    </task>
+    <option name="localTasksCounter" value="14" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
@@ -216,6 +221,7 @@
   </component>
   <component name="VcsManagerConfiguration">
     <MESSAGE value="Add files via upload" />
+    <MESSAGE value="Merge remote-tracking branch 'origin/main'&#10;&#10;# Conflicts:&#10;#&#9;README.md&#10;#&#9;guiMainWindow.py&#10;#&#9;guiModelViewer.py&#10;#&#9;guiMoldProcessPanel.py&#10;#&#9;guiWorkerThread.py&#10;#&#9;manufacturingManifest.py&#10;#&#9;moldGatingSystem.py&#10;#&#9;moldGenerator.py" />
     <MESSAGE value="Merge remote-tracking branch 'origin/main'" />
     <option name="LAST_COMMIT_MESSAGE" value="Merge remote-tracking branch 'origin/main'" />
   </component>
