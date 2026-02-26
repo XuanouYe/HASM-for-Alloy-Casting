@@ -1,114 +1,141 @@
-import os
+from typing import Dict, Any, Optional, Callable
+from datetime import datetime
+import logging
 from enum import Enum
-from typing import Any, Dict, Optional, Callable
-from dataModel import JobContext, MoldPlan, ProcessPlan, NcProgramSet
-import configEngine
+from controlConfig import ConfigManager
 
+logger = logging.getLogger(__name__)
 
-class WorkflowState(str, Enum):
-    Idle = "Idle"
-    JobCreated = "JobCreated"
-    MoldGenerated = "MoldGenerated"
-    Sliced = "Sliced"
-    ToolpathPlanned = "ToolpathPlanned"
-    NcGenerated = "NcGenerated"
-    PrintingMold = "PrintingMold"
-    Casting = "Casting"
-    Cooling = "Cooling"
-    ShellRemovalMilling = "ShellRemovalMilling"
-    FinishingMilling = "FinishingMilling"
-    Completed = "Completed"
-    Failed = "Failed"
-    Canceled = "Canceled"
+class WorkflowState(Enum):
+    IDLE = "idle"
+    INITIALIZED = "initialized"
+    RUNNING = "running"
+    PAUSED = "paused"
+    COMPLETED = "completed"
+    FAILED = "failed"
 
+class ExecutionStep:
+    def __init__(self, stepName: str, stepDisplay: str):
+        self.stepName = stepName
+        self.stepDisplay = stepDisplay
+        self.status = "pending"
+        self.output = None
+        self.error = None
+        self.startTime = None
+        self.endTime = None
 
-VALID_TRANSITIONS: Dict[str, Dict[str, str]] = {
-    "CreateJob":         {WorkflowState.Idle: WorkflowState.JobCreated},
-    "GenerateMold":      {WorkflowState.JobCreated: WorkflowState.MoldGenerated},
-    "Slice":             {WorkflowState.MoldGenerated: WorkflowState.Sliced},
-    "PlanToolpath":      {WorkflowState.Sliced: WorkflowState.ToolpathPlanned},
-    "GenerateNc":        {WorkflowState.ToolpathPlanned: WorkflowState.NcGenerated},
-    "StartPrint":        {WorkflowState.NcGenerated: WorkflowState.PrintingMold},
-    "StartCast":         {WorkflowState.PrintingMold: WorkflowState.Casting},
-    "StartCool":         {WorkflowState.Casting: WorkflowState.Cooling},
-    "StartShellRemoval": {WorkflowState.Cooling: WorkflowState.ShellRemovalMilling},
-    "StartFinish":       {WorkflowState.ShellRemovalMilling: WorkflowState.FinishingMilling},
-    "CompleteFinish":    {WorkflowState.FinishingMilling: WorkflowState.Completed},
-    "Abort":             {s: WorkflowState.Canceled for s in WorkflowState if s not in (WorkflowState.Completed, WorkflowState.Canceled)},
-    "Retry":             {WorkflowState.Failed: WorkflowState.Idle},
-}
-
+    def toDict(self) -> Dict[str, Any]:
+        return {
+            "step": self.stepName,
+            "display": self.stepDisplay,
+            "status": self.status,
+            "output": self.output,
+            "error": self.error,
+            "startTime": self.startTime,
+            "endTime": self.endTime
+        }
 
 class WorkflowManager:
-    def __init__(self):
-        self.jobContext: Optional[JobContext] = None
-        self._handlers: Dict[str, Callable] = {}
-        self._registerBuiltinHandlers()
+    def __init__(self, configManager: Optional[ConfigManager] = None):
+        self.state = WorkflowState.IDLE
+        self.projectId = None
+        self.config = None
+        self.executionHistory = []
+        self.currentStepIndex = -1
+        self.configManager = configManager or ConfigManager()
 
-    def _registerBuiltinHandlers(self):
-        self._handlers["CreateJob"] = self._handleCreateJob
+        self.steps = [
+            ("additive", "Additive Process - Mold Generation"),
+            ("casting", "Casting Process - Part Casting"),
+            ("subtractive", "Subtractive Process - Mold Removal")
+        ]
 
-    def registerHandler(self, eventName: str, handler: Callable):
-        self._handlers[eventName] = handler
+        logger.info("Workflow manager initialized")
 
-    def dispatch(self, eventName: str, payload: Optional[Dict[str, Any]] = None) -> Any:
-        payload = payload or {}
-        currentState = self.jobContext.currentState if self.jobContext else WorkflowState.Idle
+    def initialize(self, projectId: str, config: Optional[Dict[str, Any]] = None) -> bool:
+        if self.state != WorkflowState.IDLE:
+            logger.error(f"Workflow in wrong state for initialization: {self.state.value}")
+            return False
 
-        transitionMap = VALID_TRANSITIONS.get(eventName, {})
-        nextState = transitionMap.get(currentState)
-        if nextState is None:
-            raise ValueError(f"Invalid transition: event={eventName}, state={currentState}")
+        self.projectId = projectId
 
-        handler = self._handlers.get(eventName)
-        result = None
-        if handler:
-            result = handler(payload)
+        if config is None:
+            self.config = self.configManager.loadConfig(projectId)
+        else:
+            self.config = config
 
-        if self.jobContext:
-            self.jobContext.currentState = nextState
-            self.jobContext.runtimeStatus[eventName] = {"completedAt": __import__("time").time()}
-            self.jobContext.saveToJson()
+        self.state = WorkflowState.INITIALIZED
+        self.executionHistory = []
+        self.currentStepIndex = -1
 
-        return result
+        logger.info(f"Workflow initialized: {projectId}")
+        return True
 
-    def _handleCreateJob(self, payload: Dict[str, Any]) -> JobContext:
-        workspaceDir = payload.get("workspaceDir", "./workspace")
-        inputGeometryRef = payload.get("inputGeometryRef", "")
-        jobOverrides = payload.get("jobOverrides", {})
-        profileName = payload.get("profileName", "default")
-        jobId = payload.get("jobId", None)
+    def execute(self, moduleRegistry: Dict[str, Callable]) -> bool:
+        if self.state != WorkflowState.INITIALIZED:
+            logger.error(f"Workflow not properly initialized. Current state: {self.state.value}")
+            return False
 
-        os.makedirs(workspaceDir, exist_ok=True)
+        self.state = WorkflowState.RUNNING
+        logger.info(f"Starting workflow execution: {self.projectId}")
 
-        snapshot = configEngine.buildSnapshot(
-            jobOverrides=jobOverrides,
-            profileName=profileName,
-            workspaceDir=workspaceDir,
-            jobId=jobId or "",
-        )
+        try:
+            for index, (stepKey, stepDisplay) in enumerate(self.steps):
+                self.currentStepIndex = index
 
-        ctx = JobContext(
-            workspaceDir=workspaceDir,
-            inputGeometryRef=inputGeometryRef,
-            configSnapshot=snapshot,
-            currentState=WorkflowState.Idle,
-        )
-        if jobId:
-            ctx.jobId = jobId
+                stepRecord = ExecutionStep(stepKey, stepDisplay)
+                self.executionHistory.append(stepRecord)
 
-        snapshot.paths.workspaceDir = workspaceDir
-        snapshot.paths.partStl = os.path.join(workspaceDir, "part.normalized.stl")
-        snapshot.paths.moldShellStl = os.path.join(workspaceDir, "moldShell.normalized.stl")
-        snapshot.paths.gatingStl = os.path.join(workspaceDir, "gating.normalized.stl")
-        snapshot.paths.fdmGcode = os.path.join(workspaceDir, "fdm.gcode")
-        snapshot.paths.cncClJson = os.path.join(workspaceDir, "cnc.cl.json")
-        snapshot.paths.jobJson = os.path.join(workspaceDir, "job.json")
+                logger.info(f"Executing step {index + 1}/3: {stepDisplay}")
 
-        ctx.moldPlan = MoldPlan()
-        ctx.processPlan = ProcessPlan()
-        ctx.ncProgramSet = NcProgramSet()
+                if stepKey not in moduleRegistry:
+                    raise KeyError(f"Module not found: {stepKey}")
 
-        self.jobContext = ctx
-        ctx.saveToJson()
-        return ctx
+                moduleFunc = moduleRegistry[stepKey]
+                stepConfig = self.config.get(stepKey, {})
+
+                try:
+                    stepRecord.status = "running"
+                    stepRecord.startTime = datetime.now().isoformat()
+
+                    output = moduleFunc(self.projectId, stepConfig)
+
+                    stepRecord.status = "completed"
+                    stepRecord.output = output
+                    stepRecord.endTime = datetime.now().isoformat()
+                    logger.info(f"Step completed successfully: {stepDisplay}")
+
+                except Exception as e:
+                    stepRecord.status = "failed"
+                    stepRecord.error = str(e)
+                    stepRecord.endTime = datetime.now().isoformat()
+                    logger.error(f"Step failed: {stepDisplay} - {e}")
+                    self.state = WorkflowState.FAILED
+                    return False
+
+            self.state = WorkflowState.COMPLETED
+            logger.info(f"Workflow completed successfully: {self.projectId}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Workflow execution error: {e}")
+            self.state = WorkflowState.FAILED
+            return False
+
+    def getStatus(self) -> Dict[str, Any]:
+        return {
+            "state": self.state.value,
+            "projectId": self.projectId,
+            "currentStep": self.currentStepIndex,
+            "totalSteps": len(self.steps),
+            "progress": f"{self.currentStepIndex + 1}/{len(self.steps)}" if self.currentStepIndex >= 0 else "0/3",
+            "history": [step.toDict() for step in self.executionHistory]
+        }
+
+    def reset(self):
+        self.state = WorkflowState.IDLE
+        self.projectId = None
+        self.config = None
+        self.executionHistory = []
+        self.currentStepIndex = -1
+        logger.info("Workflow reset")
