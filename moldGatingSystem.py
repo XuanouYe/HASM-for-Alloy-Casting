@@ -2,7 +2,6 @@ from dataclasses import dataclass
 from typing import List, Tuple, Optional, Dict, Union
 import numpy as np
 import trimesh
-from scipy.spatial import KDTree
 from pathlib import Path
 from dataModel import GatingComponents
 
@@ -13,8 +12,6 @@ class MoldConfig:
     boundingBox: Tuple[np.ndarray, np.ndarray]
     centroid: np.ndarray
     lowestZ: float
-    principalAxes: np.ndarray = None
-    symmetryNormal: np.ndarray = None
 
 
 @dataclass
@@ -36,42 +33,6 @@ class GateCandidate:
     zHeight: float
 
 
-class DistanceField:
-    def __init__(self, mesh: trimesh.Trimesh):
-        self.mesh = mesh
-        self.modelScale = float(np.max(mesh.bounding_box.extents))
-        self.relativeTol = 0.005
-        self._kdTree = KDTree(mesh.vertices)
-
-    def distance(self, point: np.ndarray) -> float:
-        dist, _ = self._kdTree.query(np.atleast_2d(point))
-        return float(np.ravel(dist)[0])
-
-    def batchDistance(self, points: np.ndarray) -> np.ndarray:
-        dists, _ = self._kdTree.query(np.atleast_2d(points))
-        return np.ravel(dists)
-
-    def gradient(self, point: np.ndarray, eps: float = None) -> np.ndarray:
-        if eps is None:
-            eps = max(self.modelScale * 0.001, 1e-6)
-        g = np.zeros(3)
-        for axisIdx in range(3):
-            pp = point.copy()
-            pp[axisIdx] += eps
-            pm = point.copy()
-            pm[axisIdx] -= eps
-            g[axisIdx] = (self.distance(pp) - self.distance(pm)) / (2.0 * eps)
-        n = np.linalg.norm(g)
-        return g / n if n > 1e-12 else np.array([0., 0., 1.])
-
-    def isInside(self, points: np.ndarray) -> np.ndarray:
-        pts = np.atleast_2d(points)
-        surfTol = self.modelScale * self.relativeTol
-        containsMask = self.mesh.contains(pts)
-        nearSurfMask = self._kdTree.query(pts)[0] < surfTol
-        return containsMask | nearSurfMask
-
-
 class AutoGatingSystem:
     def __init__(self, mesh: trimesh.Trimesh, config: Optional[Dict] = None):
         if isinstance(mesh, trimesh.Scene):
@@ -80,12 +41,12 @@ class AutoGatingSystem:
         self.minRadius = 2.0
         self.velocityLimit = 500.0
         self.bufferDistance = 5.0
-        if config is None:
-            config = {}
+        config = config or {}
         self.targetFillTime = config.get('targetFillTime', 5.0)
         self.sprueInletOffset = config.get('sprueInletOffset', 5.0)
         self.boundingBoxOffset = config.get('boundingBoxOffset', 2.0)
         self.cavityMeshOverride = config.get('cavityMesh', None)
+
         rConf = config.get('rheology', {})
         self.rheologyParams = RheologyParams(
             meltViscosity=rConf.get('meltViscosity', 2e-3),
@@ -97,25 +58,12 @@ class AutoGatingSystem:
         self.moldConfig = self._analyzeMold(self._originalMesh)
 
     def _analyzeMold(self, mesh: trimesh.Trimesh) -> MoldConfig:
-        vol = abs(mesh.volume)
-        bboxMin, bboxMax = mesh.bounds[0], mesh.bounds[1]
-        principalAxes, symmetryNormal = self._detectSymmetryAxes(mesh)
         return MoldConfig(
-            cavityVolume=vol,
-            boundingBox=(bboxMin, bboxMax),
+            cavityVolume=abs(mesh.volume),
+            boundingBox=(mesh.bounds[0], mesh.bounds[1]),
             centroid=np.array(mesh.centroid),
-            lowestZ=float(bboxMin[2]),
-            principalAxes=principalAxes,
-            symmetryNormal=symmetryNormal
+            lowestZ=float(mesh.bounds[0][2])
         )
-
-    def _detectSymmetryAxes(self, mesh: trimesh.Trimesh) -> Tuple[np.ndarray, np.ndarray]:
-        eigenValues, eigenVectors = np.linalg.eigh(mesh.moment_inertia)
-        principalAxes = eigenVectors.T
-        symmetryNormal = principalAxes[int(np.argmin(eigenValues))].copy()
-        if symmetryNormal[2] < 0:
-            symmetryNormal = -symmetryNormal
-        return principalAxes, symmetryNormal
 
     def _getCavityMesh(self) -> trimesh.Trimesh:
         if self.cavityMeshOverride is not None:
@@ -123,10 +71,7 @@ class AutoGatingSystem:
             if isinstance(cavMesh, trimesh.Scene):
                 cavMesh = cavMesh.dump(concatenate=True)
             return cavMesh
-        mesh = self._originalMesh.copy()
-        if not mesh.is_watertight:
-            mesh.fill_holes()
-        return mesh
+        return self._originalMesh
 
     def _computeTargetGateZ(self, runnerRadius: float) -> float:
         bboxMin, _ = self.moldConfig.boundingBox
@@ -163,11 +108,13 @@ class AutoGatingSystem:
     def _projectAndGetNormal(self, cavityMesh: trimesh.Trimesh, points: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         if len(points) == 0:
             return np.array([]).reshape(0, 3), np.array([]).reshape(0, 3)
-        projPoints, distances, faceIndices = cavityMesh.nearest.on_surface(points)
+        projPoints, _, faceIndices = cavityMesh.nearest.on_surface(points)
         normals = cavityMesh.face_normals[faceIndices]
         return projPoints, normals
 
-    def _filterSideCandidates(self, points: np.ndarray, normals: np.ndarray, targetZ: float, zTol: float, normalZLimit: float, outerAlignLimit: float, cavityMesh: trimesh.Trimesh) -> Tuple[np.ndarray, np.ndarray]:
+    def _filterSideCandidates(self, points: np.ndarray, normals: np.ndarray, targetZ: float, zTol: float,
+                              normalZLimit: float, outerAlignLimit: float, cavityMesh: trimesh.Trimesh) -> Tuple[
+        np.ndarray, np.ndarray]:
         if len(points) == 0:
             return np.array([]).reshape(0, 3), np.array([]).reshape(0, 3)
         bboxCenter = (cavityMesh.bounds[0] + cavityMesh.bounds[1]) / 2.0
@@ -182,21 +129,23 @@ class AutoGatingSystem:
         finalMask = zMask & normalZMask & outerMask
         return points[finalMask], normals[finalMask]
 
-    def _computeAxisExtentsByRays(self, cavityMesh: trimesh.Trimesh, pIn: np.ndarray) -> Tuple[float, float, float, float]:
+    def _computeAxisExtentsByRays(self, cavityMesh: trimesh.Trimesh, pIn: np.ndarray) -> Tuple[
+        float, float, float, float]:
         rayIntersector = trimesh.ray.ray_triangle.RayMeshIntersector(cavityMesh)
-        directions = np.array([[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]])
+        directions = np.array([[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]])
         rayOrigins = np.tile(pIn, (6, 1))
-        locations, indexRay, indexTri = rayIntersector.intersects_location(rayOrigins, directions, multiple_hits=False)
+        locations, indexRay, _ = rayIntersector.intersects_location(rayOrigins, directions, multiple_hits=False)
         dists = np.full(6, -1.0)
         for i in range(len(indexRay)):
             dists[indexRay[i]] = np.linalg.norm(locations[i] - pIn)
         xWidth = dists[0] + dists[1] if dists[0] >= 0 and dists[1] >= 0 else -1.0
         yWidth = dists[2] + dists[3] if dists[2] >= 0 and dists[3] >= 0 else -1.0
         zHeight = dists[4] + dists[5] if dists[4] >= 0 and dists[5] >= 0 else -1.0
-        diagDirs = np.array([[1,1,0],[-1,-1,0],[1,-1,0],[-1,1,0]], dtype=float)
+
+        diagDirs = np.array([[1, 1, 0], [-1, -1, 0], [1, -1, 0], [-1, 1, 0]], dtype=float)
         diagDirsNorm = diagDirs / np.linalg.norm(diagDirs, axis=1, keepdims=True)
         diagOrigins = np.tile(pIn, (4, 1))
-        diagLocs, diagIdxRay, diagIdxTri = rayIntersector.intersects_location(diagOrigins, diagDirsNorm, multiple_hits=False)
+        diagLocs, diagIdxRay, _ = rayIntersector.intersects_location(diagOrigins, diagDirsNorm, multiple_hits=False)
         diagDists = np.full(4, -1.0)
         for i in range(len(diagIdxRay)):
             diagDists[diagIdxRay[i]] = np.linalg.norm(diagLocs[i] - pIn)
@@ -205,13 +154,15 @@ class AutoGatingSystem:
         diagMin = min(diagWidth1, diagWidth2)
         return xWidth, yWidth, zHeight, diagMin
 
-    def _scoreCandidateThickness(self, xWidth: float, yWidth: float, zHeight: float, diagMin: float, runnerRadius: float, minThicknessFactor: float = 1.0, diagFactor: float = 1.0) -> Tuple[bool, float]:
+    def _scoreCandidateThickness(self, xWidth: float, yWidth: float, zHeight: float, diagMin: float,
+                                 runnerRadius: float, minThicknessFactor: float = 1.0, diagFactor: float = 1.0) -> \
+    Tuple[bool, float]:
         if xWidth < 0 or yWidth < 0 or zHeight < 0:
             return False, 0.0
         minDim = min(xWidth, yWidth, zHeight)
         if minDim < minThicknessFactor * 2.0 * runnerRadius:
             return False, 0.0
-        if diagMin > 0 and diagMin < diagFactor * 2.0 * runnerRadius:
+        if 0 < diagMin < diagFactor * 2.0 * runnerRadius:
             return False, 0.0
         bulkScore = (xWidth * yWidth * zHeight) ** (1.0 / 3.0)
         maxDim = max(xWidth, yWidth, zHeight)
@@ -236,27 +187,14 @@ class AutoGatingSystem:
         maxZShift = zMin + 0.5 * (zMax - zMin)
         dzStep = runnerRadius * 0.5
         epsIn = max(modelScale * 1e-4, 0.05)
-        candidates = []
-        currentZ = targetZ
-        while currentZ <= maxZShift:
-            sectionPoints = self._getSectionOuterLoopPoints(cavityMesh, currentZ, sampleStep)
-            if len(sectionPoints) == 0:
-                currentZ += dzStep
-                continue
-            projPoints, normals = self._projectAndGetNormal(cavityMesh, sectionPoints)
-            filteredPoints, filteredNormals = self._filterSideCandidates(projPoints, normals, currentZ, zTol, 0.3, 0.3, cavityMesh)
-            for idx in range(len(filteredPoints)):
-                pSurf = filteredPoints[idx]
-                nSurf = filteredNormals[idx]
-                pIn = pSurf - nSurf * epsIn
-                xWidth, yWidth, zHeight, diagMin = self._computeAxisExtentsByRays(cavityMesh, pIn)
-                isValid, score = self._scoreCandidateThickness(xWidth, yWidth, zHeight, diagMin, runnerRadius, minThicknessFactor=1.5)
-                if isValid:
-                    candidates.append(GateCandidate(surfacePoint=pSurf, surfaceNormal=nSurf, thicknessScore=score, xWidth=xWidth, yWidth=yWidth, zHeight=zHeight))
-            if len(candidates) > 0:
-                break
-            currentZ += dzStep
-        if len(candidates) == 0:
+
+        searchConfigs = [
+            (1.5, 1.0),
+            (0.8, 0.5)
+        ]
+
+        for minThick, diagFact in searchConfigs:
+            candidates = []
             currentZ = targetZ
             while currentZ <= maxZShift:
                 sectionPoints = self._getSectionOuterLoopPoints(cavityMesh, currentZ, sampleStep)
@@ -264,21 +202,29 @@ class AutoGatingSystem:
                     currentZ += dzStep
                     continue
                 projPoints, normals = self._projectAndGetNormal(cavityMesh, sectionPoints)
-                filteredPoints, filteredNormals = self._filterSideCandidates(projPoints, normals, currentZ, zTol, 0.3, 0.3, cavityMesh)
+                filteredPoints, filteredNormals = self._filterSideCandidates(projPoints, normals, currentZ, zTol, 0.3,
+                                                                             0.3, cavityMesh)
+
                 for idx in range(len(filteredPoints)):
                     pSurf = filteredPoints[idx]
                     nSurf = filteredNormals[idx]
                     pIn = pSurf - nSurf * epsIn
                     xWidth, yWidth, zHeight, diagMin = self._computeAxisExtentsByRays(cavityMesh, pIn)
-                    isValid, score = self._scoreCandidateThickness(xWidth, yWidth, zHeight, diagMin, runnerRadius, minThicknessFactor=0.8, diagFactor=0.5)
+                    isValid, score = self._scoreCandidateThickness(xWidth, yWidth, zHeight, diagMin, runnerRadius,
+                                                                   minThicknessFactor=minThick, diagFactor=diagFact)
                     if isValid:
-                        candidates.append(GateCandidate(surfacePoint=pSurf, surfaceNormal=nSurf, thicknessScore=score, xWidth=xWidth, yWidth=yWidth, zHeight=zHeight))
+                        candidates.append(
+                            GateCandidate(surfacePoint=pSurf, surfaceNormal=nSurf, thicknessScore=score, xWidth=xWidth,
+                                          yWidth=yWidth, zHeight=zHeight))
+
                 if len(candidates) > 0:
                     break
                 currentZ += dzStep
-        bestCandidate = self._selectBestGateCandidate(candidates)
-        if bestCandidate is not None:
-            return bestCandidate.surfacePoint, bestCandidate.surfaceNormal
+
+            bestCandidate = self._selectBestGateCandidate(candidates)
+            if bestCandidate is not None:
+                return bestCandidate.surfacePoint, bestCandidate.surfaceNormal
+
         pts = self._getSectionOuterLoopPoints(cavityMesh, targetZ, sampleStep)
         if len(pts) > 0:
             projPt, _, faceIdx = cavityMesh.nearest.on_surface([pts[0]])
@@ -305,7 +251,8 @@ class AutoGatingSystem:
         effectiveViscosity = rp.meltViscosity * rp.solidificationFactor
         numerator = 8.0 * effectiveViscosity * runnerLengthM * flowRate
         denominator = np.pi * rp.maxPressureDrop
-        rheologyRadiusMm = ((numerator / denominator) ** 0.25) * 1000.0 if denominator > 0 and numerator > 0 else self.minRadius
+        rheologyRadiusMm = ((
+                                        numerator / denominator) ** 0.25) * 1000.0 if denominator > 0 and numerator > 0 else self.minRadius
         thermalFactor = 1.0 + 0.1 * (rp.heatTransferCoeff / 500.0)
         rheologyRadiusMm *= thermalFactor
         velocityRadius = self._calculateRunnerRadius()
@@ -314,7 +261,8 @@ class AutoGatingSystem:
         maxAllowed = float(np.min(bboxMax - bboxMin)) * 0.25
         return float(min(finalRadius, maxAllowed))
 
-    def _generateRunnerPath(self, gateSurface: np.ndarray, gateNormal: np.ndarray, runnerZ: float, runnerRadius: float, sprueInletZ: Optional[float] = None) -> List[np.ndarray]:
+    def _generateRunnerPath(self, gateSurface: np.ndarray, gateNormal: np.ndarray, runnerZ: float, runnerRadius: float,
+                            sprueInletZ: Optional[float] = None) -> List[np.ndarray]:
         gateDir2D = np.array([gateNormal[0], gateNormal[1]])
         gateDir2DNorm = np.linalg.norm(gateDir2D)
         if gateDir2DNorm < 1e-9:
@@ -327,7 +275,7 @@ class AutoGatingSystem:
         while True:
             runnerOutside = gateSurface + np.array([gateDir2D[0], gateDir2D[1], 0.0]) * outsideOffset
             if (runnerOutside[0] < bboxMin[0] - bboxExpand or runnerOutside[0] > bboxMax[0] + bboxExpand or
-                runnerOutside[1] < bboxMin[1] - bboxExpand or runnerOutside[1] > bboxMax[1] + bboxExpand):
+                    runnerOutside[1] < bboxMin[1] - bboxExpand or runnerOutside[1] > bboxMax[1] + bboxExpand):
                 break
             outsideOffset += self.bufferDistance
         sprueZ = float(sprueInletZ) if sprueInletZ is not None else (float(bboxMax[2]) + self.boundingBoxOffset)
@@ -359,8 +307,8 @@ class AutoGatingSystem:
         zMax = float(bboxMax[2])
         modelScale = float(np.max(cavityMesh.bounding_box.extents))
         zTol = modelScale * 0.002
-        V = cavityMesh.vertices[cavityMesh.faces]
-        topMask = np.all(np.abs(V[:, :, 2] - zMax) <= zTol, axis=1)
+        vNodes = cavityMesh.vertices[cavityMesh.faces]
+        topMask = np.all(np.abs(vNodes[:, :, 2] - zMax) <= zTol, axis=1)
         topFaceIndices = np.where(topMask)[0]
         if topFaceIndices.size == 0:
             centers = cavityMesh.triangles.mean(axis=1)
@@ -381,11 +329,13 @@ class AutoGatingSystem:
             bestTopPoint = candidates[int(np.argmax(dist2D))]
         else:
             areaSum = areasTop.sum()
-            bestTopPoint = np.average(centersTop, axis=0, weights=areasTop) if areaSum > 1e-12 else centersTop.mean(axis=0)
+            bestTopPoint = np.average(centersTop, axis=0, weights=areasTop) if areaSum > 1e-12 else centersTop.mean(
+                axis=0)
         projPoints, _, _ = cavityMesh.nearest.on_surface([bestTopPoint])
         return projPoints[0]
 
-    def _computeRiserDimensions(self, runnerRadius: float, attachmentZ: float, sprueInletZ: float, modelScale: float, bboxExtents: np.ndarray) -> Dict:
+    def _computeRiserDimensions(self, runnerRadius: float, attachmentZ: float, sprueInletZ: float, modelScale: float,
+                                bboxExtents: np.ndarray) -> Dict:
         riserTopZ = sprueInletZ
         neckLength = 2.0 * runnerRadius
         neckDiameter = 2.0 * runnerRadius
@@ -393,14 +343,18 @@ class AutoGatingSystem:
         minRiserTopZ = attachmentZ + neckLength + runnerRadius
         if riserTopZ <= minRiserTopZ:
             riserTopZ = max(minRiserTopZ, sprueInletZ)
-        return {'riserTopZ': riserTopZ, 'neckLength': neckLength, 'neckDiameter': neckDiameter, 'riserDiameter': riserDiameter}
+        return {'riserTopZ': riserTopZ, 'neckLength': neckLength, 'neckDiameter': neckDiameter,
+                'riserDiameter': riserDiameter}
 
-    def _createRiserMesh(self, attachmentPoint: np.ndarray, riserTopZ: float, riserDiameter: float, neckDiameter: float, neckLength: float, runnerRadius: float) -> trimesh.Trimesh:
+    def _createRiserMesh(self, attachmentPoint: np.ndarray, riserTopZ: float, riserDiameter: float, neckDiameter: float,
+                         neckLength: float, runnerRadius: float) -> trimesh.Trimesh:
         x, y = float(attachmentPoint[0]), float(attachmentPoint[1])
         neckStartZ = float(attachmentPoint[2]) - 0.2 * runnerRadius
         neckEndZ = float(attachmentPoint[2]) + neckLength
-        neckCylinder = trimesh.creation.cylinder(radius=neckDiameter / 2.0, segment=[(x, y, neckStartZ), (x, y, neckEndZ)], sections=32)
-        riserCylinder = trimesh.creation.cylinder(radius=riserDiameter / 2.0, segment=[(x, y, neckEndZ), (x, y, riserTopZ)], sections=32)
+        neckCylinder = trimesh.creation.cylinder(radius=neckDiameter / 2.0,
+                                                 segment=[(x, y, neckStartZ), (x, y, neckEndZ)], sections=32)
+        riserCylinder = trimesh.creation.cylinder(radius=riserDiameter / 2.0,
+                                                  segment=[(x, y, neckEndZ), (x, y, riserTopZ)], sections=32)
         combined = trimesh.util.concatenate([neckCylinder, riserCylinder])
         combined.fix_normals()
         return combined
@@ -420,13 +374,14 @@ class AutoGatingSystem:
         riserMesh = self._createRiserMesh(
             attachmentPoint, dims['riserTopZ'], dims['riserDiameter'],
             dims['neckDiameter'], dims['neckLength'], runnerRadius)
-        runnerPath = self._generateRunnerPath(gateSurface, gateNormal, runnerZ, runnerRadius, sprueInletZ=dims['riserTopZ'])
+        runnerPath = self._generateRunnerPath(gateSurface, gateNormal, runnerZ, runnerRadius,
+                                              sprueInletZ=dims['riserTopZ'])
         gateMesh = self._createGatingMesh(runnerPath, runnerRadius)
         systemMesh = trimesh.util.concatenate([riserMesh, gateMesh])
         systemMesh.fix_normals()
-        castingWithRiserMesh = trimesh.util.concatenate([self._originalMesh.copy(), riserMesh])
+        castingWithRiserMesh = trimesh.util.concatenate([self._originalMesh, riserMesh])
         castingWithRiserMesh.fix_normals()
-        castingWithSystemMesh = trimesh.util.concatenate([self._originalMesh.copy(), systemMesh])
+        castingWithSystemMesh = trimesh.util.concatenate([self._originalMesh, systemMesh])
         castingWithSystemMesh.fix_normals()
         return GatingComponents(
             gateMesh=gateMesh,
@@ -438,10 +393,11 @@ class AutoGatingSystem:
             runnerRadius=runnerRadius
         )
 
+
 def createGatingSystem(
-    castingMesh: trimesh.Trimesh,
-    config: Optional[Dict] = None,
-    componentStlDir: Optional[Union[str, Path]] = None
+        castingMesh: trimesh.Trimesh,
+        config: Optional[Dict] = None,
+        componentStlDir: Optional[Union[str, Path]] = None
 ) -> GatingComponents:
     if config is None:
         config = {}
@@ -451,26 +407,8 @@ def createGatingSystem(
         from geometryAdapters import exportMeshToStl
         componentStlDir = Path(componentStlDir)
         componentStlDir.mkdir(parents=True, exist_ok=True)
-        exportMeshToStl(gatingComponents.gateMesh, str(componentStlDir /  "gate.stl"))
+        exportMeshToStl(gatingComponents.gateMesh, str(componentStlDir / "gate.stl"))
         exportMeshToStl(gatingComponents.riserMesh, str(componentStlDir / "riser.stl"))
-        exportMeshToStl(gatingComponents.systemMesh, str(componentStlDir /  "system.stl"))
+        exportMeshToStl(gatingComponents.systemMesh, str(componentStlDir / "system.stl"))
         exportMeshToStl(gatingComponents.castingWithSystemMesh, str(componentStlDir / "casting.with.system.stl"))
     return gatingComponents
-
-
-if __name__ == '__main__':
-    from geometryAdapters import loadMeshFromFile
-
-    inputStlPath = "testModels/cylinder.down.stl"
-    config = {
-        "targetFillTime": 3.0,
-        "sprueInletOffset": 5.0,
-        "boundingBoxOffset": 2.0,
-        "rheology": {"meltViscosity": 2e-3, "solidificationFactor": 1.5, "maxPressureDrop": 1e5}
-    }
-    castingMesh = loadMeshFromFile(inputStlPath)
-    components = createGatingSystem(
-        castingMesh,
-        config,
-        componentStlDir="testModels/cylinder.down.gating.outputs"
-    )

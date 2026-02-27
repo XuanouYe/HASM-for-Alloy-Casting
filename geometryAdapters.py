@@ -1,4 +1,3 @@
-import numpy as np
 import trimesh
 import pyvista as pv
 

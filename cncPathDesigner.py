@@ -5,6 +5,7 @@ import numpy as np
 import trimesh
 import vtk
 from scipy.spatial.distance import cdist
+from pathlib import Path
 
 
 def normalizeVector(vec: np.ndarray) -> np.ndarray:
@@ -47,33 +48,6 @@ class SegmentOutput:
     pointCount: int
 
 
-class KeepOutZoneManager:
-    def __init__(self, targetMesh: trimesh.Trimesh, margin: float):
-        self.margin = float(margin)
-        self.keepOutMesh = self.buildExpandedMesh(targetMesh, self.margin)
-        self.proxQuery = trimesh.proximity.ProximityQuery(self.keepOutMesh)
-
-    def buildExpandedMesh(self, mesh: trimesh.Trimesh, margin: float) -> trimesh.Trimesh:
-        v = np.asarray(mesh.vertices, dtype=float)
-        n = np.asarray(mesh.vertex_normals, dtype=float)
-        if n.shape[0] != v.shape[0]:
-            mesh.rezero()
-            n = np.asarray(mesh.vertex_normals, dtype=float)
-        expandedV = v + n * float(margin)
-        return trimesh.Trimesh(vertices=expandedV, faces=np.asarray(mesh.faces, dtype=int), process=False)
-
-    def checkPointsSafe(self, points: np.ndarray, minDistance: float) -> np.ndarray:
-        if len(points) == 0:
-            return np.array([], dtype=bool)
-        closestPts, distances, _ = trimesh.proximity.closest_point(self.keepOutMesh, points)
-        distancesArray = np.asarray(distances, dtype=float)
-        outsideDistanceSafe = distancesArray > float(minDistance)
-        isInside = self.keepOutMesh.ray.contains_points(points)
-        isInsideArray = np.asarray(isInside, dtype=bool)
-        finalSafeMask = np.logical_and(outsideDistanceSafe, np.logical_not(isInsideArray))
-        return finalSafeMask
-
-
 class TrimeshToolpathEngine:
     def __init__(self):
         self.toolRadius = 0.0
@@ -82,8 +56,27 @@ class TrimeshToolpathEngine:
         self.toolRadius = float(toolParams.get("diameter", 6.0)) / 2.0
         return toolParams
 
+    def expandMesh(self, mesh: trimesh.Trimesh, margin: float) -> trimesh.Trimesh:
+        v = np.asarray(mesh.vertices, dtype=float)
+        n = np.asarray(mesh.vertex_normals, dtype=float)
+        if n.shape[0] != v.shape[0]:
+            mesh.rezero()
+            n = np.asarray(mesh.vertex_normals, dtype=float)
+        expandedV = v + n * float(margin)
+        return trimesh.Trimesh(vertices=expandedV, faces=np.asarray(mesh.faces, dtype=int), process=False)
+
+    def extractMachinableRegion(self, targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh,
+                                margin: float) -> trimesh.Trimesh:
+        expandedKeepOut = self.expandMesh(keepOutMesh, margin)
+        try:
+            return trimesh.boolean.difference([targetMesh, expandedKeepOut], engine="manifold")
+        except:
+            return targetMesh
+
     def generateDropCutterRasterLines(self, meshObject: trimesh.Trimesh, bounds: np.ndarray,
                                       rasterParams: Dict[str, Any]) -> List[np.ndarray]:
+        if meshObject.is_empty:
+            return []
         stepOver = float(rasterParams.get("stepOver", 1.0))
         safeHeight = float(rasterParams.get("safeHeight", 5.0))
         xMin, yMin, zMin = bounds[0]
@@ -103,14 +96,14 @@ class TrimeshToolpathEngine:
                 if len(matchIndices) > 0:
                     highestZ = np.max(locations[matchIndices, 2])
                     linePts.append([xList[i], y, highestZ])
-                else:
-                    linePts.append([xList[i], y, zMin])
             if linePts:
                 paths.append(np.asarray(linePts, dtype=float))
         return paths
 
     def generateWaterlineLoops(self, meshObject: trimesh.Trimesh, cutter: Any, zLevels: np.ndarray, sampling: float) -> \
     List[np.ndarray]:
+        if meshObject.is_empty:
+            return []
         waterlines = []
         for z in zLevels:
             sliceResult = meshObject.section(plane_origin=[0, 0, z], plane_normal=[0, 0, 1])
@@ -119,17 +112,12 @@ class TrimeshToolpathEngine:
                 for poly in slice2D.polygons_full:
                     offsetPoly = poly.buffer(self.toolRadius)
                     if not offsetPoly.is_empty:
-                        if offsetPoly.geom_type == 'Polygon':
-                            coords = np.array(offsetPoly.exterior.coords)
+                        geoms = offsetPoly.geoms if offsetPoly.geom_type == 'MultiPolygon' else [offsetPoly]
+                        for p in geoms:
+                            coords = np.array(p.exterior.coords)
                             coordsHomo = np.column_stack((coords, np.zeros(len(coords)), np.ones(len(coords))))
                             coords3D = (to3DMatrix @ coordsHomo.T).T[:, :3]
                             waterlines.append(coords3D)
-                        elif offsetPoly.geom_type == 'MultiPolygon':
-                            for p in offsetPoly.geoms:
-                                coords = np.array(p.exterior.coords)
-                                coordsHomo = np.column_stack((coords, np.zeros(len(coords)), np.ones(len(coords))))
-                                coords3D = (to3DMatrix @ coordsHomo.T).T[:, :3]
-                                waterlines.append(coords3D)
         return waterlines
 
     def optimizePathLinking(self, paths: List[np.ndarray], safeZ: float) -> np.ndarray:
@@ -146,25 +134,18 @@ class TrimeshToolpathEngine:
             minStartIdx = int(np.argmin(distStarts))
             minEndIdx = int(np.argmin(distEnds))
             if distStarts[minStartIdx] <= distEnds[minEndIdx]:
-                chosenListIdx = minStartIdx
-                reverse = False
+                chosenListIdx, reverse = minStartIdx, False
             else:
-                chosenListIdx = minEndIdx
-                reverse = True
+                chosenListIdx, reverse = minEndIdx, True
             chosenPathIdx = unvisited[chosenListIdx]
-            nextPath = paths[chosenPathIdx]
-            if reverse:
-                nextPath = nextPath[::-1]
+            nextPath = paths[chosenPathIdx] if not reverse else paths[chosenPathIdx][::-1]
             if len(linkedPaths) > 0:
-                retractUp = np.array([currentPos[0], currentPos[1], safeZ], dtype=float)
-                moveOver = np.array([nextPath[0][0], nextPath[0][1], safeZ], dtype=float)
-                linkedPaths.append(np.vstack((retractUp, moveOver)))
+                linkedPaths.append(np.vstack((np.array([currentPos[0], currentPos[1], safeZ], dtype=float),
+                                              np.array([nextPath[0][0], nextPath[0][1], safeZ], dtype=float))))
             linkedPaths.append(nextPath)
             currentPos = nextPath[-1]
             unvisited.pop(chosenListIdx)
-        if len(linkedPaths) > 0:
-            return np.vstack(linkedPaths)
-        return np.array([])
+        return np.vstack(linkedPaths) if linkedPaths else np.array([])
 
 
 class FiveAxisCncPathGenerator:
@@ -178,79 +159,77 @@ class FiveAxisCncPathGenerator:
             mesh = trimesh.util.concatenate([g for g in mesh.geometry.values()])
         return mesh
 
-    def generateJob(self, partStl: str, moldStl: str, gatingStl: str, toolParams: Dict[str, Any],
+    def generateJob(self, partStl: str, moldStl: str, gateStl: str, riserStl: str, toolParams: Dict[str, Any],
                     stepParams: List[Dict[str, Any]], axisStrategyParams: Dict[str, Any], wcsId: str = "WCS0",
                     jobId: Optional[str] = None) -> Dict[str, Any]:
         partMesh = self.loadMesh(partStl)
         moldMesh = self.loadMesh(moldStl)
-        gatingMesh = self.loadMesh(gatingStl)
-        globalMinZ = min([float(partMesh.bounds[0][2]), float(moldMesh.bounds[0][2]), float(gatingMesh.bounds[0][2])])
+        gateMesh = self.loadMesh(gateStl)
+        riserMesh = self.loadMesh(riserStl)
+
+        globalMinZ = min([float(m.bounds[0][2]) for m in [partMesh, moldMesh, gateMesh, riserMesh]])
         candidateAxesRaw = axisStrategyParams.get("candidateAxes", [[0.0, 0.0, 1.0]])
-        candidateAxesUnfiltered = [normalizeVector(np.array(a, dtype=float)) for a in candidateAxesRaw]
-        candidateAxes = [ax for ax in candidateAxesUnfiltered if ax[2] >= 0.0]
-        if not candidateAxes:
-            candidateAxes = [np.array([0.0, 0.0, 1.0])]
+        candidateAxes = [ax for ax in [normalizeVector(np.array(a, dtype=float)) for a in candidateAxesRaw] if
+                         ax[2] >= 0.0] or [np.array([0.0, 0.0, 1.0])]
+
         safetyMargin = float(toolParams.get("safetyMargin", 0.5))
-        toolDiameter = float(toolParams.get("diameter", 6.0))
-        toolRadius = toolDiameter * 0.5
-        combinedObstacleMesh = trimesh.util.concatenate([partMesh, gatingMesh])
-        step1KeepOut = KeepOutZoneManager(combinedObstacleMesh, safetyMargin)
-        step1 = self.generateStep(1, "shellRemoval", moldMesh, step1KeepOut, toolParams, stepParams[0], candidateAxes,
-                                  str(stepParams[0].get("mode", "dropRaster")), toolRadius, safetyMargin, globalMinZ)
-        step2KeepOut = KeepOutZoneManager(gatingMesh, safetyMargin)
-        step2 = self.generateStep(2, "partFinishing", partMesh, step2KeepOut, toolParams, stepParams[1], candidateAxes,
-                                  str(stepParams[1].get("mode", "waterline")), toolRadius, safetyMargin, globalMinZ)
-        step3KeepOut = KeepOutZoneManager(partMesh, safetyMargin)
-        step3 = self.generateStep(3, "gatingRemoval", gatingMesh, step3KeepOut, toolParams, stepParams[2],
-                                  candidateAxes, str(stepParams[2].get("mode", "dropRaster")), toolRadius, safetyMargin,
-                                  globalMinZ)
+
+        step1Region = self.toolpathEngine.extractMachinableRegion(moldMesh, trimesh.util.concatenate(
+            [partMesh, gateMesh, riserMesh]), safetyMargin)
+        step1 = self.generateStep(1, "shellRemoval", step1Region, toolParams, stepParams[0], candidateAxes,
+                                  str(stepParams[0].get("mode", "dropRaster")), globalMinZ)
+
+        step2Region = self.toolpathEngine.extractMachinableRegion(trimesh.util.concatenate([partMesh, riserMesh]),
+                                                                  gateMesh, safetyMargin)
+        step2 = self.generateStep(2, "partAndRiserFinishing", step2Region, toolParams, stepParams[1], candidateAxes,
+                                  str(stepParams[1].get("mode", "waterline")), globalMinZ)
+
+        step3Region = self.toolpathEngine.extractMachinableRegion(gateMesh, partMesh, safetyMargin)
+        step3 = self.generateStep(3, "gateRemoval", step3Region, toolParams, stepParams[2],
+                                  candidateAxes, str(stepParams[2].get("mode", "dropRaster")), globalMinZ)
+
         out = {"version": self.version, "wcsId": str(wcsId), "steps": [step1, step2, step3]}
         if jobId is not None:
             out["jobId"] = str(jobId)
         return out
 
     def generateStep(self, stepId: int, stepType: str, targetMesh: trimesh.Trimesh,
-                     keepOutManager: Optional[KeepOutZoneManager], toolParams: Dict[str, Any],
-                     stepParam: Dict[str, Any], candidateAxes: List[np.ndarray], mode: str, toolRadius: float,
-                     safetyMargin: float, globalMinZ: float) -> Dict[str, Any]:
+                     toolParams: Dict[str, Any], stepParam: Dict[str, Any], candidateAxes: List[np.ndarray],
+                     mode: str, globalMinZ: float) -> Dict[str, Any]:
         feedrate = float(stepParam.get("feedrate", 500.0))
-        minKeepOutDistance = float(stepParam.get("minKeepOutDistance", toolRadius + safetyMargin))
-        platformSafeZ = float(globalMinZ + toolRadius + safetyMargin)
+        toolRadius = float(toolParams.get("diameter", 6.0)) * 0.5
+        platformSafeZ = float(globalMinZ + toolRadius + float(toolParams.get("safetyMargin", 0.5)))
         segments = []
         allClPoints = []
         pointId = 0
+
         for segmentId, toolAxis in enumerate(candidateAxes):
             rotToToolFrame = buildRotationFromTo(toolAxis, np.array([0.0, 0.0, 1.0], dtype=float))
             rotBack = rotToToolFrame.T
             rotatedTarget = self.rotateMesh(targetMesh, rotToToolFrame)
             localSafeZ = float(rotatedTarget.bounds[1][2]) + float(stepParam.get("safeHeight", 5.0))
             cutter = self.toolpathEngine.buildCutter(toolParams)
-            rawPathsLocal = []
+
             if mode.lower() in ["waterline", "wl"]:
                 sampling = float(stepParam.get("sampling", stepParam.get("stepOver", 0.5)))
                 layerStep = float(stepParam.get("layerStep", 0.5))
-                zMin = float(rotatedTarget.bounds[0][2])
-                zMax = float(rotatedTarget.bounds[1][2])
-                zLevels = np.arange(zMin, zMax + layerStep, layerStep, dtype=float)
+                zLevels = np.arange(float(rotatedTarget.bounds[0][2]), float(rotatedTarget.bounds[1][2]) + layerStep,
+                                    layerStep, dtype=float)
                 rawPathsLocal = self.toolpathEngine.generateWaterlineLoops(rotatedTarget, cutter, zLevels, sampling)
             else:
-                rasterParams = dict(stepParam)
                 rawPathsLocal = self.toolpathEngine.generateDropCutterRasterLines(rotatedTarget,
                                                                                   np.asarray(rotatedTarget.bounds,
-                                                                                             dtype=float), rasterParams)
+                                                                                             dtype=float),
+                                                                                  dict(stepParam))
+
             validPathsLocal = []
             for pathLocal in rawPathsLocal:
-                if len(pathLocal) == 0:
-                    continue
+                if len(pathLocal) == 0: continue
                 pathWcs = applyRotation(pathLocal, rotBack)
-                if keepOutManager is not None:
-                    safeMask = keepOutManager.checkPointsSafe(pathWcs, minKeepOutDistance)
-                else:
-                    safeMask = np.ones(len(pathWcs), dtype=bool)
                 platformMask = pathWcs[:, 2] >= platformSafeZ
-                finalMask = np.logical_and(safeMask, platformMask)
+
                 currentSubPath = []
-                for i, isValid in enumerate(finalMask.tolist()):
+                for i, isValid in enumerate(platformMask.tolist()):
                     if isValid:
                         currentSubPath.append(pathLocal[i])
                     else:
@@ -259,8 +238,8 @@ class FiveAxisCncPathGenerator:
                             currentSubPath = []
                 if len(currentSubPath) > 0:
                     validPathsLocal.append(np.asarray(currentSubPath, dtype=float))
-            validPathsLocal = [p for p in validPathsLocal if len(p) > 0]
-            if len(validPathsLocal) > 0:
+
+            if validPathsLocal:
                 optimizedLocalPath = self.toolpathEngine.optimizePathLinking(validPathsLocal, localSafeZ)
                 if len(optimizedLocalPath) > 0:
                     finalWcsPath = applyRotation(optimizedLocalPath, rotBack)
@@ -270,27 +249,20 @@ class FiveAxisCncPathGenerator:
                                      "toolAxis": [float(toolAxis[0]), float(toolAxis[1]), float(toolAxis[2])],
                                      "pointCount": int(len(clPointsWcs))})
                     allClPoints.extend(clPointsWcs)
+
         return {"stepId": int(stepId), "stepType": str(stepType), "toolParams": toolParams, "segments": segments,
                 "clPoints": allClPoints}
 
     def rotateMesh(self, mesh: trimesh.Trimesh, rotMat: np.ndarray) -> trimesh.Trimesh:
-        v = np.asarray(mesh.vertices, dtype=float)
-        f = np.asarray(mesh.faces, dtype=int)
-        rv = applyRotation(v, rotMat)
-        return trimesh.Trimesh(vertices=rv, faces=f, process=False)
+        return trimesh.Trimesh(vertices=applyRotation(np.asarray(mesh.vertices, dtype=float), rotMat),
+                               faces=np.asarray(mesh.faces, dtype=int), process=False)
 
     def buildClPointDicts(self, positions: np.ndarray, toolAxis: np.ndarray, feedrate: float, segmentId: int,
                           startPointId: int) -> List[Dict[str, Any]]:
-        out = []
         toolAxis = normalizeVector(toolAxis)
-        for i in range(positions.shape[0]):
-            pid = int(startPointId + i)
-            p = positions[i]
-            d = {"pointId": pid, "position": [float(p[0]), float(p[1]), float(p[2])],
+        return [{"pointId": int(startPointId + i), "position": [float(p[0]), float(p[1]), float(p[2])],
                  "toolAxis": [float(toolAxis[0]), float(toolAxis[1]), float(toolAxis[2])], "feedrate": float(feedrate),
-                 "segmentId": int(segmentId)}
-            out.append(d)
-        return out
+                 "segmentId": int(segmentId)} for i, p in enumerate(positions)]
 
     def exportClJson(self, clData: Dict[str, Any], outputPath: str) -> None:
         with open(outputPath, 'w', encoding='utf-8') as f:
@@ -303,8 +275,7 @@ class PathVisualizer:
 
     def createVTKMeshActor(self, mesh: trimesh.Trimesh, color: tuple, opacity: float) -> vtk.vtkActor:
         vtkPoints = vtk.vtkPoints()
-        for v in mesh.vertices:
-            vtkPoints.InsertNextPoint(v)
+        for v in mesh.vertices: vtkPoints.InsertNextPoint(v)
         vtkCells = vtk.vtkCellArray()
         for f in mesh.faces:
             tri = vtk.vtkTriangle()
@@ -351,18 +322,12 @@ class PathVisualizer:
     def visualize(self, targetMesh: trimesh.Trimesh, clData: Dict[str, Any]) -> None:
         renderer = vtk.vtkRenderer()
         renderer.SetBackground(1.0, 1.0, 1.0)
-        meshActor = self.createVTKMeshActor(targetMesh, (0.7, 0.7, 0.7), 0.5)
-        renderer.AddActor(meshActor)
+        renderer.AddActor(self.createVTKMeshActor(targetMesh, (0.7, 0.7, 0.7), 0.5))
         colors = [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), (1.0, 0.5, 0.0), (0.5, 0.0, 1.0)]
         for stepIndex, step in enumerate(clData.get("steps", [])):
-            clPoints = step.get("clPoints", [])
-            points = []
-            for p in clPoints:
-                points.append(p["position"])
+            points = [p["position"] for p in step.get("clPoints", [])]
             if points:
-                color = colors[stepIndex % len(colors)]
-                pathActor = self.createVTKPathActor(points, color)
-                renderer.AddActor(pathActor)
+                renderer.AddActor(self.createVTKPathActor(points, colors[stepIndex % len(colors)]))
         renderWindow = vtk.vtkRenderWindow()
         renderWindow.AddRenderer(renderer)
         renderWindow.SetSize(self.windowSize[0], self.windowSize[1])
@@ -380,116 +345,68 @@ class PathVisualizer:
         interactor.Initialize()
         renderWindow.Render()
         interactor.Start()
-        renderWindow.Finalize()
-        interactor.TerminateApp()
-        del renderWindow, interactor, renderer
 
 
 def generateCncJobInterface(
         partStl: str,
         moldStl: str,
-        gatingStl: str,
+        gateStl: str,
+        riserStl: str,
         outputJsonPath: str,
         processConfig: Dict[str, Any],
         jobId: str = "JOB_AUTO",
         visualize: bool = False
 ) -> Dict[str, Any]:
-    # Extract config from the flat subtractive config structure
     subtractiveConfig = processConfig.get("subtractive", {})
 
-    # 1. Map Tool Params
     toolParams = {
-        "type": "ball",  # Default to ball end mill
+        "type": "ball",
         "diameter": float(subtractiveConfig.get("toolDiameter", 6.0)),
         "safetyMargin": float(subtractiveConfig.get("toolSafetyMargin", 0.5))
     }
 
-    # 2. Map Step Params (Common settings for all steps for now, can be expanded)
     feedrate = float(subtractiveConfig.get("feedRate", 500.0))
     stepOver = float(subtractiveConfig.get("stepOver", 1.5))
     safeHeight = float(subtractiveConfig.get("safeHeight", 5.0))
     waterlineStep = float(subtractiveConfig.get("waterlineStepDown", 0.5))
 
     stepParams = [
-        # Step 1: Shell Removal (Roughing/Removal) - Drop Raster
-        {
-            "mode": "dropRaster",
-            "stepOver": stepOver,
-            "safeHeight": safeHeight,
-            "feedrate": feedrate,
-            "outputInvalidPoints": False
-        },
-        # Step 2: Part Finishing - Waterline
-        {
-            "mode": "waterline",
-            "sampling": stepOver,  # For waterline, sampling along path often equals stepOver
-            "layerStep": waterlineStep,
-            "safeHeight": safeHeight,
-            "feedrate": feedrate,
-            "outputInvalidPoints": False
-        },
-        # Step 3: Gating Removal - Drop Raster
-        {
-            "mode": "dropRaster",
-            "stepOver": stepOver,
-            "safeHeight": safeHeight,
-            "feedrate": feedrate,
-            "outputInvalidPoints": False
-        }
+        {"mode": "dropRaster", "stepOver": stepOver, "safeHeight": safeHeight, "feedrate": feedrate},
+        {"mode": "waterline", "sampling": stepOver, "layerStep": waterlineStep, "safeHeight": safeHeight,
+         "feedrate": feedrate},
+        {"mode": "dropRaster", "stepOver": stepOver, "safeHeight": safeHeight, "feedrate": feedrate}
     ]
 
-    # 3. Map Axis Strategy
-    candidateAxes = subtractiveConfig.get("candidateAxes", [[0.0, 0.0, 1.0]])
-    axisStrategyParams = {
-        "candidateAxes": candidateAxes
-    }
+    axisStrategyParams = {"candidateAxes": subtractiveConfig.get("candidateAxes", [[0.0, 0.0, 1.0]])}
 
-    # Execute Generator
     generator = FiveAxisCncPathGenerator(version="1.1")
     clData = generator.generateJob(
-        partStl=partStl,
-        moldStl=moldStl,
-        gatingStl=gatingStl,
-        toolParams=toolParams,
-        stepParams=stepParams,
-        axisStrategyParams=axisStrategyParams,
-        wcsId="WCS_MAIN",
-        jobId=jobId
+        partStl=partStl, moldStl=moldStl, gateStl=gateStl, riserStl=riserStl,
+        toolParams=toolParams, stepParams=stepParams, axisStrategyParams=axisStrategyParams,
+        wcsId="WCS_MAIN", jobId=jobId
     )
 
-    # Export
     generator.exportClJson(clData, outputJsonPath)
 
-    # Visualization (Optional)
     if visualize:
-        partMesh = generator.loadMesh(partStl)
-        visualizer = PathVisualizer()
-        visualizer.visualize(partMesh, clData)
+        PathVisualizer().visualize(generator.loadMesh(partStl), clData)
 
     return clData
 
 
-def main():
-    testConfig = {
-        "subtractive": {
-            "toolDiameter": 6.0,
-            "toolSafetyMargin": 0.5,
-            "feedRate": 1000,
-            "stepOver": 1.2,
-            "safeHeight": 10.0,
-            "waterlineStepDown": 0.3,
-            "candidateAxes": [[0.0, 0.0, 1.0], [0.5, 0.0, 0.866]]
-        }
-    }
-
-    generateCncJobInterface(
-        partStl="testModels/cylinder.down.stl",
-        moldStl="testModels/cylinder.down.mold.stl",
-        gatingStl="testModels/cylinder.down.gating.stl",
-        outputJsonPath="cnc.cylinder.down.json",
-        processConfig=testConfig,
-        visualize=True
-    )
-
-if __name__ == "__main__":
-    main()
+if __name__ == '__main__':
+    tempCncDir = Path("tempCncFiles")
+    if tempCncDir.exists():
+        generateCncJobInterface(
+            partStl=str(tempCncDir / "part.stl"),
+            moldStl=str(tempCncDir / "mold.stl"),
+            gateStl=str(tempCncDir / "gate.stl"),
+            riserStl=str(tempCncDir / "riser.stl"),
+            outputJsonPath=str(tempCncDir / "cncToolpath.json"),
+            processConfig={
+                "subtractive": {"toolDiameter": 6.0, "toolSafetyMargin": 0.5, "feedRate": 500.0, "stepOver": 1.5,
+                                "safeHeight": 5.0, "waterlineStepDown": 0.5,
+                                "candidateAxes": [[0.0, 0.0, 1.0], [1.0, 0.0, 0.0]]}},
+            jobId="JOB_TEST",
+            visualize=True
+        )

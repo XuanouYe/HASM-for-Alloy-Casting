@@ -6,14 +6,17 @@
   <component name="ChangeListManager">
     <list default="true" id="6833bebc-2e84-41ea-8662-ab2b3d13e641" name="更改" comment="Merge remote-tracking branch 'origin/main'">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/guiMainController.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/guiMainWindow.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/guiModelViewer.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/guiMoldProcessController.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/guiMoldProcessPanel.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/guiParameterPanel.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/guiWorkerThread.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/cncPathDesigner.py" beforeDir="false" afterPath="$PROJECT_DIR$/cncPathDesigner.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/geometryAdapters.py" beforeDir="false" afterPath="$PROJECT_DIR$/geometryAdapters.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/gui/moldProcessController.py" beforeDir="false" afterPath="$PROJECT_DIR$/gui/moldProcessController.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/moldGatingSystem.py" beforeDir="false" afterPath="$PROJECT_DIR$/moldGatingSystem.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/moldGenerator.py" beforeDir="false" afterPath="$PROJECT_DIR$/moldGenerator.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/moldOrientationOptimizer.py" beforeDir="false" afterPath="$PROJECT_DIR$/moldOrientationOptimizer.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/testModels/cylinder.down.gating.outputs/casting.with.system.stl" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/testModels/cylinder.down.gating.outputs/gate.stl" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/testModels/cylinder.down.gating.outputs/riser.stl" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/testModels/cylinder.down.gating.outputs/system.stl" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/testModels/cylinder.mold.stl" beforeDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -205,7 +208,23 @@
       <option name="project" value="LOCAL" />
       <updated>1772127413037</updated>
     </task>
-    <option name="localTasksCounter" value="14" />
+    <task id="LOCAL-00014" summary="Merge remote-tracking branch 'origin/main'">
+      <option name="closed" value="true" />
+      <created>1772168168280</created>
+      <option name="number" value="00014" />
+      <option name="presentableId" value="LOCAL-00014" />
+      <option name="project" value="LOCAL" />
+      <updated>1772168168280</updated>
+    </task>
+    <task id="LOCAL-00015" summary="Merge remote-tracking branch 'origin/main'">
+      <option name="closed" value="true" />
+      <created>1772168176925</created>
+      <option name="number" value="00015" />
+      <option name="presentableId" value="LOCAL-00015" />
+      <option name="project" value="LOCAL" />
+      <updated>1772168176925</updated>
+    </task>
+    <option name="localTasksCounter" value="16" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">

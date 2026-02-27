@@ -1,18 +1,19 @@
 import numpy as np
-import trimesh
-from typing import Tuple, Optional
-from pathlib import Path
+from typing import List, Optional
 
 from dataModel import GatingComponents
-from geometryAdapters import loadMeshFromFile, exportMeshToStl
 from moldGatingSystem import createGatingSystem
+from pathlib import Path
+import trimesh
+
+from geometryAdapters import loadMeshFromFile, exportMeshToStl
 
 
 class MoldGenerator:
-    def __init__(self, config=None):
+    def __init__(self, config: Optional[dict] = None):
         self.config = config or {}
         self.boundingBoxOffset = float(self.config.get("boundingBoxOffset", 2.0))
-        self.booleanEngine = self.config.get("booleanEngine", None)
+        self.booleanEngine = self.config.get("booleanEngine", "manifold")
 
     def generateMoldShell(self, inputMesh: trimesh.Trimesh) -> trimesh.Trimesh:
         inputMesh = self.ensureTrimesh(inputMesh)
@@ -27,75 +28,54 @@ class MoldGenerator:
 
     def _calculateBoundingBox(self, mesh: trimesh.Trimesh) -> np.ndarray:
         bounds = np.array(mesh.bounds, dtype=float)
-        offset = float(self.boundingBoxOffset)
+        offset = self.boundingBoxOffset
         bounds[0, :] -= offset
         bounds[1, 0] += offset
         bounds[1, 1] += offset
-        eps = 1e-6
-        bounds[1, :] = np.maximum(bounds[1, :], bounds[0, :] + eps)
+        bounds[1, :] = np.maximum(bounds[1, :], bounds[0, :] + 1e-6)
         return bounds
 
     def _createBlankMesh(self, bbox: np.ndarray) -> trimesh.Trimesh:
         return trimesh.creation.box(bounds=bbox)
 
     def _booleanDifference(self, blankMesh: trimesh.Trimesh, inputMesh: trimesh.Trimesh) -> trimesh.Trimesh:
-        enginesToTry = []
-        if self.booleanEngine:
-            enginesToTry.append(self.booleanEngine)
-        for e in ["manifold", "scad", "blender", None]:
-            if e not in enginesToTry:
-                enginesToTry.append(e)
-        for engine in enginesToTry:
-            try:
-                result = trimesh.boolean.difference([blankMesh, inputMesh], engine=engine, check_volume=False)
-                if isinstance(result, trimesh.Scene):
-                    result = result.dump(concatenate=True)
-                if isinstance(result, trimesh.Trimesh):
-                    return result
-            except Exception:
-                continue
-        raise RuntimeError("Boolean difference failed with all engines")
+        result = trimesh.boolean.difference([blankMesh, inputMesh], engine=self.booleanEngine, check_volume=False)
+        return self.ensureTrimesh(result)
 
-    def generateGating(self, castingMesh: trimesh.Trimesh, config: dict) -> GatingComponents:
+    def generateGating(self, castingMesh: trimesh.Trimesh) -> GatingComponents:
         gatingConfig = {
-            "targetFillTime": config.get("targetFillTime", 5.0),
-            "sprueInletOffset": config.get("sprueInletOffset", 5.0),
-            "boundingBoxOffset": config.get("boundingBoxOffset", 2.0)
+            "targetFillTime": self.config.get("targetFillTime", 5.0),
+            "sprueInletOffset": self.config.get("sprueInletOffset", 5.0),
+            "boundingBoxOffset": self.boundingBoxOffset
         }
         return createGatingSystem(castingMesh=castingMesh, config=gatingConfig)
 
-    def optimizeOrientation(self, moldShell: trimesh.Trimesh, config: dict) -> trimesh.Trimesh:
+    def optimizeOrientation(self, partMesh: trimesh.Trimesh) -> trimesh.Trimesh:
+        return partMesh
+
+    def adjustStructure(self, moldShell: trimesh.Trimesh) -> trimesh.Trimesh:
         return moldShell
 
-    def adjustStructure(self, moldShell: trimesh.Trimesh, config: dict) -> trimesh.Trimesh:
-        return moldShell
+    def normalizeMeshesToWcs(self, meshesToConsider: List[trimesh.Trimesh]) -> np.ndarray:
+        scene = trimesh.Scene(meshesToConsider)
+        bounds = scene.bounds
+        centerX = (bounds[0][0] + bounds[1][0]) / 2.0
+        centerY = (bounds[0][1] + bounds[1][1]) / 2.0
+        minZ = bounds[0][2]
 
-    def normalizeMeshesToWcs(self, partMesh: trimesh.Trimesh, moldMesh: trimesh.Trimesh,
-                             gatingMesh: Optional[trimesh.Trimesh]) -> Tuple[
-        trimesh.Trimesh, trimesh.Trimesh, Optional[trimesh.Trimesh], np.ndarray]:
-        meshesToConsider = [partMesh, moldMesh]
-        if gatingMesh is not None:
-            meshesToConsider.append(gatingMesh)
-        minZ = min(mesh.bounds[0][2] for mesh in meshesToConsider)
-        minX = min(mesh.bounds[0][0] for mesh in meshesToConsider)
-        maxX = max(mesh.bounds[1][0] for mesh in meshesToConsider)
-        minY = min(mesh.bounds[0][1] for mesh in meshesToConsider)
-        maxY = max(mesh.bounds[1][1] for mesh in meshesToConsider)
-        centerX = (minX + maxX) / 2.0
-        centerY = (minY + maxY) / 2.0
-        translation = np.array([-centerX, -centerY, -minZ])
         matrix = np.eye(4)
-        matrix[:3, 3] = translation
-        partMesh.apply_transform(matrix)
-        moldMesh.apply_transform(matrix)
-        if gatingMesh is not None:
-            gatingMesh.apply_transform(matrix)
-        return partMesh, moldMesh, gatingMesh, matrix
+        matrix[:3, 3] = [-centerX, -centerY, -minZ]
+
+        for mesh in meshesToConsider:
+            mesh.apply_transform(matrix)
+
+        return matrix
 
 
 def executeMoldWorkflow(
         inputStlPath: str,
         outputStlPath: str,
+        tempCncDir: str = "tempCncFiles",
         adjustOrientation: bool = False,
         addGating: bool = True,
         surfaceOffset: bool = False,
@@ -103,36 +83,51 @@ def executeMoldWorkflow(
 ) -> trimesh.Trimesh:
     workflowConfig = config or {}
     moldGen = MoldGenerator(workflowConfig)
-    originalMesh = loadMeshFromFile(inputStlPath)
-    currentMesh = moldGen.ensureTrimesh(originalMesh)
+    currentMesh = moldGen.ensureTrimesh(loadMeshFromFile(inputStlPath))
 
     if adjustOrientation:
-        currentMesh = moldGen.optimizeOrientation(currentMesh, workflowConfig)
+        currentMesh = moldGen.optimizeOrientation(currentMesh)
 
-    gatingMesh = None
+    gateMesh = None
+    riserMesh = None
+    gatingMeshForNorm = None
     cavityMesh = currentMesh
 
     if addGating:
-        gatingComponents = moldGen.generateGating(currentMesh, workflowConfig)
-        gatingMesh = gatingComponents.systemMesh
+        gatingComponents = moldGen.generateGating(currentMesh)
+        gateMesh = gatingComponents.gateMesh
+        riserMesh = gatingComponents.riserMesh
+        gatingMeshForNorm = gatingComponents.systemMesh
         cavityMesh = gatingComponents.castingWithSystemMesh
 
     moldShell = moldGen.generateMoldShell(cavityMesh)
 
     if surfaceOffset:
-        moldShell = moldGen.adjustStructure(moldShell, workflowConfig)
+        moldShell = moldGen.adjustStructure(moldShell)
 
-    partMeshWcs, moldMeshWcs, gatingMeshWcs, transformMatrix = moldGen.normalizeMeshesToWcs(
-        currentMesh, moldShell, gatingMesh
-    )
+    meshesToNormalize = [currentMesh, moldShell]
+    if gatingMeshForNorm is not None:
+        meshesToNormalize.extend([gateMesh, riserMesh, gatingMeshForNorm])
 
-    exportMeshToStl(moldMeshWcs, outputStlPath)
+    moldGen.normalizeMeshesToWcs(meshesToNormalize)
 
-    return moldMeshWcs
+    exportMeshToStl(moldShell, outputStlPath)
+
+    tempDirPath = Path(tempCncDir)
+    tempDirPath.mkdir(parents=True, exist_ok=True)
+    exportMeshToStl(currentMesh, str(tempDirPath / "part.stl"))
+    exportMeshToStl(moldShell, str(tempDirPath / "mold.stl"))
+
+    if gateMesh is not None:
+        exportMeshToStl(gateMesh, str(tempDirPath / "gate.stl"))
+    if riserMesh is not None:
+        exportMeshToStl(riserMesh, str(tempDirPath / "riser.stl"))
+
+    return moldShell
 
 
 if __name__ == '__main__':
-    testInputPath = "testModels/cylinder.down.stl"
+    testInputPath = "testModels/cylinder.left.stl"
     testOutputPath = "testModels/cylinder.mold.stl"
     testConfig = {
         "targetFillTime": 3.0,

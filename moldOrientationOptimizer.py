@@ -1,4 +1,3 @@
-import os
 import csv
 import math
 from dataclasses import dataclass
