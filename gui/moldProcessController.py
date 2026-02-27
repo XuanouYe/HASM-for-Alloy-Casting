@@ -1,7 +1,7 @@
 import trimesh
 from PyQt5.QtCore import QObject, pyqtSignal
 from gui.workerThread import WorkerThread
-from moldGenerator import MoldGenerator
+from mold.moldGenerator import MoldGenerator
 
 
 class MoldProcessController(QObject):

@@ -3,7 +3,7 @@ import trimesh
 from typing import Optional, List
 from shapely.geometry import Polygon, MultiPolygon
 from shapely.geometry.base import BaseGeometry
-from moldSupportRegionDetector import SupportRegionDetector
+from supportRegionDetector import SupportRegionDetector
 
 
 class InnerSurfaceOffset:

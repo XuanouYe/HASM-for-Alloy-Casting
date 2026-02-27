@@ -5,8 +5,8 @@ from typing import Dict, Tuple, Optional, List, Union
 import numpy as np
 import trimesh
 from moldGenerator import MoldGenerator
-from moldSupportRegionDetector import SupportRegionDetector
-from moldMachiningRegionDetector import AccessibilityAnalyzer
+from supportRegionDetector import SupportRegionDetector
+from machiningRegionDetector import AccessibilityAnalyzer
 
 
 @dataclass
