@@ -6,13 +6,8 @@
   <component name="ChangeListManager">
     <list default="true" id="6833bebc-2e84-41ea-8662-ab2b3d13e641" name="更改" comment="Merge remote-tracking branch 'origin/main'">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/gui/moldProcessController.py" beforeDir="false" afterPath="$PROJECT_DIR$/gui/moldProcessController.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/moldGatingSystem.py" beforeDir="false" afterPath="$PROJECT_DIR$/mold/gatingSystem.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/moldGenerator.py" beforeDir="false" afterPath="$PROJECT_DIR$/mold/moldGenerator.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/moldInnerSurfaceOffset.py" beforeDir="false" afterPath="$PROJECT_DIR$/mold/innerSurfaceOffset.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/moldMachiningRegionDetector.py" beforeDir="false" afterPath="$PROJECT_DIR$/mold/machiningRegionDetector.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/moldOrientationOptimizer.py" beforeDir="false" afterPath="$PROJECT_DIR$/mold/orientationOptimizer.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/moldSupportRegionDetector.py" beforeDir="false" afterPath="$PROJECT_DIR$/mold/supportRegionDetector.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/fdmExecutor.py" beforeDir="false" afterPath="$PROJECT_DIR$/fdmExecutor.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/mold/moldGenerator.py" beforeDir="false" afterPath="$PROJECT_DIR$/mold/moldGenerator.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -229,7 +224,15 @@
       <option name="project" value="LOCAL" />
       <updated>1772171625272</updated>
     </task>
-    <option name="localTasksCounter" value="17" />
+    <task id="LOCAL-00017" summary="Merge remote-tracking branch 'origin/main'">
+      <option name="closed" value="true" />
+      <created>1772262094996</created>
+      <option name="number" value="00017" />
+      <option name="presentableId" value="LOCAL-00017" />
+      <option name="project" value="LOCAL" />
+      <updated>1772262094996</updated>
+    </task>
+    <option name="localTasksCounter" value="18" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">

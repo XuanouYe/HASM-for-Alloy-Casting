@@ -2,7 +2,7 @@ import numpy as np
 from typing import List, Optional
 
 from dataModel import GatingComponents
-from gatingSystem import createGatingSystem
+from mold.gatingSystem import createGatingSystem
 from pathlib import Path
 import trimesh
 

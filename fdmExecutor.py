@@ -1,10 +1,10 @@
-import time
-import posixpath
-import subprocess
-import struct
 import os
+import posixpath
+import struct
+import subprocess
+import time
 from pathlib import Path, PureWindowsPath
-from typing import Dict, Optional, List, Tuple, Any
+from typing import Any, Dict, List, Optional, Tuple
 
 from controlConfig import ConfigManager
 from dataModel import ManifestManager
@@ -26,151 +26,122 @@ class CuraEngineController:
         self._validateWslEnvironment()
 
     def _validateWslEnvironment(self) -> None:
-        try:
-            status = subprocess.run(
-                ["wsl", "--status"],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="ignore",
-                timeout=5,
-            )
-            if status.returncode != 0:
-                raise SliceException("WSL is not available or not properly configured")
-
-            exists = subprocess.run(
-                ["wsl", "test", "-f", self.wslEnginePath],
-                capture_output=True,
-                timeout=5,
-            )
-            if exists.returncode != 0:
-                raise SliceException(f"CuraEngine not found in WSL at: {self.wslEnginePath}")
-        except subprocess.TimeoutExpired:
-            raise SliceException("WSL validation timeout")
-        except FileNotFoundError:
-            raise SliceException("wsl command not found. Please ensure WSL is installed.")
-        except Exception as e:
-            raise SliceException(f"WSL validation failed: {str(e)}")
+        status = subprocess.run(["wsl", "--status"], capture_output=True, text=True, encoding="utf-8")
+        if status.returncode != 0:
+            raise SliceException("WslNotAvailable")
+        exists = subprocess.run(["wsl", "test", "-f", self.wslEnginePath], capture_output=True)
+        if exists.returncode != 0:
+            raise SliceException("CuraEngineNotFound")
 
     def _getStlBoundingBox(self, stlPath: str) -> Tuple[float, float, float, float, float, float]:
-        try:
-            with open(stlPath, 'rb') as f:
-                header = f.read(80)
-                if header.startswith(b'solid'):
-                    raise SliceException("ASCII STL format not supported. Please use binary STL.")
-
-                num_triangles = struct.unpack('<I', f.read(4))[0]
-
-                min_x = min_y = min_z = float('inf')
-                max_x = max_y = max_z = float('-inf')
-
-                for _ in range(num_triangles):
-                    f.read(12)
-                    for _ in range(3):
-                        x, y, z = struct.unpack('<fff', f.read(12))
-                        min_x = min(min_x, x)
-                        max_x = max(max_x, x)
-                        min_y = min(min_y, y)
-                        max_y = max(max_y, y)
-                        min_z = min(min_z, z)
-                        max_z = max(max_z, z)
-                    f.read(2)
-
-                return (min_x, max_x, min_y, max_y, min_z, max_z)
-        except struct.error as e:
-            raise SliceException(f"Invalid STL file format: {str(e)}")
-        except FileNotFoundError:
-            raise SliceException(f"STL file not found: {stlPath}")
-        except Exception as e:
-            raise SliceException(f"Failed to read STL bounding box: {str(e)}")
+        with open(stlPath, 'rb') as f:
+            f.read(80)
+            numTriangles = struct.unpack('<I', f.read(4))[0]
+            minX = minY = minZ = float('inf')
+            maxX = maxY = maxZ = float('-inf')
+            for _ in range(numTriangles):
+                f.read(12)
+                for _ in range(3):
+                    x, y, z = struct.unpack('<fff', f.read(12))
+                    minX = min(minX, x)
+                    maxX = max(maxX, x)
+                    minY = min(minY, y)
+                    maxY = max(maxY, y)
+                    minZ = min(minZ, z)
+                    maxZ = max(maxZ, z)
+                f.read(2)
+            return (minX, maxX, minY, maxY, minZ, maxZ)
 
     def _windowsPathToWsl(self, windowsPath: str) -> str:
-        try:
-            normalized = str(Path(windowsPath).resolve())
-            winPath = PureWindowsPath(normalized)
-            drive = winPath.drive.replace(":", "").lower()
-            pathParts = winPath.parts[1:]
-            wslPath = posixpath.join("/mnt", drive, *pathParts)
-            return wslPath
-        except Exception:
-            return windowsPath
+        normalized = str(Path(windowsPath).resolve())
+        winPath = PureWindowsPath(normalized)
+        drive = winPath.drive.replace(":", "").lower()
+        pathParts = winPath.parts[1:]
+        return posixpath.join("/mnt", drive, *pathParts)
 
     def _wslPathToWindows(self, wslPath: str) -> str:
-        try:
-            if not wslPath.startswith("/mnt/"):
-                return wslPath
-            parts = wslPath.split("/")
-            drive = parts[2].upper() + ":"
-            pathParts = parts[3:]
-            winPath = str(PureWindowsPath(drive, *pathParts))
-            return winPath
-        except Exception:
+        if not wslPath.startswith("/mnt/"):
             return wslPath
+        parts = wslPath.split("/")
+        drive = parts[2].upper() + ":"
+        pathParts = parts[3:]
+        return str(PureWindowsPath(drive, *pathParts))
 
     def _validateInputFile(self, filePath: str, expectedExt: str) -> str:
         if not filePath.lower().endswith(expectedExt):
-            raise SliceException(f"Invalid file format. Expected {expectedExt}")
+            raise SliceException("InvalidFileFormat")
         wslPath = self._windowsPathToWsl(filePath)
-        try:
-            result = subprocess.run(["wsl", "test", "-f", wslPath], capture_output=True, timeout=5)
-            if result.returncode != 0:
-                raise SliceException(f"Input file not found: {filePath}")
-        except subprocess.TimeoutExpired:
-            raise SliceException("File validation timeout")
-        except SliceException:
-            raise
-        except Exception as e:
-            raise SliceException(f"File validation failed: {str(e)}")
+        result = subprocess.run(["wsl", "test", "-f", wslPath], capture_output=True)
+        if result.returncode != 0:
+            raise SliceException("FileNotFound")
         return wslPath
 
     def _ensureOutputDirectory(self, outputPath: str) -> str:
         wslPath = self._windowsPathToWsl(outputPath)
         outputDir = posixpath.dirname(wslPath)
         if outputDir:
-            try:
-                subprocess.run(["wsl", "mkdir", "-p", outputDir], capture_output=True, text=True, timeout=5)
-            except Exception:
-                pass
+            subprocess.run(["wsl", "mkdir", "-p", outputDir], capture_output=True, text=True)
         return wslPath
 
     def _buildCommandArgs(self, stlPath: str, outputPath: str, definitionFiles: Optional[List[str]] = None,
                           settings: Optional[Dict[str, str]] = None) -> list:
-        cmd = ["wsl", self.wslEnginePath, "slice", "-v"]
+        cmdArgs = ["wsl", self.wslEnginePath, "slice", "-v"]
         if definitionFiles:
-            for f in definitionFiles:
-                cmd.extend(["-j", self._windowsPathToWsl(f)])
+            for dFile in definitionFiles:
+                cmdArgs.extend(["-j", self._windowsPathToWsl(dFile)])
         if settings:
             for k, v in settings.items():
-                cmd.extend(["-s", f"{k}={v}"])
-        cmd.extend(["-o", outputPath, "-l", stlPath])
-        return cmd
+                cmdArgs.extend(["-s", f"{k}={v}"])
+        cmdArgs.extend(["-o", outputPath, "-l", stlPath])
+        return cmdArgs
 
     def _executeSlice(self, cmdArgs: list) -> None:
         startTime = time.time()
-        try:
-            result = subprocess.run(
-                cmdArgs, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600
-            )
-            self.lastExecutionTime = time.time() - startTime
-            if result.returncode != 0:
-                errorMsg = result.stderr if result.stderr else "Unknown error"
-                raise SliceException(f"CuraEngine execution failed: {errorMsg}")
-        except subprocess.TimeoutExpired:
-            raise SliceException("Slicing timeout (exceeded 600 seconds)")
-        except SliceException:
-            raise
-        except Exception as e:
-            raise SliceException(f"Execution error: {str(e)}")
+        result = subprocess.run(cmdArgs, capture_output=True, text=True, encoding="utf-8", errors="replace")
+        self.lastExecutionTime = time.time() - startTime
+        if result.returncode != 0:
+            raise SliceException("CuraEngineExecutionFailed")
 
     def _validateOutputFile(self, wslPath: str) -> None:
-        try:
-            result = subprocess.run(["wsl", "test", "-s", wslPath], capture_output=True, timeout=5)
-            if result.returncode != 0:
-                raise SliceException(f"Output G-code not generated or is empty")
-        except subprocess.TimeoutExpired:
-            raise SliceException("Output file validation timeout")
-        except Exception as e:
-            raise SliceException(f"Output validation failed: {str(e)}")
+        result = subprocess.run(["wsl", "test", "-s", wslPath], capture_output=True)
+        if result.returncode != 0:
+            raise SliceException("OutputGenerationFailed")
+
+    def _processGeneratedGcode(self, filePath: str, limits: Dict[str, Tuple[float, float]]) -> None:
+        with open(filePath, 'r') as f:
+            lines = f.readlines()
+
+        processedLines = []
+        for line in lines:
+            if line.startswith(('G0', 'G1', 'G2', 'G3', 'G92')):
+                parts = line.split(';')
+                commandTokens = parts[0].split()
+                newTokens = []
+                for token in commandTokens:
+                    if token.startswith('E'):
+                        newTokens.append(f"C{token[1:]}")
+                    elif token[0] in limits:
+                        axis = token[0]
+                        val = float(token[1:])
+                        minVal, maxVal = limits[axis]
+                        val = max(minVal, min(maxVal, val))
+                        if val == 0:
+                            val = 0.0
+                        formattedVal = f"{val:.5f}".rstrip('0').rstrip('.')
+                        newTokens.append(f"{axis}{formattedVal}")
+                    else:
+                        newTokens.append(token)
+
+                newLine = " ".join(newTokens)
+                if len(parts) > 1:
+                    newLine += " ;" + ";".join(parts[1:])
+                newLine += "\n"
+                processedLines.append(newLine)
+            else:
+                processedLines.append(line)
+
+        with open(filePath, 'w') as f:
+            f.writelines(processedLines)
 
     def generateGcode(
             self,
@@ -180,6 +151,7 @@ class CuraEngineController:
             definitionFiles: Optional[List[str]] = None,
             autoDropToBuildPlate: bool = False,
             autoCenterXY: bool = False,
+            axisLimits: Optional[Dict[str, Tuple[float, float]]] = None
     ) -> str:
         wslStlPath = self._validateInputFile(stlPath, ".stl")
         wslOutputPath = self._ensureOutputDirectory(outputPath)
@@ -188,20 +160,20 @@ class CuraEngineController:
             settings = {}
 
         if autoDropToBuildPlate or autoCenterXY:
-            min_x, max_x, min_y, max_y, min_z, max_z = self._getStlBoundingBox(stlPath)
+            minX, maxX, minY, maxY, minZ, maxZ = self._getStlBoundingBox(stlPath)
 
             if autoDropToBuildPlate and "mesh_position_z" not in settings:
-                settings["mesh_position_z"] = str(-min_z)
+                settings["mesh_position_z"] = str(-minZ)
 
             if autoCenterXY:
-                center_x = (min_x + max_x) / 2.0
-                center_y = (min_y + max_y) / 2.0
+                centerX = (minX + maxX) / 2.0
+                centerY = (minY + maxY) / 2.0
 
                 if "mesh_position_x" not in settings:
-                    settings["mesh_position_x"] = str(-center_x)
+                    settings["mesh_position_x"] = str(-centerX)
 
                 if "mesh_position_y" not in settings:
-                    settings["mesh_position_y"] = str(-center_y)
+                    settings["mesh_position_y"] = str(-centerY)
         else:
             if "mesh_position_x" not in settings:
                 settings["mesh_position_x"] = "0.0"
@@ -210,22 +182,28 @@ class CuraEngineController:
             if "mesh_position_z" not in settings:
                 settings["mesh_position_z"] = "0.0"
 
-        finalWslOutputPath = wslOutputPath
         cmdArgs = self._buildCommandArgs(
             stlPath=wslStlPath,
-            outputPath=finalWslOutputPath,
+            outputPath=wslOutputPath,
             definitionFiles=definitionFiles,
             settings=settings
         )
         self._executeSlice(cmdArgs)
-        self._validateOutputFile(finalWslOutputPath)
-        return self._wslPathToWindows(finalWslOutputPath)
+        self._validateOutputFile(wslOutputPath)
+
+        windowsOutputPath = self._wslPathToWindows(wslOutputPath)
+        if axisLimits is None:
+            axisLimits = {}
+        self._processGeneratedGcode(windowsOutputPath, axisLimits)
+
+        return windowsOutputPath
 
 
 def generateGcodeInterface(
         stlPath: str,
         outputPath: str,
         processConfig: Dict[str, Any],
+        axisLimits: Optional[Dict[str, Tuple[float, float]]] = None
 ) -> str:
     cm = ConfigManager()
     defaultConfig = cm.getDefaultConfig()
@@ -234,7 +212,7 @@ def generateGcodeInterface(
 
     enginePath = processConfig.get("wslEnginePath", defaultWslEnginePath)
     if not enginePath:
-        raise SliceException("wslEnginePath not configured in processConfig or defaults")
+        raise SliceException("WslEnginePathNotConfigured")
 
     defs = processConfig.get("definitionFiles", defaultDefinitionFiles)
     autoDrop = processConfig.get("autoDropToBuildPlate", defaultAutoDropToBuildPlate)
@@ -248,11 +226,12 @@ def generateGcodeInterface(
         definitionFiles=defs,
         autoDropToBuildPlate=autoDrop,
         autoCenterXY=autoCenter,
+        axisLimits=axisLimits
     )
 
 
 def main():
-    workspace = "workspace_test"
+    workspace = "workspaceTest"
     manifestPath = os.path.join(workspace, "manifest.json")
 
     if os.path.exists(manifestPath):
@@ -261,12 +240,11 @@ def main():
         stlPath = files.get("moldShell")
         outPath = files.get("fdmGcode")
     else:
-        print("Run moldGenerator.py first to create manifest")
         return
 
     testConfig = {
-        "wsl_engine_path": "/mnt/c/users/xuanouye/desktop/thesis/04-implementation/pc/external/curaengine/build/release/CuraEngine",
-        "definition_files": [
+        "wslEnginePath": "/mnt/c/users/xuanouye/desktop/thesis/04-implementation/pc/external/curaengine/build/release/CuraEngine",
+        "definitionFiles": [
             "C:\\Users\\XuanouYe\\Desktop\\Thesis\\04-Implementation\\PC\\external\\Cura\\resources\\definitions\\fdmprinter.def.json",
             "C:\\Users\\XuanouYe\\Desktop\\Thesis\\04-Implementation\\PC\\external\\Cura\\resources\\definitions\\fdmextruder.def.json",
         ],
@@ -278,16 +256,22 @@ def main():
         },
     }
 
-    controller = CuraEngineController(testConfig["wsl_engine_path"])
-    out = controller.generateGcode(
+    axisLimits = {
+        "X": (0.0, 200.0),
+        "Y": (0.0, 200.0),
+        "Z": (0.0, 200.0)
+    }
+
+    controller = CuraEngineController(testConfig["wslEnginePath"])
+    controller.generateGcode(
         stlPath=stlPath,
         outputPath=outPath,
         settings=testConfig["settings"],
-        definitionFiles=testConfig["definition_files"],
+        definitionFiles=testConfig["definitionFiles"],
         autoDropToBuildPlate=False,
-        autoCenterXY=False
+        autoCenterXY=False,
+        axisLimits=axisLimits
     )
-    print(f"Output generated at: {out}")
 
 
 if __name__ == "__main__":
