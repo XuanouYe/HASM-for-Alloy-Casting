@@ -83,6 +83,26 @@ class CuraEngineController:
             subprocess.run(["wsl", "mkdir", "-p", outputDir], capture_output=True, text=True)
         return wslPath
 
+    def _applyMachineLimits(self, settings: Dict[str, str], axisLimits: Dict[str, Tuple[float, float]]) -> None:
+        if "X" in axisLimits:
+            minX, maxX = axisLimits["X"]
+            width = maxX - minX
+            settings["machine_width"] = str(width)
+            if minX < 0:
+                settings["machine_center_is_zero"] = "true"
+            else:
+                settings["machine_center_is_zero"] = "false"
+
+        if "Y" in axisLimits:
+            minY, maxY = axisLimits["Y"]
+            depth = maxY - minY
+            settings["machine_depth"] = str(depth)
+
+        if "Z" in axisLimits:
+            minZ, maxZ = axisLimits["Z"]
+            height = maxZ - minZ
+            settings["machine_height"] = str(height)
+
     def _buildCommandArgs(self, stlPath: str, outputPath: str, definitionFiles: Optional[List[str]] = None,
                           settings: Optional[Dict[str, str]] = None) -> list:
         cmdArgs = ["wsl", self.wslEnginePath, "slice", "-v"]
@@ -107,7 +127,7 @@ class CuraEngineController:
         if result.returncode != 0:
             raise SliceException("OutputGenerationFailed")
 
-    def _processGeneratedGcode(self, filePath: str, limits: Dict[str, Tuple[float, float]]) -> None:
+    def _replaceExtruderAxis(self, filePath: str) -> None:
         with open(filePath, 'r') as f:
             lines = f.readlines()
 
@@ -120,15 +140,6 @@ class CuraEngineController:
                 for token in commandTokens:
                     if token.startswith('E'):
                         newTokens.append(f"C{token[1:]}")
-                    elif token[0] in limits:
-                        axis = token[0]
-                        val = float(token[1:])
-                        minVal, maxVal = limits[axis]
-                        val = max(minVal, min(maxVal, val))
-                        if val == 0:
-                            val = 0.0
-                        formattedVal = f"{val:.5f}".rstrip('0').rstrip('.')
-                        newTokens.append(f"{axis}{formattedVal}")
                     else:
                         newTokens.append(token)
 
@@ -159,6 +170,12 @@ class CuraEngineController:
         if settings is None:
             settings = {}
 
+        if axisLimits:
+            self._applyMachineLimits(settings, axisLimits)
+            isCenterZero = settings.get("machine_center_is_zero", "false") == "true"
+        else:
+            isCenterZero = False
+
         if autoDropToBuildPlate or autoCenterXY:
             minX, maxX, minY, maxY, minZ, maxZ = self._getStlBoundingBox(stlPath)
 
@@ -166,14 +183,23 @@ class CuraEngineController:
                 settings["mesh_position_z"] = str(-minZ)
 
             if autoCenterXY:
-                centerX = (minX + maxX) / 2.0
-                centerY = (minY + maxY) / 2.0
+                if isCenterZero:
+                    targetX = 0.0
+                    targetY = 0.0
+                else:
+                    width = float(settings.get("machine_width", "200.0"))
+                    depth = float(settings.get("machine_depth", "200.0"))
+                    targetX = width / 2.0
+                    targetY = depth / 2.0
+
+                currentCenterX = (minX + maxX) / 2.0
+                currentCenterY = (minY + maxY) / 2.0
 
                 if "mesh_position_x" not in settings:
-                    settings["mesh_position_x"] = str(-centerX)
+                    settings["mesh_position_x"] = str(targetX - currentCenterX)
 
                 if "mesh_position_y" not in settings:
-                    settings["mesh_position_y"] = str(-centerY)
+                    settings["mesh_position_y"] = str(targetY - currentCenterY)
         else:
             if "mesh_position_x" not in settings:
                 settings["mesh_position_x"] = "0.0"
@@ -192,9 +218,7 @@ class CuraEngineController:
         self._validateOutputFile(wslOutputPath)
 
         windowsOutputPath = self._wslPathToWindows(wslOutputPath)
-        if axisLimits is None:
-            axisLimits = {}
-        self._processGeneratedGcode(windowsOutputPath, axisLimits)
+        self._replaceExtruderAxis(windowsOutputPath)
 
         return windowsOutputPath
 
@@ -257,9 +281,9 @@ def main():
     }
 
     axisLimits = {
-        "X": (0.0, 200.0),
-        "Y": (0.0, 200.0),
-        "Z": (0.0, 200.0)
+        "X": (-100.0, 100.0),
+        "Y": (-100.0, 100.0),
+        "Z": (0.0, 100.0)
     }
 
     controller = CuraEngineController(testConfig["wslEnginePath"])
