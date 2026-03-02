@@ -1,11 +1,13 @@
 import json
+import os
+import tempfile
 from datetime import timedelta
 from PyQt5.QtCore import QObject, QTimer, Qt
 from gui.workerThread import WorkerThread
 from controlConfig import ConfigManager
 from fdmExecutor import generateGcodeInterface
 from cncPathDesigner import generateCncJobInterface
-
+from geometryAdapters import exportMeshToStl
 
 class MainController(QObject):
     def __init__(self, mainWindow, moldController, parameterPanel):
@@ -60,23 +62,18 @@ class MainController(QObject):
         self.mainWindow.showMessage("保存成功", "项目已保存")
 
     def handleLoadManifest(self, filePath):
-        try:
-            with open(filePath, "r", encoding="utf-8") as f:
-                manifestData = json.load(f)
-
-            self.currentManifestData = manifestData
-            files = manifestData.get("files", {})
-            self.partStlPath = files.get("partStl")
-            self.moldStlPath = files.get("moldStl")
-            self.gatingStlPath = files.get("gatingStl")
-
-            if self.partStlPath and self.moldStlPath:
-                self.mainWindow.setCncButtonEnabled(True)
-                self.mainWindow.showMessage("成功", "制造清单加载成功，可以生成CNC路径")
-            else:
-                self.mainWindow.showMessage("警告", "制造清单缺少必要的部件模型或模具模型路径", isError=True)
-        except Exception as e:
-            self.mainWindow.showMessage("错误", f"加载清单失败: {str(e)}", isError=True)
+        with open(filePath, "r", encoding="utf-8") as f:
+            manifestData = json.load(f)
+        self.currentManifestData = manifestData
+        files = manifestData.get("files", {})
+        self.partStlPath = files.get("partStl")
+        self.moldStlPath = files.get("moldStl")
+        self.gatingStlPath = files.get("gatingStl")
+        if self.partStlPath and self.moldStlPath:
+            self.mainWindow.setCncButtonEnabled(True)
+            self.mainWindow.showMessage("成功", "制造清单加载成功，可以生成CNC路径")
+        else:
+            self.mainWindow.showMessage("警告", "制造清单缺少必要的部件模型或模具模型路径", isError=True)
 
     def _onModelLoaded(self, filePath):
         self.currentStlPath = filePath
@@ -84,20 +81,17 @@ class MainController(QObject):
         self.mainWindow.setStatusText("铸件模型已加载")
 
     def handleLoadConfig(self, filePath):
-        try:
-            with open(filePath, "r", encoding="utf-8") as f:
-                configDict = json.load(f)
-            errors = self.configManager.validate(configDict)
-            if errors:
-                self.mainWindow.showMessage("配置验证失败", "配置文件存在问题:\n" + "\n".join(errors[:10]),
-                                            isError=True)
-                return
-            self.currentConfigDict = configDict
-            self.parameterPanel.loadConfiguration(configDict)
-            self.mainWindow.moldProcessPanel.loadConfiguration(configDict)
-            self.mainWindow.showMessage("成功", f"配置已加载: {filePath}")
-        except Exception as e:
-            self.mainWindow.showMessage("错误", f"加载失败: {str(e)}", isError=True)
+        with open(filePath, "r", encoding="utf-8") as f:
+            configDict = json.load(f)
+        errors = self.configManager.validate(configDict)
+        if errors:
+            self.mainWindow.showMessage("配置验证失败", "配置文件存在问题:\n" + "\n".join(errors[:10]),
+                                        isError=True)
+            return
+        self.currentConfigDict = configDict
+        self.parameterPanel.loadConfiguration(configDict)
+        self.mainWindow.moldProcessPanel.loadConfiguration(configDict)
+        self.mainWindow.showMessage("成功", f"配置已加载: {filePath}")
 
     def handleSaveConfig(self, filePath):
         panelConfig = self.parameterPanel.getConfiguration()
@@ -108,12 +102,9 @@ class MainController(QObject):
             "subtractive": panelConfig.get("subtractive", {}),
             "mold": moldSection
         })
-        try:
-            with open(filePath, "w", encoding="utf-8") as f:
-                json.dump(self.currentConfigDict, f, indent=2, ensure_ascii=False)
-            self.mainWindow.showMessage("成功", f"配置已保存: {filePath}")
-        except Exception as e:
-            self.mainWindow.showMessage("错误", f"保存失败: {str(e)}", isError=True)
+        with open(filePath, "w", encoding="utf-8") as f:
+            json.dump(self.currentConfigDict, f, indent=2, ensure_ascii=False)
+        self.mainWindow.showMessage("成功", f"配置已保存: {filePath}")
 
     def handleResetConfig(self):
         self.currentConfigDict = self.configManager.getDefaultConfig()
@@ -122,7 +113,16 @@ class MainController(QObject):
         self.mainWindow.showMessage("成功", "已重置为默认配置")
 
     def handleGenerateGcode(self, outputPath):
-        if not self.currentStlPath:
+        stlToSlice = None
+        if self.moldController.currentMoldShell is not None:
+            tempStlPath = os.path.join(tempfile.gettempdir(), "temp_mold.stl")
+            exportMeshToStl(self.moldController.currentMoldShell, tempStlPath)
+            stlToSlice = tempStlPath
+        elif self.moldStlPath:
+            stlToSlice = self.moldStlPath
+        elif self.currentStlPath:
+            stlToSlice = self.currentStlPath
+        else:
             self.mainWindow.setGcodeButtonEnabled(True)
             return
 
@@ -130,7 +130,7 @@ class MainController(QObject):
 
         def taskCallable():
             return generateGcodeInterface(
-                stlPath=self.currentStlPath,
+                stlPath=stlToSlice,
                 outputPath=outputPath,
                 processConfig=config,
             )
@@ -151,10 +151,8 @@ class MainController(QObject):
                                         isError=True)
             self.mainWindow.setCncButtonEnabled(True)
             return
-
         config = self.parameterPanel.getConfiguration()
         self.mainWindow.setStatusText("正在计算CNC刀位...")
-
         def taskCallable():
             gatingPathToUse = self.gatingStlPath if self.gatingStlPath else self.partStlPath
             return generateCncJobInterface(
@@ -165,7 +163,6 @@ class MainController(QObject):
                 processConfig=config,
                 visualize=visualize
             )
-
         self.cncWorker = WorkerThread(taskCallable)
         self.cncWorker.taskCompleted.connect(self._onGenerateCncCompleted)
         self.cncWorker.taskError.connect(lambda err: self._onGenerateError("生成CNC刀位失败", err, "Cnc"))
@@ -183,4 +180,3 @@ class MainController(QObject):
             self.mainWindow.setCncButtonEnabled(True)
             self.mainWindow.setStatusText("生成失败")
         self.mainWindow.showMessage("错误", f"{title}:\n{errorMsg}", isError=True)
-
