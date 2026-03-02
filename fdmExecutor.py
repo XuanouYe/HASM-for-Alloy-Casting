@@ -192,11 +192,15 @@ def generateGcodeInterface(stlPath: str, outputPath: str, processConfig: Dict[st
     autoCenter = processConfig.get("autoCenterXY", True)
 
     if not axisLimits:
-        axisLimits = {
+        additiveConfig = processConfig.get("additive") or defaultConfig.get("additive") or {}
+        axisLimits = additiveConfig.get("axisLimits", {
             "X": (-100.0, 100.0),
             "Y": (-100.0, 100.0),
             "Z": (0.0, 100.0)
-        }
+        })
+        for axis, limits in axisLimits.items():
+            if isinstance(limits, list) and len(limits) == 2:
+                axisLimits[axis] = tuple(limits)
 
     controller = CuraEngineController(enginePath)
 

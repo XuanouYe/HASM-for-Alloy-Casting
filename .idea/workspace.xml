@@ -5,8 +5,11 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="6833bebc-2e84-41ea-8662-ab2b3d13e641" name="更改" comment="Merge remote-tracking branch 'origin/main'">
-      <change beforePath="$PROJECT_DIR$/.idea/runConfigurations/main.xml" beforeDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/controlConfig.py" beforeDir="false" afterPath="$PROJECT_DIR$/controlConfig.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/fdmExecutor.py" beforeDir="false" afterPath="$PROJECT_DIR$/fdmExecutor.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/gui/parameterPanel.py" beforeDir="false" afterPath="$PROJECT_DIR$/gui/parameterPanel.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/testModels/cylinder.mold.gcode" beforeDir="false" afterPath="$PROJECT_DIR$/testModels/cylinder.mold.gcode" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -73,6 +76,7 @@
     "Python.mainController.executor": "Run",
     "Python.moldGatingSystem.executor": "Run",
     "Python.moldGenerator.executor": "Run",
+    "Python.parameterPanel.executor": "Run",
     "Python.x.executor": "Run",
     "Python.xx.executor": "Run",
     "RunOnceActivity.ShowReadmeOnStart": "true",
@@ -289,7 +293,23 @@
       <option name="project" value="LOCAL" />
       <updated>1772444777502</updated>
     </task>
-    <option name="localTasksCounter" value="24" />
+    <task id="LOCAL-00024" summary="Merge remote-tracking branch 'origin/main'">
+      <option name="closed" value="true" />
+      <created>1772448893345</created>
+      <option name="number" value="00024" />
+      <option name="presentableId" value="LOCAL-00024" />
+      <option name="project" value="LOCAL" />
+      <updated>1772448893345</updated>
+    </task>
+    <task id="LOCAL-00025" summary="Merge remote-tracking branch 'origin/main'">
+      <option name="closed" value="true" />
+      <created>1772450157752</created>
+      <option name="number" value="00025" />
+      <option name="presentableId" value="LOCAL-00025" />
+      <option name="project" value="LOCAL" />
+      <updated>1772450157752</updated>
+    </task>
+    <option name="localTasksCounter" value="26" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">

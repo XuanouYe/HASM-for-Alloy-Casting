@@ -284,6 +284,15 @@ parameterSchema = {
             "options": ["none", "raft", "brim", "skirt"],
             "required": False
         },
+        "axisLimits": {
+            "type": dict,
+            "default": {
+                "X": [-100.0, 100.0],
+                "Y": [-100.0, 100.0],
+                "Z": [0.0, 100.0]
+            },
+            "required": False
+        },
     },
     "casting": {
         "temperature": {

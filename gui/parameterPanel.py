@@ -1,6 +1,6 @@
 import json
 from typing import Dict, Callable, Optional
-from PyQt5.QtCore import pyqtSignal
+from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
@@ -27,17 +27,14 @@ class ProcessParameterPanel(QWidget):
         mainLayout = QVBoxLayout()
         mainLayout.setSpacing(10)
         mainLayout.setContentsMargins(10, 10, 10, 10)
-
         titleLabel = QLabel("工艺参数配置")
         titleFont = QFont()
         titleFont.setPointSize(12)
         titleFont.setBold(True)
         titleLabel.setFont(titleFont)
         mainLayout.addWidget(titleLabel)
-
-        mainLayout.addWidget(self.createParameterTabs())
-        mainLayout.addStretch()
-
+        tabWidget = self.createParameterTabs()
+        mainLayout.addWidget(tabWidget)
         self.setLayout(mainLayout)
         self.setStyleSheet(self.getStylesheet())
 
@@ -57,24 +54,25 @@ class ProcessParameterPanel(QWidget):
 
     def createAdditiveParametersTab(self) -> QWidget:
         widget = QWidget()
+        mainLayout = QVBoxLayout(widget)
+        mainLayout.setContentsMargins(0, 0, 0, 0)
         scrollArea = QScrollArea()
         scrollArea.setWidgetResizable(True)
+        scrollArea.setFrameShape(QScrollArea.NoFrame)
         contentWidget = QWidget()
-        layout = QFormLayout()
-
+        layout = QFormLayout(contentWidget)
+        layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        layout.setLabelAlignment(Qt.AlignRight)
         additiveSchema = parameterSchema.get("additive", {})
         for paramName, paramSpec in additiveSchema.items():
             control = self.createControlForParameter("additive", paramName, paramSpec)
             if control:
                 label = QLabel(f"{paramSpec.get('description', paramName)}:")
                 layout.addRow(label, control)
-
-        contentWidget.setLayout(layout)
+        axisLimitsGroup = self.createAxisLimitsGroup("additive")
+        layout.addRow(QLabel(""), axisLimitsGroup)
         scrollArea.setWidget(contentWidget)
-
-        mainLayout = QVBoxLayout()
         mainLayout.addWidget(scrollArea)
-        widget.setLayout(mainLayout)
         return widget
 
     def createCastingParametersTab(self) -> QWidget:
@@ -163,6 +161,46 @@ class ProcessParameterPanel(QWidget):
 
         return control
 
+    def createAxisLimitsGroup(self, section: str) -> QWidget:
+        groupBox = QGroupBox("Axis Limits")
+        groupLayout = QFormLayout()
+
+        axisNames = ["X", "Y", "Z"]
+        for axis in axisNames:
+            minSpinBox = QDoubleSpinBox()
+            minSpinBox.setRange(-1000.0, 1000.0)
+            minSpinBox.setDecimals(2)
+            minSpinBox.setSingleStep(1.0)
+            minSpinBox.setSuffix(" mm")
+
+            maxSpinBox = QDoubleSpinBox()
+            maxSpinBox.setRange(-1000.0, 1000.0)
+            maxSpinBox.setDecimals(2)
+            maxSpinBox.setSingleStep(1.0)
+            maxSpinBox.setSuffix(" mm")
+
+            axisLayout = QHBoxLayout()
+            axisLayout.addWidget(QLabel("Min:"))
+            axisLayout.addWidget(minSpinBox)
+            axisLayout.addWidget(QLabel("Max:"))
+            axisLayout.addWidget(maxSpinBox)
+
+            axisContainer = QWidget()
+            axisContainer.setLayout(axisLayout)
+
+            groupLayout.addRow(QLabel(f"{axis}:"), axisContainer)
+
+            minControlKey = f"{section}.axisLimits.{axis}.min"
+            maxControlKey = f"{section}.axisLimits.{axis}.max"
+            self.parameterControls[minControlKey] = minSpinBox
+            self.parameterControls[maxControlKey] = maxSpinBox
+
+            minSpinBox.valueChanged.connect(self.onParameterChanged)
+            maxSpinBox.valueChanged.connect(self.onParameterChanged)
+
+        groupBox.setLayout(groupLayout)
+        return groupBox
+
     def onParameterChanged(self) -> None:
         self.updateCurrentConfig()
         self.parametersChanged.emit(self.parameters)
@@ -183,8 +221,24 @@ class ProcessParameterPanel(QWidget):
         }
 
         for controlKey, control in self.parameterControls.items():
+            if ".axisLimits." in controlKey:
+                parts = controlKey.split(".")
+                section = parts[0]
+                axis = parts[2]
+                minMax = parts[3]
+                if section not in self.parameters:
+                    continue
+                if "axisLimits" not in self.parameters[section]:
+                    self.parameters[section]["axisLimits"] = {}
+                if axis not in self.parameters[section]["axisLimits"]:
+                    self.parameters[section]["axisLimits"][axis] = [0.0, 0.0]
+                value = control.value()
+                if minMax == "min":
+                    self.parameters[section]["axisLimits"][axis][0] = value
+                elif minMax == "max":
+                    self.parameters[section]["axisLimits"][axis][1] = value
+                continue
             section, paramName = controlKey.split(".", 1)
-
             if isinstance(control, QCheckBox):
                 value = control.isChecked()
             elif isinstance(control, (QSpinBox, QDoubleSpinBox)):
@@ -199,7 +253,6 @@ class ProcessParameterPanel(QWidget):
                     value = text
             else:
                 continue
-
             if section in self.parameters:
                 self.parameters[section][paramName] = value
 
@@ -215,6 +268,26 @@ class ProcessParameterPanel(QWidget):
                 for paramName, value in sectionConfig.items():
                     controlKey = f"{section}.{paramName}"
                     control = self.parameterControls.get(controlKey)
+                    if ".axisLimits." in controlKey:
+                        parts = controlKey.split(".")
+                        section = parts[0]
+                        axis = parts[2]
+                        minMax = parts[3]
+
+                        if section not in self.parameters:
+                            continue
+                        if "axisLimits" not in self.parameters[section]:
+                            self.parameters[section]["axisLimits"] = {}
+                        if axis not in self.parameters[section]["axisLimits"]:
+                            self.parameters[section]["axisLimits"][axis] = [0.0, 0.0]
+
+                        value = control.value()
+                        if minMax == "min":
+                            self.parameters[section]["axisLimits"][axis][0] = value
+                        elif minMax == "max":
+                            self.parameters[section]["axisLimits"][axis][1] = value
+                        continue
+
                     if not control:
                         continue
 
