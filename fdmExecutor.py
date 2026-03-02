@@ -257,9 +257,9 @@ def main():
     }
 
     axisLimits = {
-        "X": (0.0, 200.0),
-        "Y": (0.0, 200.0),
-        "Z": (0.0, 200.0)
+        "X": (-100.0, 100.0),
+        "Y": (-100.0, 100.0),
+        "Z": (-100.0, 100.0)
     }
 
     controller = CuraEngineController(testConfig["wslEnginePath"])
