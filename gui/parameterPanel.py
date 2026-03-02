@@ -1,6 +1,6 @@
 import json
 from typing import Dict, Callable, Optional
-from PyQt5.QtCore import pyqtSignal
+from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
@@ -27,17 +27,14 @@ class ProcessParameterPanel(QWidget):
         mainLayout = QVBoxLayout()
         mainLayout.setSpacing(10)
         mainLayout.setContentsMargins(10, 10, 10, 10)
-
         titleLabel = QLabel("工艺参数配置")
         titleFont = QFont()
         titleFont.setPointSize(12)
         titleFont.setBold(True)
         titleLabel.setFont(titleFont)
         mainLayout.addWidget(titleLabel)
-
-        mainLayout.addWidget(self.createParameterTabs())
-        mainLayout.addStretch()
-
+        tabWidget = self.createParameterTabs()
+        mainLayout.addWidget(tabWidget)
         self.setLayout(mainLayout)
         self.setStyleSheet(self.getStylesheet())
 
@@ -57,24 +54,23 @@ class ProcessParameterPanel(QWidget):
 
     def createAdditiveParametersTab(self) -> QWidget:
         widget = QWidget()
+        mainLayout = QVBoxLayout(widget)
+        mainLayout.setContentsMargins(0, 0, 0, 0)
         scrollArea = QScrollArea()
         scrollArea.setWidgetResizable(True)
+        scrollArea.setFrameShape(QScrollArea.NoFrame)
         contentWidget = QWidget()
-        layout = QFormLayout()
-
+        layout = QFormLayout(contentWidget)
+        layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        layout.setLabelAlignment(Qt.AlignRight)
         additiveSchema = parameterSchema.get("additive", {})
         for paramName, paramSpec in additiveSchema.items():
             control = self.createControlForParameter("additive", paramName, paramSpec)
             if control:
                 label = QLabel(f"{paramSpec.get('description', paramName)}:")
                 layout.addRow(label, control)
-
-        contentWidget.setLayout(layout)
         scrollArea.setWidget(contentWidget)
-
-        mainLayout = QVBoxLayout()
         mainLayout.addWidget(scrollArea)
-        widget.setLayout(mainLayout)
         return widget
 
     def createCastingParametersTab(self) -> QWidget:
