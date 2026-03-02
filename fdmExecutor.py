@@ -3,7 +3,8 @@ import posixpath
 import subprocess
 import struct
 from pathlib import Path, PureWindowsPath
-from typing import Dict, Optional, List, Tuple
+from typing import Dict, Optional, List, Tuple, Any
+from controlConfig import ConfigManager
 
 
 class CuraEngineController:
@@ -171,12 +172,53 @@ class CuraEngineController:
         return windowsOutputPath
 
 
+def generateGcodeInterface(stlPath: str, outputPath: str, processConfig: Dict[str, Any],
+                           axisLimits: Optional[Dict[str, Tuple[float, float]]] = None) -> Dict[str, str]:
+    cm = ConfigManager()
+    defaultConfig = cm.getDefaultConfig()
+
+    additiveConfig = processConfig.get("additive") or defaultConfig.get("additive") or {}
+    settings = cm.generateCuraConfig(additiveConfig)
+
+    enginePath = processConfig.get("wslEnginePath",
+                                   "/mnt/c/users/xuanouye/desktop/thesis/04-implementation/pc/external/curaengine/build/release/CuraEngine")
+
+    defs = processConfig.get("definitionFiles", [
+        "C:\\Users\\XuanouYe\\Desktop\\Thesis\\04-Implementation\\PC\\external\\Cura\\resources\\definitions\\fdmprinter.def.json",
+        "C:\\Users\\XuanouYe\\Desktop\\Thesis\\04-Implementation\\PC\\external\\Cura\\resources\\definitions\\fdmextruder.def.json"
+    ])
+
+    autoDrop = processConfig.get("autoDropToBuildPlate", True)
+    autoCenter = processConfig.get("autoCenterXY", True)
+
+    if not axisLimits:
+        axisLimits = {
+            "X": (-100.0, 100.0),
+            "Y": (-100.0, 100.0),
+            "Z": (0.0, 100.0)
+        }
+
+    controller = CuraEngineController(enginePath)
+
+    resultPath = controller.generateGcode(
+        stlPath=stlPath,
+        outputPath=outputPath,
+        settings=settings,
+        definitionFiles=defs,
+        autoDropToBuildPlate=autoDrop,
+        autoCenterXY=autoCenter,
+        axisLimits=axisLimits
+    )
+
+    return {"gcodePath": resultPath, "status": "success"}
+
+
 def main(stlPath: str):
     wslEnginePath = "/mnt/c/users/xuanouye/desktop/thesis/04-implementation/pc/external/curaengine/build/release/CuraEngine"
     outputPath = stlPath.replace(".stl", ".gcode")
     definitionFiles = [
-        "C:\\Users\\XuanouYe\\Desktop\\Thesis\\04-Implementation\\PC\\external\\Cura\\resources\\definitions\\fdmprinter.def.json",
-        "C:\\Users\\XuanouYe\\Desktop\\Thesis\\04-Implementation\\PC\\external\\Cura\\resources\\definitions\\fdmextruder.def.json",
+        "C:\\Users\\XuanouYe\\Desktop\\Thesis\\04-Implementation\\HASM-for-Alloy-Casting\\external\\Cura\\resources\\definitions\\fdmprinter.def.json",
+        "C:\\Users\\XuanouYe\\Desktop\\Thesis\\04-Implementation\\HASM-for-Alloy-Casting\\external\\Cura\\resources\\definitions\\fdmextruder.def.json",
     ]
     settings = {
         "layer_height": "0.2",
