@@ -165,6 +165,13 @@ class ProcessParameterPanel(QWidget):
         groupBox = QGroupBox("Axis Limits")
         groupLayout = QFormLayout()
 
+        schema = parameterSchema.get(section, {}).get("axisLimits", {}).get("default", {})
+        defaultLimits = {
+            "X": schema.get("X", [-100.0, 100.0]),
+            "Y": schema.get("Y", [-100.0, 100.0]),
+            "Z": schema.get("Z", [0.0, 100.0])
+        }
+
         axisNames = ["X", "Y", "Z"]
         for axis in axisNames:
             minSpinBox = QDoubleSpinBox()
@@ -178,6 +185,10 @@ class ProcessParameterPanel(QWidget):
             maxSpinBox.setDecimals(2)
             maxSpinBox.setSingleStep(1.0)
             maxSpinBox.setSuffix(" mm")
+
+            if axis in defaultLimits:
+                minSpinBox.setValue(float(defaultLimits[axis][0]))
+                maxSpinBox.setValue(float(defaultLimits[axis][1]))
 
             axisLayout = QHBoxLayout()
             axisLayout.addWidget(QLabel("Min:"))
