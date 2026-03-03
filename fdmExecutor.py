@@ -184,19 +184,23 @@ def generateGcodeInterface(stlPath: str, outputPath: str, processConfig: Dict[st
                                    "/mnt/c/users/xuanouye/desktop/thesis/04-implementation/pc/external/curaengine/build/release/CuraEngine")
 
     defs = processConfig.get("definitionFiles", [
-        "C:\\Users\\XuanouYe\\Desktop\\Thesis\\04-Implementation\\PC\\external\\Cura\\resources\\definitions\\fdmprinter.def.json",
-        "C:\\Users\\XuanouYe\\Desktop\\Thesis\\04-Implementation\\PC\\external\\Cura\\resources\\definitions\\fdmextruder.def.json"
+        "C:\\Users\\XuanouYe\\Desktop\\Thesis\\04-Implementation\\HASM-for-Alloy-Casting\\external\\Cura\\resources\\definitions\\fdmprinter.def.json",
+        "C:\\Users\\XuanouYe\\Desktop\\Thesis\\04-Implementation\\HASM-for-Alloy-Casting\\external\\Cura\\resources\\definitions\\fdmextruder.def.json"
     ])
 
     autoDrop = processConfig.get("autoDropToBuildPlate", True)
     autoCenter = processConfig.get("autoCenterXY", True)
 
     if not axisLimits:
-        axisLimits = {
+        additiveConfig = processConfig.get("additive") or defaultConfig.get("additive") or {}
+        axisLimits = additiveConfig.get("axisLimits", {
             "X": (-100.0, 100.0),
             "Y": (-100.0, 100.0),
             "Z": (0.0, 100.0)
-        }
+        })
+        for axis, limits in axisLimits.items():
+            if isinstance(limits, list) and len(limits) == 2:
+                axisLimits[axis] = tuple(limits)
 
     controller = CuraEngineController(enginePath)
 
