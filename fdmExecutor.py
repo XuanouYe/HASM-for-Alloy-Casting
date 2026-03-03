@@ -262,7 +262,7 @@ class CuraEngineController:
         cmdArgs = self.buildCommandArgs(stlPath=wslStlPath, outputPath=wslOutputPath, definitionFiles=definitionFiles, settings=settings)
         self.executeSlice(cmdArgs)
         windowsOutputPath = self.wslPathToWindows(wslOutputPath)
-        if additiveConfig and additiveConfig.get("enableRetractionCompensation", True):
+        if additiveConfig and additiveConfig.get("retractionEnabled", True):
             bufferLen = float(additiveConfig.get("retractionBufferLength", 3.0))
             retractDist = float(additiveConfig.get("retractionDistance", 25.0))
             reloadSpeed = float(additiveConfig.get("retractionReloadSpeed", 500.0))

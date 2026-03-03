@@ -25,7 +25,7 @@ parameterSchema = {
         "logFile": {"type": (str, type(None)), "default": None, "required": False},
     },
     "additive": {
-        "layerHeight": {"type": float, "min": 0.08, "max": 0.4, "default": 0.2, "unit": "mm", "required": True},
+        "layerHeight": {"type": float, "min": 0.08, "max": 0.4, "default": 0.3, "unit": "mm", "required": True},
         "wallThickness": {"type": float, "min": 0.4, "max": 2.0, "default": 0.8, "unit": "mm", "required": True},
         "wallLineCount": {"type": int, "min": 1, "max": 10, "default": 2, "unit": "lines", "required": True},
         "infillDensity": {"type": int, "min": 0, "max": 100, "default": 20, "unit": "%", "required": True},
@@ -44,10 +44,9 @@ parameterSchema = {
         "fanEnabled": {"type": bool, "default": True, "required": False},
         "coolFanSpeed": {"type": int, "min": 0, "max": 100, "default": 100, "unit": "%", "required": False},
         "coolMinLayerTime": {"type": float, "min": 1.0, "max": 60.0, "default": 10.0, "unit": "s", "required": False},
-        "retractionEnabled": {"type": bool, "default": False, "required": False},
+        "retractionEnabled": {"type": bool, "default": True, "required": False},
         "retractionDistance": {"type": float, "min": 0.0, "max": 50.0, "default": 25.0, "unit": "mm", "required": False},
         "retractionSpeed": {"type": float, "min": 10.0, "max": 100.0, "default": 35.0, "unit": "mm/s", "required": False},
-        "enableRetractionCompensation": {"type": bool, "default": True, "required": False},
         "retractionBufferLength": {"type": float, "min": 0.0, "max": 20.0, "default": 3.0, "unit": "mm", "required": False},
         "retractionReloadSpeed": {"type": float, "min": 10.0, "max": 2000.0, "default": 500.0, "unit": "mm/min", "required": False},
         "supportEnabled": {"type": bool, "default": False, "required": False},
@@ -162,9 +161,8 @@ class ConfigManager:
         return parameterSchema
 
     def generateCuraConfig(self, additiveConfig: Dict[str, Any]) -> Dict[str, str]:
-        useComp = additiveConfig.get("enableRetractionCompensation", True)
         curaConfig = {
-            "layer_height": str(additiveConfig.get("layerHeight", 0.2)),
+            "layer_height": str(additiveConfig.get("layerHeight", 0.3)),
             "wall_thickness": str(additiveConfig.get("wallThickness", 0.8)),
             "wall_line_count": str(additiveConfig.get("wallLineCount", 2)),
             "infill_density": str(additiveConfig.get("infillDensity", 20)),
@@ -183,9 +181,7 @@ class ConfigManager:
             "fan_enabled": str(additiveConfig.get("fanEnabled", True)).lower(),
             "cool_fan_speed": str(additiveConfig.get("coolFanSpeed", 100)),
             "cool_min_layer_time": str(additiveConfig.get("coolMinLayerTime", 10.0)),
-            "retraction_enabled": "false" if useComp else str(additiveConfig.get("retractionEnabled", False)).lower(),
-            "retraction_distance": str(additiveConfig.get("retractionDistance", 25.0)),
-            "retraction_speed": str(additiveConfig.get("retractionSpeed", 35.0)),
+            "retraction_enabled": "false",
             "support_enabled": str(additiveConfig.get("supportEnabled", False)).lower(),
             "adhesion_type": additiveConfig.get("adhesionType", "none"),
         }
