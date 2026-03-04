@@ -633,7 +633,7 @@ def generateCncJobInterface(partStl: str, moldStl: str, gateStl: str, riserStl: 
 
 
 if __name__ == '__main__':
-    tempCncDir = Path("tempCncFiles")
+    tempCncDir = Path("../tempCncFiles")
     if tempCncDir.exists():
         generateCncJobInterface(
             partStl=str(tempCncDir / "part.stl"),

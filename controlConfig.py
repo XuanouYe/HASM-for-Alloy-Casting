@@ -60,7 +60,7 @@ parameterSchema = {
         "pressure": {"type": int, "min": 0, "max": 100, "default": 5, "unit": "bar", "required": True},
     },
     "subtractive": {
-        "machineModel": {"type": str, "default": "Default_CNC", "required": True},
+        "machineModel": {"type": str, "default": "Default_5Axis_CNC", "required": True},
         "spindleSpeed": {"type": int, "min": 100, "max": 60000, "default": 5000, "unit": "rpm", "required": True},
         "feedRate": {"type": int, "min": 1, "max": 5000, "default": 500, "unit": "mm/min", "required": True},
         "toolDiameter": {"type": float, "min": 0.1, "max": 20.0, "default": 6.0, "unit": "mm", "required": True},
@@ -73,6 +73,39 @@ parameterSchema = {
         "axisCount": {"type": int, "min": 1, "max": 100, "default": 9, "required": True},
         "angleThreshold": {"type": float, "min": 0.1, "max": 3.14, "default": 1.047, "unit": "rad", "required": True},
         "candidateAxes": {"type": list, "default": [[0.0, 0.0, 1.0]], "required": False},
+        "unit": {"type": str, "default": "mm", "options": ["mm", "inch"], "required": False},
+        "absoluteMode": {"type": bool, "default": True, "required": False},
+        "wcsCode": {"type": str, "default": "G54", "required": False},
+        "spindleDirection": {"type": str, "default": "CW", "options": ["CW", "CCW"], "required": False},
+        "coolantEnabled": {"type": bool, "default": True, "required": False},
+        "coolantCode": {"type": str, "default": "M8", "required": False},
+        "feedrateMergeStrategy": {"type": bool, "default": True, "required": False},
+        "kinematics": {
+            "type": dict,
+            "default": {
+                "topology": "tiltRotate",
+                "rotationOrder": "XZ",
+                "rotationCenter": [0.0, 0.0, 0.0],
+                "aAxisLimit": [-120.0, 120.0],
+                "bAxisLimit": [-360.0, 360.0],
+                "aAxisName": "A",
+                "bAxisName": "B",
+                "aSign": 1.0,
+                "bSign": 1.0
+            },
+            "required": False
+        },
+        "outputFormat": {
+            "type": dict,
+            "default": {
+                "coordDecimals": 3,
+                "angleDecimals": 3,
+                "feedDecimals": 1,
+                "lineNumbers": False,
+                "lineNumberIncrement": 10
+            },
+            "required": False
+        }
     },
     "fdm": {
         "wslEnginePath": {"type": str, "default": "", "required": False},
@@ -134,6 +167,8 @@ class ConfigManager:
                 elif expectedType == bool and isinstance(value, str):
                     params[paramName] = value.lower() in ['true', '1', 'yes', 'on']
                 elif expectedType == list and isinstance(value, list):
+                    pass
+                elif expectedType == dict and isinstance(value, dict):
                     pass
                 else:
                     errors.append(f"{section}.{paramName}")

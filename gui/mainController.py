@@ -2,11 +2,11 @@ import json
 import os
 import tempfile
 from datetime import timedelta
-from PyQt5.QtCore import QObject, QTimer, Qt
+from PyQt5.QtCore import QObject, QTimer
 from gui.workerThread import WorkerThread
 from controlConfig import ConfigManager
 from fdmExecutor import generateGcodeInterface
-from cncPathDesigner import generateCncJobInterface
+from cnc.pathDesigner import generateCncJobInterface
 from geometryAdapters import exportMeshToStl
 
 
