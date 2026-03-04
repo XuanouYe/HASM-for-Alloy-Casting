@@ -9,6 +9,7 @@ from fdmExecutor import generateGcodeInterface
 from cncPathDesigner import generateCncJobInterface
 from geometryAdapters import exportMeshToStl
 
+
 class MainController(QObject):
     def __init__(self, mainWindow, moldController, parameterPanel):
         super().__init__()
@@ -19,10 +20,13 @@ class MainController(QObject):
         self.currentConfigDict = self.configManager.getDefaultConfig()
         self.elapsedTime = timedelta(0)
         self.currentManifestData = None
+
         self.partStlPath = None
         self.moldStlPath = None
-        self.gatingStlPath = None
+        self.gateStlPath = None
+        self.riserStlPath = None
         self.currentStlPath = None
+
         self.timer = QTimer()
         self.timer.timeout.connect(self._updateTimer)
         self.timer.start(1000)
@@ -51,7 +55,8 @@ class MainController(QObject):
         self.currentManifestData = None
         self.partStlPath = None
         self.moldStlPath = None
-        self.gatingStlPath = None
+        self.gateStlPath = None
+        self.riserStlPath = None
         self.currentStlPath = None
         self.mainWindow.setCncButtonEnabled(False)
         self.mainWindow.setGcodeButtonEnabled(False)
@@ -68,7 +73,9 @@ class MainController(QObject):
         files = manifestData.get("files", {})
         self.partStlPath = files.get("partStl")
         self.moldStlPath = files.get("moldStl")
-        self.gatingStlPath = files.get("gatingStl")
+        self.gateStlPath = files.get("gateStl")
+        self.riserStlPath = files.get("riserStl")
+
         if self.partStlPath and self.moldStlPath:
             self.mainWindow.setCncButtonEnabled(True)
             self.mainWindow.showMessage("成功", "制造清单加载成功，可以生成CNC路径")
@@ -85,7 +92,7 @@ class MainController(QObject):
             configDict = json.load(f)
         errors = self.configManager.validate(configDict)
         if errors:
-            self.mainWindow.showMessage("配置验证失败", "配置文件存在问题:\n" + "\n".join(errors[:10]),
+            self.mainWindow.showMessage("配置验证失败", "配置文件存在问题:\\n" + "\\n".join(errors[:10]),
                                         isError=True)
             return
         self.currentConfigDict = configDict
@@ -143,7 +150,7 @@ class MainController(QObject):
     def _onGenerateGcodeCompleted(self, result):
         self.mainWindow.setGcodeButtonEnabled(True)
         gcodePath = result.get("result") if "result" in result else result.get("gcodePath", "")
-        self.mainWindow.showMessage("成功", f"G代码已生成:\n{gcodePath}" if gcodePath else "生成完成")
+        self.mainWindow.showMessage("成功", f"G代码已生成:\\n{gcodePath}" if gcodePath else "生成完成")
 
     def handleGenerateCnc(self, outputPath, visualize):
         if not self.partStlPath or not self.moldStlPath:
@@ -153,16 +160,21 @@ class MainController(QObject):
             return
         config = self.parameterPanel.getConfiguration()
         self.mainWindow.setStatusText("正在计算CNC刀位...")
+
         def taskCallable():
-            gatingPathToUse = self.gatingStlPath if self.gatingStlPath else self.partStlPath
+            gatePathToUse = self.gateStlPath if self.gateStlPath else self.partStlPath
+            riserPathToUse = self.riserStlPath if self.riserStlPath else self.partStlPath
+
             return generateCncJobInterface(
                 partStl=self.partStlPath,
                 moldStl=self.moldStlPath,
-                gatingStl=gatingPathToUse,
+                gateStl=gatePathToUse,
+                riserStl=riserPathToUse,
                 outputJsonPath=outputPath,
                 processConfig=config,
                 visualize=visualize
             )
+
         self.cncWorker = WorkerThread(taskCallable)
         self.cncWorker.taskCompleted.connect(self._onGenerateCncCompleted)
         self.cncWorker.taskError.connect(lambda err: self._onGenerateError("生成CNC刀位失败", err, "Cnc"))
@@ -179,4 +191,4 @@ class MainController(QObject):
         else:
             self.mainWindow.setCncButtonEnabled(True)
             self.mainWindow.setStatusText("生成失败")
-        self.mainWindow.showMessage("错误", f"{title}:\n{errorMsg}", isError=True)
+        self.mainWindow.showMessage("错误", f"{title}:\\n{errorMsg}", isError=True)

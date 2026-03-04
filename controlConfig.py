@@ -66,8 +66,12 @@ parameterSchema = {
         "toolDiameter": {"type": float, "min": 0.1, "max": 20.0, "default": 6.0, "unit": "mm", "required": True},
         "toolSafetyMargin": {"type": float, "min": 0.01, "max": 5.0, "default": 0.5, "unit": "mm", "required": True},
         "stepOver": {"type": float, "min": 0.01, "max": 10.0, "default": 1.5, "unit": "mm", "required": True},
+        "layerStepDown": {"type": float, "min": 0.01, "max": 10.0, "default": 1.0, "unit": "mm", "required": True},
         "waterlineStepDown": {"type": float, "min": 0.01, "max": 5.0, "default": 0.5, "unit": "mm", "required": True},
         "safeHeight": {"type": float, "min": 1.0, "max": 100.0, "default": 5.0, "unit": "mm", "required": True},
+        "axisMode": {"type": str, "default": "hemisphere", "options": ["hemisphere", "custom"], "required": True},
+        "axisCount": {"type": int, "min": 1, "max": 100, "default": 9, "required": True},
+        "angleThreshold": {"type": float, "min": 0.1, "max": 3.14, "default": 1.047, "unit": "rad", "required": True},
         "candidateAxes": {"type": list, "default": [[0.0, 0.0, 1.0]], "required": False},
     },
     "fdm": {
