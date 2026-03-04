@@ -1,6 +1,6 @@
 import json
 from dataclasses import dataclass
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Callable
 import numpy as np
 import trimesh
 import vtk
@@ -10,6 +10,7 @@ from pathlib import Path
 from shapely.geometry import LineString, MultiPolygon, Polygon
 from shapely.ops import unary_union
 from shapely.validation import make_valid
+from abc import ABC, abstractmethod
 
 
 def normalizeVector(vec: np.ndarray) -> np.ndarray:
@@ -108,20 +109,11 @@ class PointCloudIPW:
             self.active_mask[global_remove_idx] = False
 
 
-@dataclass
-class SegmentOutput:
-    segmentId: int
-    toolAxis: List[float]
-    pointCount: int
-
-
-class TrimeshToolpathEngine:
-    def __init__(self):
-        self.toolRadius = 0.0
-
-    def buildCutter(self, toolParams: Dict[str, Any]) -> Any:
-        self.toolRadius = float(toolParams.get("diameter", 6.0)) / 2.0
-        return toolParams
+class IToolpathStrategy(ABC):
+    @abstractmethod
+    def generate(self, targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh, toolRadius: float,
+                 params: Dict[str, Any], safetyMargin: float) -> List[np.ndarray]:
+        pass
 
     def cleanPolygon(self, polys: List[Any]) -> Any:
         cleaned = []
@@ -144,15 +136,16 @@ class TrimeshToolpathEngine:
             return slice2D.polygons_full
         return []
 
-    def generateZLevelRoughingLinesWithIslands(self, targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh,
-                                               rasterParams: Dict[str, Any], safetyMargin: float) -> List[np.ndarray]:
+
+class ZLevelRoughingStrategy(IToolpathStrategy):
+    def generate(self, targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh, toolRadius: float,
+                 params: Dict[str, Any], safetyMargin: float) -> List[np.ndarray]:
         if targetMesh.is_empty:
             return []
-        stepOver = float(rasterParams.get("stepOver", 1.0))
-        layerStep = float(rasterParams.get("layerStep", 1.0))
+        stepOver = float(params.get("stepOver", 1.0))
+        layerStep = float(params.get("layerStep", 1.0))
         bounds = np.asarray(targetMesh.bounds, dtype=float)
-        zMin = bounds[0][2]
-        zMax = bounds[1][2]
+        zMin, zMax = bounds[0][2], bounds[1][2]
         zLevels = np.arange(zMax - layerStep, zMin, -layerStep, dtype=float)
         paths = []
 
@@ -167,18 +160,17 @@ class TrimeshToolpathEngine:
             _, to3DMatrix = targetSliceResult.to_2D()
 
             machinablePolyUnion = self.cleanPolygon(targetPolys)
-            machinablePoly = machinablePolyUnion.buffer(-self.toolRadius)
+            machinablePoly = machinablePolyUnion.buffer(-toolRadius)
 
             keepOutPoly = MultiPolygon()
             if not keepOutMesh.is_empty:
                 keepOutPolys = self.robustSection(keepOutMesh, z)
                 if keepOutPolys:
                     koPolyUnion = self.cleanPolygon(keepOutPolys)
-                    keepOutPoly = koPolyUnion.buffer(self.toolRadius + safetyMargin + stepOver)
+                    keepOutPoly = koPolyUnion.buffer(toolRadius + safetyMargin + stepOver)
 
             if not machinablePoly.is_empty:
-                safePoly = machinablePoly.difference(keepOutPoly)
-                safePoly = safePoly.buffer(0)
+                safePoly = machinablePoly.difference(keepOutPoly).buffer(0)
                 if safePoly.is_empty:
                     continue
                 geoms = safePoly.geoms if safePoly.geom_type == 'MultiPolygon' else [safePoly]
@@ -209,49 +201,22 @@ class TrimeshToolpathEngine:
                         paths.append(coords3D)
         return paths
 
-    def generateDropCutterRasterLines(self, meshObject: trimesh.Trimesh, bounds: np.ndarray,
-                                      rasterParams: Dict[str, Any]) -> List[np.ndarray]:
-        if meshObject.is_empty:
-            return []
-        stepOver = float(rasterParams.get("stepOver", 1.0))
-        safeHeight = float(rasterParams.get("safeHeight", 5.0))
-        angleThreshold = float(rasterParams.get("angleThreshold", 1.047))
-        minZNormal = float(np.cos(angleThreshold))
-        xMin, yMin, zMin = bounds[0]
-        xMax, yMax, zMax = bounds[1]
-        xList = np.arange(xMin, xMax + stepOver, stepOver, dtype=float)
-        yList = np.arange(yMin, yMax + stepOver, stepOver, dtype=float)
-        zStart = float(zMax + safeHeight)
-        paths = []
-        for y in yList:
-            rayOrigins = np.column_stack((xList, np.full(len(xList), y), np.full(len(xList), zStart)))
-            rayDirections = np.tile([0, 0, -1], (len(xList), 1))
-            locations, indexRay, indexTri = meshObject.ray.intersects_location(ray_origins=rayOrigins,
-                                                                               ray_directions=rayDirections)
-            linePts = []
-            for i in range(len(xList)):
-                matchIndices = np.where(indexRay == i)[0]
-                if len(matchIndices) > 0:
-                    highestZIdx = matchIndices[np.argmax(locations[matchIndices, 2])]
-                    triIdx = indexTri[highestZIdx]
-                    normal = meshObject.face_normals[triIdx]
-                    if normal[2] >= minZNormal:
-                        linePts.append([xList[i], y, locations[highestZIdx, 2]])
-            if linePts:
-                paths.append(np.asarray(linePts, dtype=float))
-        return paths
 
-    def generateWaterlineLoops(self, meshObject: trimesh.Trimesh, cutter: Any, zLevels: np.ndarray, sampling: float) -> \
-    List[np.ndarray]:
-        if meshObject.is_empty:
+class WaterlineStrategy(IToolpathStrategy):
+    def generate(self, targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh, toolRadius: float,
+                 params: Dict[str, Any], safetyMargin: float) -> List[np.ndarray]:
+        if targetMesh.is_empty:
             return []
+        layerStep = float(params.get("layerStep", 0.5))
+        bounds = np.asarray(targetMesh.bounds, dtype=float)
+        zLevels = np.arange(bounds[0][2], bounds[1][2] + layerStep, layerStep, dtype=float)
         waterlines = []
         for z in zLevels:
-            sliceResult = meshObject.section(plane_origin=[0, 0, z], plane_normal=[0, 0, 1])
+            sliceResult = targetMesh.section(plane_origin=[0, 0, z], plane_normal=[0, 0, 1])
             if sliceResult:
                 slice2D, to3DMatrix = sliceResult.to_2D()
                 unionPoly = self.cleanPolygon(slice2D.polygons_full)
-                offsetPoly = unionPoly.buffer(self.toolRadius)
+                offsetPoly = unionPoly.buffer(toolRadius)
                 if not offsetPoly.is_empty:
                     geoms = offsetPoly.geoms if offsetPoly.geom_type == 'MultiPolygon' else [offsetPoly]
                     for p in geoms:
@@ -261,6 +226,58 @@ class TrimeshToolpathEngine:
                         waterlines.append(coords3D)
         return waterlines
 
+
+class DropRasterStrategy(IToolpathStrategy):
+    def generate(self, targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh, toolRadius: float,
+                 params: Dict[str, Any], safetyMargin: float) -> List[np.ndarray]:
+        combinedMesh = trimesh.util.concatenate([targetMesh, keepOutMesh]) if not keepOutMesh.is_empty else targetMesh
+        if combinedMesh.is_empty:
+            return []
+        bounds = np.asarray(targetMesh.bounds, dtype=float)
+        stepOver = float(params.get("stepOver", 1.0))
+        safeHeight = float(params.get("safeHeight", 5.0))
+        angleThreshold = float(params.get("angleThreshold", 1.047))
+        minZNormal = float(np.cos(angleThreshold))
+        xMin, yMin, _ = bounds[0]
+        xMax, yMax, zMax = bounds[1]
+        xList = np.arange(xMin, xMax + stepOver, stepOver, dtype=float)
+        yList = np.arange(yMin, yMax + stepOver, stepOver, dtype=float)
+        zStart = float(zMax + safeHeight)
+        paths = []
+        for y in yList:
+            rayOrigins = np.column_stack((xList, np.full(len(xList), y), np.full(len(xList), zStart)))
+            rayDirections = np.tile([0, 0, -1], (len(xList), 1))
+            locations, indexRay, indexTri = combinedMesh.ray.intersects_location(ray_origins=rayOrigins,
+                                                                                 ray_directions=rayDirections)
+            linePts = []
+            for i in range(len(xList)):
+                matchIndices = np.where(indexRay == i)[0]
+                if len(matchIndices) > 0:
+                    highestZIdx = matchIndices[np.argmax(locations[matchIndices, 2])]
+                    triIdx = indexTri[highestZIdx]
+                    normal = combinedMesh.face_normals[triIdx]
+                    if normal[2] >= minZNormal:
+                        linePts.append([xList[i], y, locations[highestZIdx, 2]])
+            if linePts:
+                paths.append(np.asarray(linePts, dtype=float))
+        return paths
+
+
+class ToolpathStrategyFactory:
+    _strategies = {
+        "zlevelroughing": ZLevelRoughingStrategy(),
+        "zlr": ZLevelRoughingStrategy(),
+        "waterline": WaterlineStrategy(),
+        "wl": WaterlineStrategy(),
+        "dropraster": DropRasterStrategy()
+    }
+
+    @classmethod
+    def get_strategy(cls, mode: str) -> IToolpathStrategy:
+        return cls._strategies.get(mode.lower(), DropRasterStrategy())
+
+
+class TrimeshToolpathEngine:
     def optimizePathLinking(self, paths: List[np.ndarray], safeZ: float, stepOver: float) -> np.ndarray:
         if not paths:
             return np.array([])
@@ -275,11 +292,10 @@ class TrimeshToolpathEngine:
             minStartIdx = int(np.argmin(distStarts))
             minEndIdx = int(np.argmin(distEnds))
             if distStarts[minStartIdx] <= distEnds[minEndIdx]:
-                chosenListIdx, reverse = minStartIdx, False
-                minDist = distStarts[minStartIdx]
+                chosenListIdx, reverse, minDist = minStartIdx, False, distStarts[minStartIdx]
             else:
-                chosenListIdx, reverse = minEndIdx, True
-                minDist = distEnds[minEndIdx]
+                chosenListIdx, reverse, minDist = minEndIdx, True, distEnds[minEndIdx]
+
             chosenPathIdx = unvisited[chosenListIdx]
             nextPath = paths[chosenPathIdx] if not reverse else paths[chosenPathIdx][::-1]
             if len(linkedPaths) > 0:
@@ -292,6 +308,23 @@ class TrimeshToolpathEngine:
             currentPos = nextPath[-1]
             unvisited.pop(chosenListIdx)
         return np.vstack(linkedPaths) if linkedPaths else np.array([])
+
+    def slicePathByPlatformZ(self, pathLocal: np.ndarray, rotBack: np.ndarray, platformSafeZ: float) -> List[
+        np.ndarray]:
+        pathWcs = applyRotation(pathLocal, rotBack)
+        platformMask = pathWcs[:, 2] >= platformSafeZ
+        validLocalPaths = []
+        currentSubPath = []
+        for i, isValid in enumerate(platformMask.tolist()):
+            if isValid:
+                currentSubPath.append(pathLocal[i])
+            else:
+                if len(currentSubPath) > 0:
+                    validLocalPaths.append(np.asarray(currentSubPath, dtype=float))
+                    currentSubPath = []
+        if len(currentSubPath) > 0:
+            validLocalPaths.append(np.asarray(currentSubPath, dtype=float))
+        return validLocalPaths
 
 
 class FiveAxisCncPathGenerator:
@@ -320,15 +353,14 @@ class FiveAxisCncPathGenerator:
 
         keepOutMeshStep1 = trimesh.util.concatenate([partMesh, gateMesh, riserMesh])
         step1 = self.generateStep(1, "shellRemoval", moldMesh, keepOutMeshStep1, toolParams, stepParams[0],
-                                  candidateAxes, str(stepParams[0].get("mode", "zLevelRoughing")), globalMinZ,
-                                  safetyMargin)
+                                  candidateAxes, globalMinZ, safetyMargin)
 
         targetMeshStep2 = trimesh.util.concatenate([partMesh, riserMesh])
         step2 = self.generateStep(2, "partAndRiserFinishing", targetMeshStep2, gateMesh, toolParams, stepParams[1],
-                                  candidateAxes, str(stepParams[1].get("mode", "waterline")), globalMinZ, safetyMargin)
+                                  candidateAxes, globalMinZ, safetyMargin)
 
         step3 = self.generateStep(3, "gateRemoval", gateMesh, partMesh, toolParams, stepParams[2], candidateAxes,
-                                  str(stepParams[2].get("mode", "dropRaster")), globalMinZ, safetyMargin)
+                                  globalMinZ, safetyMargin)
 
         out = {"version": self.version, "wcsId": str(wcsId), "steps": [step1, step2, step3]}
         if jobId is not None:
@@ -336,62 +368,39 @@ class FiveAxisCncPathGenerator:
         return out
 
     def generateStep(self, stepId: int, stepType: str, targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh,
-                     toolParams: Dict[str, Any], stepParam: Dict[str, Any], candidateAxes: List[np.ndarray], mode: str,
+                     toolParams: Dict[str, Any], stepParam: Dict[str, Any], candidateAxes: List[np.ndarray],
                      globalMinZ: float, safetyMargin: float) -> Dict[str, Any]:
+        mode = str(stepParam.get("mode", "dropRaster"))
         feedrate = float(stepParam.get("feedrate", 500.0))
         toolRadius = float(toolParams.get("diameter", 6.0)) * 0.5
         platformSafeZ = float(globalMinZ + toolRadius + safetyMargin)
+        stepOver = float(stepParam.get("stepOver", 1.0))
+
+        strategy = ToolpathStrategyFactory.get_strategy(mode)
+        ipw = PointCloudIPW(targetMesh, 50000) if mode.lower() in ["zlevelroughing", "zlr", "dropraster"] else None
+
         segments = []
         allClPoints = []
         pointId = 0
-        stepOver = float(stepParam.get("stepOver", 1.0))
-        if mode.lower() in ["zlevelroughing", "zlr", "dropraster"]:
-            ipw = PointCloudIPW(targetMesh, 50000)
-        else:
-            ipw = None
+
         for segmentId, toolAxis in enumerate(candidateAxes):
             rotToToolFrame = buildRotationFromTo(toolAxis, np.array([0.0, 0.0, 1.0], dtype=float))
             rotBack = rotToToolFrame.T
             rotatedTarget = self.rotateMesh(targetMesh, rotToToolFrame)
             rotatedKeepOut = self.rotateMesh(keepOutMesh, rotToToolFrame)
             localSafeZ = float(rotatedTarget.bounds[1][2]) + float(stepParam.get("safeHeight", 5.0))
-            cutter = self.toolpathEngine.buildCutter(toolParams)
-            if mode.lower() in ["waterline", "wl"]:
-                sampling = float(stepParam.get("sampling", stepOver))
-                layerStep = float(stepParam.get("layerStep", 0.5))
-                zLevels = np.arange(float(rotatedTarget.bounds[0][2]), float(rotatedTarget.bounds[1][2]) + layerStep,
-                                    layerStep, dtype=float)
-                rawPathsLocal = self.toolpathEngine.generateWaterlineLoops(rotatedTarget, cutter, zLevels, sampling)
-            elif mode.lower() in ["zlevelroughing", "zlr"]:
-                rawPathsLocal = self.toolpathEngine.generateZLevelRoughingLinesWithIslands(rotatedTarget,
-                                                                                           rotatedKeepOut,
-                                                                                           dict(stepParam),
-                                                                                           safetyMargin)
-            else:
-                combinedMesh = trimesh.util.concatenate([rotatedTarget, rotatedKeepOut])
-                rawPathsLocal = self.toolpathEngine.generateDropCutterRasterLines(combinedMesh,
-                                                                                  np.asarray(rotatedTarget.bounds,
-                                                                                             dtype=float),
-                                                                                  dict(stepParam))
+
+            rawPathsLocal = strategy.generate(rotatedTarget, rotatedKeepOut, toolRadius, stepParam, safetyMargin)
+
             validPathsLocal = []
             for pathLocal in rawPathsLocal:
                 if len(pathLocal) == 0: continue
-                pathWcs = applyRotation(pathLocal, rotBack)
-                platformMask = pathWcs[:, 2] >= platformSafeZ
-                currentSubPath = []
-                for i, isValid in enumerate(platformMask.tolist()):
-                    if isValid:
-                        currentSubPath.append(pathLocal[i])
-                    else:
-                        if len(currentSubPath) > 0:
-                            validPathsLocal.append(np.asarray(currentSubPath, dtype=float))
-                            currentSubPath = []
-                if len(currentSubPath) > 0:
-                    validPathsLocal.append(np.asarray(currentSubPath, dtype=float))
+                validPathsLocal.extend(self.toolpathEngine.slicePathByPlatformZ(pathLocal, rotBack, platformSafeZ))
+
             if ipw is not None and validPathsLocal:
-                filteredPathsLocal = ipw.filter_paths_local(validPathsLocal, rotToToolFrame, toolRadius, stepOver)
-                ipw.update_ipw_local(filteredPathsLocal, rotToToolFrame, toolRadius)
-                validPathsLocal = filteredPathsLocal
+                validPathsLocal = ipw.filter_paths_local(validPathsLocal, rotToToolFrame, toolRadius, stepOver)
+                ipw.update_ipw_local(validPathsLocal, rotToToolFrame, toolRadius)
+
             if validPathsLocal:
                 optimizedLocalPath = self.toolpathEngine.optimizePathLinking(validPathsLocal, localSafeZ, stepOver)
                 if len(optimizedLocalPath) > 0:
@@ -402,6 +411,7 @@ class FiveAxisCncPathGenerator:
                                      "toolAxis": [float(toolAxis[0]), float(toolAxis[1]), float(toolAxis[2])],
                                      "pointCount": int(len(clPointsWcs))})
                     allClPoints.extend(clPointsWcs)
+
         return {"stepId": int(stepId), "stepType": str(stepType), "toolParams": toolParams, "segments": segments,
                 "clPoints": allClPoints}
 
@@ -495,19 +505,15 @@ class PathVisualizer:
         obbTree.BuildLocator()
         return obbTree
 
-    def processStepPaths(self, step: Dict[str, Any], obbTree: vtk.vtkOBBTree):
-        points = [p["position"] for p in step.get("clPoints", [])]
-        normalLines = []
-        collisionLines = []
+    def evaluateCollisions(self, points: List[List[float]], obbTree: vtk.vtkOBBTree):
+        normalLines, collisionLines = [], []
         if not points:
             return normalLines, collisionLines
 
         intersectPoints = vtk.vtkPoints()
         for i in range(1, len(points)):
-            p1 = points[i - 1]
-            p2 = points[i]
-            res = obbTree.IntersectWithLine(p1, p2, intersectPoints, None)
-            if res != 0:
+            p1, p2 = points[i - 1], points[i]
+            if obbTree.IntersectWithLine(p1, p2, intersectPoints, None) != 0:
                 collisionLines.append((p1, p2))
             else:
                 normalLines.append((p1, p2))
@@ -544,13 +550,13 @@ class PathVisualizer:
 
         print("Building OBBTree for collision detection...")
         obbTree = self.buildCollisionTree(targetMesh)
-
         colors = [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)]
         allCollisionLines = []
 
         print("Processing paths for step visualization and collisions...")
         for stepIndex, step in enumerate(clData.get("steps", [])):
-            normalLines, collLines = self.processStepPaths(step, obbTree)
+            pts = [p["position"] for p in step.get("clPoints", [])]
+            normalLines, collLines = self.evaluateCollisions(pts, obbTree)
             if normalLines:
                 stepActor = self.createLinesActor(normalLines, colors[stepIndex % len(colors)], 2.0)
                 self.stepActors.append(stepActor)
@@ -570,7 +576,6 @@ class PathVisualizer:
 
         interactor = vtk.vtkRenderWindowInteractor()
         interactor.SetRenderWindow(renderWindow)
-
         style = VtkInteractorStyle(self)
         style.SetDefaultRenderer(renderer)
         interactor.SetInteractorStyle(style)
@@ -603,11 +608,11 @@ def generateCncJobInterface(partStl: str, moldStl: str, gateStl: str, riserStl: 
     waterlineStep = float(subtractiveConfig.get("waterlineStepDown", 0.5))
     angleThreshold = float(subtractiveConfig.get("angleThreshold", 1.047))
     axisMode = str(subtractiveConfig.get("axisMode", "hemisphere"))
-    if axisMode == "hemisphere":
-        axisCount = int(subtractiveConfig.get("axisCount", 9))
-        candidateAxes = generateHemisphereAxes(axisCount)
-    else:
-        candidateAxes = subtractiveConfig.get("candidateAxes", [[0.0, 0.0, 1.0]])
+
+    candidateAxes = generateHemisphereAxes(
+        int(subtractiveConfig.get("axisCount", 9))) if axisMode == "hemisphere" else subtractiveConfig.get(
+        "candidateAxes", [[0.0, 0.0, 1.0]])
+
     stepParams = [
         {"mode": "zLevelRoughing", "stepOver": stepOver, "layerStep": layerStep, "safeHeight": safeHeight,
          "feedrate": feedrate},
@@ -616,14 +621,15 @@ def generateCncJobInterface(partStl: str, moldStl: str, gateStl: str, riserStl: 
         {"mode": "dropRaster", "stepOver": stepOver, "safeHeight": safeHeight, "feedrate": feedrate,
          "angleThreshold": angleThreshold}
     ]
-    axisStrategyParams = {"candidateAxes": candidateAxes}
+
     generator = FiveAxisCncPathGenerator(version="1.1")
-    clData = generator.generateJob(partStl=partStl, moldStl=moldStl, gateStl=gateStl, riserStl=riserStl,
-                                   toolParams=toolParams, stepParams=stepParams, axisStrategyParams=axisStrategyParams,
-                                   wcsId="WCS_MAIN", jobId=jobId)
+    clData = generator.generateJob(partStl, moldStl, gateStl, riserStl, toolParams, stepParams,
+                                   {"candidateAxes": candidateAxes}, "WCS_MAIN", jobId)
     generator.exportClJson(clData, outputJsonPath)
+
     if visualize:
         PathVisualizer().visualize(generator.loadMesh(partStl), clData)
+
     return clData
 
 
