@@ -1,8 +1,14 @@
 import json
 import math
 import re
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+rootDir = Path(__file__).resolve().parent.parent
+if str(rootDir) not in sys.path:
+    sys.path.append(str(rootDir))
+
 from controlConfig import parameterSchema
 
 
@@ -112,7 +118,7 @@ def _buildProgramHeader(
         f"(PROGRAM: {jobId})",
         f"(MACHINE: {machineModel})",
         f"(WCS: {wcsId})",
-        "(POST: cncPostProcessor.py)",
+        "(POST: gcodeProcessor.py)",
         formatBlock("{u} {a} G17 G40 G49 G80", u=unitCode, a=absCode),
         wcsCode,
         f"{spindleDir} S{spindleSpeed}",
@@ -244,14 +250,18 @@ def generateGcodeFromClJson(
 
 
 if __name__ == '__main__':
-    tempCncDir = Path(".tempCncFiles")
+    rootDir = Path(__file__).resolve().parent.parent
+    tempCncDir = rootDir / "tempCncFiles"
+
     if not tempCncDir.exists():
         tempCncDir.mkdir(parents=True, exist_ok=True)
-        print(f"Created directory {tempCncDir}, please run cncPathDesigner.py first to generate cncToolpath.json")
+        print(f"Created directory {tempCncDir}, please run cnc/pathDesigner.py first to generate cncToolpath.json")
+
     inputJson = str(tempCncDir / "cncToolpath.json")
-    outputGcode = str(tempCncDir / "JOB_TEST.gcode")
+    outputGcode = str(tempCncDir / "cnc.gcode")
+
     testConfig = {
-         "subtractive": {
+        "subtractive": {
             "toolDiameter": 6.0,
             "toolSafetyMargin": 0.5,
             "feedRate": 500.0,
@@ -260,12 +270,18 @@ if __name__ == '__main__':
             "safeHeight": 5.0,
             "waterlineStepDown": 0.5,
             "axisMode": "hemisphere",
-             "axisCount": 9,
-               "angleThreshold": 1.047
+            "axisCount": 9,
+            "angleThreshold": 1.047
         }
     }
-    generateGcodeFromClJson(
-        inputJsonPath=inputJson,
-        processConfig=testConfig,
-        outputGcodePath=outputGcode
-    )
+
+    if Path(inputJson).exists():
+        print(f"Found {inputJson}, generating G-code...")
+        generateGcodeFromClJson(
+            inputJsonPath=inputJson,
+            processConfig=testConfig,
+            outputGcodePath=outputGcode
+        )
+        print(f"G-code successfully generated: {outputGcode}")
+    else:
+        print(f"Input file not found: {inputJson}. Please run cnc/pathDesigner.py first.")
