@@ -1,13 +1,12 @@
 import json
-from dataclasses import dataclass
-from typing import List, Dict, Optional, Any, Callable
+from typing import List, Dict, Optional, Any
 import numpy as np
 import trimesh
 import vtk
 from scipy.spatial.distance import cdist
 from scipy.spatial import cKDTree
 from pathlib import Path
-from shapely.geometry import LineString, MultiPolygon, Polygon
+from shapely.geometry import LineString, MultiPolygon
 from shapely.ops import unary_union
 from shapely.validation import make_valid
 from abc import ABC, abstractmethod
