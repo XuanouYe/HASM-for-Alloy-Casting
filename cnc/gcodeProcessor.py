@@ -11,27 +11,19 @@ def loadClJson(inputJsonPath: str) -> Dict[str, Any]:
         return json.load(f)
 
 
-def loadPostConfig(postConfigPath: str) -> Dict[str, Any]:
-    with open(postConfigPath, "r", encoding="utf-8") as f:
-        raw = json.load(f)
-
+def loadPostConfig(rawConfig: Dict[str, Any]) -> Dict[str, Any]:
     cfg: Dict[str, Any] = {}
     subtractiveSchema = parameterSchema.get("subtractive", {})
-
     for k, v in subtractiveSchema.items():
         if "default" in v:
             cfg[k] = dict(v["default"]) if isinstance(v["default"], dict) else v["default"]
-
-    subtractiveRaw = raw.get("subtractive", {})
-
+    subtractiveRaw = rawConfig.get("subtractive", {})
     for k, v in subtractiveRaw.items():
         if isinstance(v, dict) and k in cfg and isinstance(cfg[k], dict):
             cfg[k].update(v)
         else:
             cfg[k] = v
-
     return cfg
-
 
 def computeRotaryAngles(
         toolAxisVec: List[float],
@@ -242,51 +234,38 @@ def writeGcodeFile(gcodeLines: List[str], outputPath: str) -> None:
 
 def generateGcodeFromClJson(
         inputJsonPath: str,
-        postConfigPath: str,
+        processConfig: Dict[str, Any],
         outputGcodePath: str,
 ) -> None:
     clData = loadClJson(inputJsonPath)
-    postCfg = loadPostConfig(postConfigPath)
+    postCfg = loadPostConfig(processConfig)
     gcodeLines = generateGcode(clData, postCfg)
     writeGcodeFile(gcodeLines, outputGcodePath)
 
 
 if __name__ == '__main__':
-    tempCncDir = Path("tempCncFiles")
-
-    # 路径与 cncPathDesigner.py 的输出文件保持一致
-    inputJsonPath = str(tempCncDir / "cncToolpath.json")
-
-    # 因为 controlConfig 定义了 ./configs 目录
-    configDir = Path("./configs")
-    configDir.mkdir(exist_ok=True, parents=True)
-    testConfigPath = str(configDir / "JOB_TEST.json")
-
-    outputGcodePath = str(tempCncDir / "JOB_TEST.gcode")
-
-    # 如果输入的 JSON 文件存在，则执行后处理并生成 G 代码
-    if Path(inputJsonPath).exists():
-        # 如果测试配置文件不存在，动态创建一个基础版本以便测试
-        if not Path(testConfigPath).exists():
-            print(f"Creating a default test config file at {testConfigPath}")
-            defaultTestConfig = {
-                "subtractive": {
-                    "machineModel": "Default_5Axis_CNC",
-                    "spindleSpeed": 5000,
-                    "feedRate": 500,
-                    "toolDiameter": 6.0,
-                    "toolSafetyMargin": 0.5,
-                    "stepOver": 1.5,
-                    "layerStepDown": 1.0,
-                    "waterlineStepDown": 0.5,
-                    "safeHeight": 5.0,
-                    "axisMode": "hemisphere",
-                    "axisCount": 9,
-                    "angleThreshold": 1.047
-                }
-            }
-            with open(testConfigPath, "w", encoding="utf-8") as f:
-                json.dump(defaultTestConfig, f, indent=2)
-
-        print(f"Generating G-code from {inputJsonPath}...")
-        generateGcodeFromClJson(inputJsonPath, testConfigPath, outputGcodePath)
+    tempCncDir = Path(".tempCncFiles")
+    if not tempCncDir.exists():
+        tempCncDir.mkdir(parents=True, exist_ok=True)
+        print(f"Created directory {tempCncDir}, please run cncPathDesigner.py first to generate cncToolpath.json")
+    inputJson = str(tempCncDir / "cncToolpath.json")
+    outputGcode = str(tempCncDir / "JOB_TEST.gcode")
+    testConfig = {
+         "subtractive": {
+            "toolDiameter": 6.0,
+            "toolSafetyMargin": 0.5,
+            "feedRate": 500.0,
+            "stepOver": 1.5,
+            "layerStepDown": 1.0,
+            "safeHeight": 5.0,
+            "waterlineStepDown": 0.5,
+            "axisMode": "hemisphere",
+             "axisCount": 9,
+               "angleThreshold": 1.047
+        }
+    }
+    generateGcodeFromClJson(
+        inputJsonPath=inputJson,
+        processConfig=testConfig,
+        outputGcodePath=outputGcode
+    )
