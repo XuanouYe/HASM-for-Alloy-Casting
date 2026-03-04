@@ -91,7 +91,7 @@ class MainWindow(QMainWindow):
         self.generateGcodeButton.clicked.connect(self.onGenerateGcodeClicked)
         gcodeLayout.addWidget(self.generateGcodeButton)
 
-        self.generateCncButton = QPushButton("生成CNC刀位(CL-JSON)")
+        self.generateCncButton = QPushButton("生成CNC G代码")
         self.generateCncButton.setEnabled(False)
         self.generateCncButton.clicked.connect(self.onGenerateCncClicked)
         gcodeLayout.addWidget(self.generateCncButton)
@@ -185,10 +185,9 @@ class MainWindow(QMainWindow):
             self.intentGenerateGcode.emit(outputPath)
 
     def onGenerateCncClicked(self):
-        outputPath, _ = QFileDialog.getSaveFileName(self, "保存CNC刀位文件", "", "JSON Files (*.json);;All Files (*)")
+        outputPath, _ = QFileDialog.getSaveFileName(self, "保存CNC G代码", "", "G-code Files (*.gcode);;All Files (*)")
         if outputPath:
-            reply = QMessageBox.question(self, "可视化", "是否在生成后启动VTK可视化窗口检查刀路？",
-                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+            reply = QMessageBox.question(self, "可视化", "是否在生成后启动VTK可视化窗口检查刀路？", QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
             self.generateCncButton.setEnabled(False)
             self.intentGenerateCnc.emit(outputPath, reply == QMessageBox.Yes)
 

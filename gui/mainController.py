@@ -6,8 +6,9 @@ from PyQt5.QtCore import QObject, QTimer
 from gui.workerThread import WorkerThread
 from controlConfig import ConfigManager
 from fdmExecutor import generateGcodeInterface
-from cnc.pathDesigner import generateCncJobInterface
+from cnc.gcodeProcessor import generateCncGcodeInterface
 from geometryAdapters import exportMeshToStl
+from cnc.pathDesigner import PathVisualizer, FiveAxisCncPathGenerator
 
 
 class MainController(QObject):
@@ -42,6 +43,7 @@ class MainController(QObject):
         self.mainWindow.intentGenerateGcode.connect(self.handleGenerateGcode)
         self.mainWindow.intentGenerateCnc.connect(self.handleGenerateCnc)
         self.moldController.modelLoadedPath.connect(self._onModelLoaded)
+        self.moldController.moldGenerated.connect(self._onMoldGeneratedForCnc)
 
     def _updateTimer(self):
         self.elapsedTime += timedelta(seconds=1)
@@ -87,13 +89,15 @@ class MainController(QObject):
         self.mainWindow.setGcodeButtonEnabled(True)
         self.mainWindow.setStatusText("铸件模型已加载")
 
+    def _onMoldGeneratedForCnc(self):
+        self.mainWindow.setCncButtonEnabled(True)
+
     def handleLoadConfig(self, filePath):
         with open(filePath, "r", encoding="utf-8") as f:
             configDict = json.load(f)
         errors = self.configManager.validate(configDict)
         if errors:
-            self.mainWindow.showMessage("配置验证失败", "配置文件存在问题:\\n" + "\\n".join(errors[:10]),
-                                        isError=True)
+            self.mainWindow.showMessage("配置验证失败", "配置文件存在问题:\n" + "\n".join(errors[:10]), isError=True)
             return
         self.currentConfigDict = configDict
         self.parameterPanel.loadConfiguration(configDict)
@@ -150,40 +154,64 @@ class MainController(QObject):
     def _onGenerateGcodeCompleted(self, result):
         self.mainWindow.setGcodeButtonEnabled(True)
         gcodePath = result.get("result") if "result" in result else result.get("gcodePath", "")
-        self.mainWindow.showMessage("成功", f"G代码已生成:\\n{gcodePath}" if gcodePath else "生成完成")
+        self.mainWindow.showMessage("成功", f"G代码已生成:\n{gcodePath}" if gcodePath else "生成完成")
 
     def handleGenerateCnc(self, outputPath, visualize):
-        if not self.partStlPath or not self.moldStlPath:
-            self.mainWindow.showMessage("错误", "缺少必要的标准化STL模型路径。请先加载Manufacturing Manifest。",
-                                        isError=True)
+        partStlToUse = self.partStlPath
+        moldStlToUse = self.moldStlPath
+
+        if not partStlToUse and self.moldController.currentCastingMesh is not None:
+            tempPartPath = os.path.join(tempfile.gettempdir(), "tempPart.stl")
+            exportMeshToStl(self.moldController.currentCastingMesh, tempPartPath)
+            partStlToUse = tempPartPath
+
+        if not moldStlToUse and self.moldController.currentMoldShell is not None:
+            tempMoldPath = os.path.join(tempfile.gettempdir(), "tempMoldCnc.stl")
+            exportMeshToStl(self.moldController.currentMoldShell, tempMoldPath)
+            moldStlToUse = tempMoldPath
+
+        if not partStlToUse or not moldStlToUse:
+            self.mainWindow.showMessage("错误", "缺少必要的模型数据。请先加载制造清单或生成模具。", isError=True)
             self.mainWindow.setCncButtonEnabled(True)
             return
+
         config = self.parameterPanel.getConfiguration()
-        self.mainWindow.setStatusText("正在计算CNC刀位...")
+        self.mainWindow.setStatusText("正在计算CNC G代码...")
+
+        self._currentVisualizeFlag = visualize
+        self._currentPartStlPath = partStlToUse
 
         def taskCallable():
-            gatePathToUse = self.gateStlPath if self.gateStlPath else self.partStlPath
-            riserPathToUse = self.riserStlPath if self.riserStlPath else self.partStlPath
-
-            return generateCncJobInterface(
-                partStl=self.partStlPath,
-                moldStl=self.moldStlPath,
+            gatePathToUse = self.gateStlPath if self.gateStlPath else partStlToUse
+            riserPathToUse = self.riserStlPath if self.riserStlPath else partStlToUse
+            return generateCncGcodeInterface(
+                partStl=partStlToUse,
+                moldStl=moldStlToUse,
                 gateStl=gatePathToUse,
                 riserStl=riserPathToUse,
-                outputJsonPath=outputPath,
+                outputGcodePath=outputPath,
                 processConfig=config,
-                visualize=visualize
+                visualize=False
             )
 
         self.cncWorker = WorkerThread(taskCallable)
         self.cncWorker.taskCompleted.connect(self._onGenerateCncCompleted)
-        self.cncWorker.taskError.connect(lambda err: self._onGenerateError("生成CNC刀位失败", err, "Cnc"))
+        self.cncWorker.taskError.connect(lambda err: self._onGenerateError("生成CNC G代码失败", err, "Cnc"))
         self.cncWorker.start()
 
     def _onGenerateCncCompleted(self, result):
         self.mainWindow.setCncButtonEnabled(True)
-        self.mainWindow.setStatusText("CNC刀位生成完成")
-        self.mainWindow.showMessage("完成", "CNC刀位JSON已成功生成。")
+        self.mainWindow.setStatusText("CNC G代码生成完成")
+        self.mainWindow.showMessage("完成", "CNC G代码已成功生成。")
+
+        if getattr(self, '_currentVisualizeFlag', False):
+            try:
+                generator = FiveAxisCncPathGenerator()
+                mesh = generator.loadMesh(self._currentPartStlPath)
+                visualizer = PathVisualizer()
+                visualizer.visualize(mesh, result)
+            except Exception as e:
+                self.mainWindow.showMessage("可视化错误", f"启动VTK可视化窗口失败: {str(e)}", isError=True)
 
     def _onGenerateError(self, title, errorMsg, btnType):
         if btnType == "Gcode":
@@ -191,4 +219,4 @@ class MainController(QObject):
         else:
             self.mainWindow.setCncButtonEnabled(True)
             self.mainWindow.setStatusText("生成失败")
-        self.mainWindow.showMessage("错误", f"{title}:\\n{errorMsg}", isError=True)
+        self.mainWindow.showMessage("错误", f"{title}:\n{errorMsg}", isError=True)

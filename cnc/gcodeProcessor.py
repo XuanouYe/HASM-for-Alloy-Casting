@@ -2,8 +2,13 @@ import json
 import math
 import re
 import sys
+import tempfile
+import os
+
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from cnc.pathDesigner import generateCncJobInterface
+
 
 rootDir = Path(__file__).resolve().parent.parent
 if str(rootDir) not in sys.path:
@@ -247,6 +252,13 @@ def generateGcodeFromClJson(
     postCfg = loadPostConfig(processConfig)
     gcodeLines = generateGcode(clData, postCfg)
     writeGcodeFile(gcodeLines, outputGcodePath)
+
+
+def generateCncGcodeInterface(partStl: str, moldStl: str, gateStl: str, riserStl: str, outputGcodePath: str, processConfig: Dict[str, Any], visualize: bool = False) -> Dict[str, Any]:
+    tempJsonPath = os.path.join(tempfile.gettempdir(), "tempCncCl.json")
+    clData = generateCncJobInterface(partStl, moldStl, gateStl, riserStl, tempJsonPath, processConfig, visualize=visualize)
+    generateGcodeFromClJson(tempJsonPath, processConfig, outputGcodePath)
+    return clData
 
 
 if __name__ == '__main__':
