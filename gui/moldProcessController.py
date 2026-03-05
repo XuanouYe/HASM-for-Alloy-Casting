@@ -19,10 +19,15 @@ class MoldProcessController(QObject):
         super().__init__()
         self.currentCastingMesh = None
         self.currentMoldShell = None
+        # 增加这两个属性来缓存分离出的浇道与冒口几何特征
+        self.currentGateMesh = None
+        self.currentRiserMesh = None
         self.currentWorker = None
 
     def handleLoadModel(self, filePath: str):
         self.currentCastingMesh = trimesh.load(filePath)
+        self.currentGateMesh = None
+        self.currentRiserMesh = None
         self.modelLoaded.emit()
         self.modelLoadedPath.emit(filePath)
         self.updateCastingView.emit(self.currentCastingMesh)
@@ -55,7 +60,12 @@ class MoldProcessController(QObject):
         def task():
             moldGen = MoldGenerator(config=config)
             gatingComponents = moldGen.generateGating(self.currentCastingMesh)
-            return gatingComponents.castingWithSystemMesh
+            # 修改返回值，将生成的复合铸件与分离好的浇道冒口作为字典一并传回主线程
+            return {
+                "combined": gatingComponents.castingWithSystemMesh,
+                "gate": gatingComponents.gateMesh,
+                "riser": gatingComponents.riserMesh
+            }
 
         self.currentWorker = WorkerThread(task)
         self.currentWorker.taskCompleted.connect(self._onGatingAdded)
@@ -63,8 +73,12 @@ class MoldProcessController(QObject):
         self.currentWorker.start()
 
     def _onGatingAdded(self, result):
-        combined = result.get("result") if isinstance(result, dict) else result
-        self.currentCastingMesh = combined
+        data = result.get("result") if isinstance(result, dict) and "result" in result else result
+        # 妥善接收并挂载至类属性
+        self.currentCastingMesh = data["combined"]
+        self.currentGateMesh = data["gate"]
+        self.currentRiserMesh = data["riser"]
+
         self.gatingAdded.emit()
         self.updateCastingView.emit(self.currentCastingMesh)
 

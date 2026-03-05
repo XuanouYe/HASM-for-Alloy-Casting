@@ -2,25 +2,19 @@ import json
 import math
 import re
 import sys
-import tempfile
-import os
-
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-from cnc.pathDesigner import generateCncJobInterface
-
 
 rootDir = Path(__file__).resolve().parent.parent
 if str(rootDir) not in sys.path:
     sys.path.append(str(rootDir))
 
 from controlConfig import parameterSchema
-
+from cnc.pathDesigner import generateCncJobInterface
 
 def loadClJson(inputJsonPath: str) -> Dict[str, Any]:
     with open(inputJsonPath, "r", encoding="utf-8") as f:
         return json.load(f)
-
 
 def loadPostConfig(rawConfig: Dict[str, Any]) -> Dict[str, Any]:
     cfg: Dict[str, Any] = {}
@@ -36,10 +30,7 @@ def loadPostConfig(rawConfig: Dict[str, Any]) -> Dict[str, Any]:
             cfg[k] = v
     return cfg
 
-def computeRotaryAngles(
-        toolAxisVec: List[float],
-        kinematics: Dict[str, Any],
-) -> Tuple[float, float]:
+def computeRotaryAngles(toolAxisVec: List[float], kinematics: Dict[str, Any]) -> Tuple[float, float]:
     dx = float(toolAxisVec[0])
     dy = float(toolAxisVec[1])
     dz = float(toolAxisVec[2])
@@ -78,7 +69,6 @@ def computeRotaryAngles(
     bDeg = max(float(bLim[0]), min(float(bLim[1]), bDeg))
     return aDeg, bDeg
 
-
 def formatBlock(template: str, **kwargs) -> str:
     filled: Dict[str, str] = {}
     for k, v in kwargs.items():
@@ -96,24 +86,17 @@ def formatBlock(template: str, **kwargs) -> str:
     result = re.sub(r"[ \t]+", " ", result).strip()
     return result
 
-
 def _fv(val: float, decimals: int) -> str:
     return f"{val:.{decimals}f}"
 
-
-def _buildProgramHeader(
-        clData: Dict[str, Any],
-        postCfg: Dict[str, Any],
-) -> List[str]:
+def _buildProgramHeader(clData: Dict[str, Any], postCfg: Dict[str, Any]) -> List[str]:
     jobId = str(clData.get("jobId", "PROGRAM"))
     wcsId = str(clData.get("wcsId", "WCS0"))
     unitCode = "G21" if str(postCfg.get("unit", "mm")).lower() == "mm" else "G20"
     absCode = "G90" if postCfg.get("absoluteMode", True) else "G91"
     wcsCode = str(postCfg.get("wcsCode", "G54"))
     spindleSpeed = int(postCfg.get("spindleSpeed", 5000))
-    spindleDir = (
-        "M3" if str(postCfg.get("spindleDirection", "CW")).upper() == "CW" else "M4"
-    )
+    spindleDir = "M3" if str(postCfg.get("spindleDirection", "CW")).upper() == "CW" else "M4"
     coolantEnabled = bool(postCfg.get("coolantEnabled", True))
     coolantCode = str(postCfg.get("coolantCode", "M8"))
     machineModel = str(postCfg.get("machineModel", "Default_5Axis_CNC"))
@@ -132,20 +115,15 @@ def _buildProgramHeader(
         blocks.append(coolantCode)
     return blocks
 
-
-def _buildProgramFooter(postCfg: Dict[str, Any]) -> List[str]:
+def _buildProgramFooter(postCfg: Dict[str, Any], clearanceZ: float, coordDec: int) -> List[str]:
     coolantEnabled = bool(postCfg.get("coolantEnabled", True))
     blocks: List[str] = []
     if coolantEnabled:
         blocks.append("M9")
-    blocks.extend(["M5", "G91 G28 Z0", "G90", "M30", "%"])
+    blocks.extend(["M5", f"G90 G0 Z{_fv(clearanceZ, coordDec)}", "M30", "%"])
     return blocks
 
-
-def generateGcode(
-        clData: Dict[str, Any],
-        postCfg: Dict[str, Any],
-) -> List[str]:
+def generateGcode(clData: Dict[str, Any], postCfg: Dict[str, Any]) -> List[str]:
     outFmt = postCfg.get("outputFormat", {})
     coordDec = int(outFmt.get("coordDecimals", 3))
     angleDec = int(outFmt.get("angleDecimals", 3))
@@ -157,6 +135,16 @@ def generateGcode(
     aName = str(kinematics.get("aAxisName", "A"))
     bName = str(kinematics.get("bAxisName", "B"))
     defaultFeed = float(postCfg.get("feedRate", 500.0))
+    safeHeight = float(postCfg.get("safeHeight", 5.0))
+
+    maxZ = -999999.0
+    steps = sorted(clData.get("steps", []), key=lambda s: int(s.get("stepId", 0)))
+    for step in steps:
+        for pt in step.get("clPoints", []):
+            z = float(pt.get("position", [0.0, 0.0, 0.0])[2])
+            if z > maxZ:
+                maxZ = z
+    clearanceZ = (maxZ + safeHeight * 2.0) if maxZ != -999999.0 else (safeHeight * 2.0)
 
     allLines: List[str] = []
     nCounter = [lineNumInc]
@@ -171,11 +159,6 @@ def generateGcode(
     for hLine in _buildProgramHeader(clData, postCfg):
         emit(hLine)
 
-    steps = sorted(
-        clData.get("steps", []),
-        key=lambda s: int(s.get("stepId", 0)),
-    )
-
     for step in steps:
         stepId = int(step.get("stepId", 0))
         stepType = str(step.get("stepType", "unknown"))
@@ -186,10 +169,7 @@ def generateGcode(
         }
 
         ptsBySegment: Dict[int, List[Dict[str, Any]]] = {}
-        for pt in sorted(
-                step.get("clPoints", []),
-                key=lambda p: int(p.get("pointId", 0)),
-        ):
+        for pt in sorted(step.get("clPoints", []), key=lambda p: int(p.get("pointId", 0))):
             sid = int(pt.get("segmentId", 0))
             ptsBySegment.setdefault(sid, []).append(pt)
 
@@ -197,9 +177,22 @@ def generateGcode(
             segAxis = segMap.get(sid, {}).get("toolAxis", [0.0, 0.0, 1.0])
             emit(f"(SEGMENT {sid})")
 
+            if not ptsBySegment[sid]:
+                continue
+
+            firstPt = ptsBySegment[sid][0]
+            firstPos = firstPt.get("position", [0.0, 0.0, 0.0])
+            firstAxis = firstPt.get("toolAxis") or segAxis
+            aDegFirst, bDegFirst = computeRotaryAngles(firstAxis, kinematics)
+
+            emit(f"G90 G0 Z{_fv(clearanceZ, coordDec)}")
+            emit(f"G0 {aName}{_fv(aDegFirst, angleDec)} {bName}{_fv(bDegFirst, angleDec)}")
+            emit(f"G0 X{_fv(float(firstPos[0]), coordDec)} Y{_fv(float(firstPos[1]), coordDec)}")
+            emit(f"G0 Z{_fv(float(firstPos[2]) + safeHeight, coordDec)}")
+
             prevF: Optional[float] = None
-            prevA: Optional[float] = None
-            prevB: Optional[float] = None
+            prevA: Optional[float] = aDegFirst
+            prevB: Optional[float] = bDegFirst
 
             for pt in ptsBySegment[sid]:
                 pos = pt.get("position", [0.0, 0.0, 0.0])
@@ -216,10 +209,10 @@ def generateGcode(
                 parts.append(f"Y{_fv(y, coordDec)}")
                 parts.append(f"Z{_fv(z, coordDec)}")
 
-                if prevA is None or abs(aDeg - prevA) > 1e-4:
+                if abs(aDeg - prevA) > 1e-4:
                     parts.append(f"{aName}{_fv(aDeg, angleDec)}")
                     prevA = aDeg
-                if prevB is None or abs(bDeg - prevB) > 1e-4:
+                if abs(bDeg - prevB) > 1e-4:
                     parts.append(f"{bName}{_fv(bDeg, angleDec)}")
                     prevB = bDeg
 
@@ -229,11 +222,10 @@ def generateGcode(
 
                 emit(" ".join(parts))
 
-    for fLine in _buildProgramFooter(postCfg):
+    for fLine in _buildProgramFooter(postCfg, clearanceZ, coordDec):
         emit(fLine)
 
     return allLines
-
 
 def writeGcodeFile(gcodeLines: List[str], outputPath: str) -> None:
     Path(outputPath).parent.mkdir(parents=True, exist_ok=True)
@@ -242,36 +234,26 @@ def writeGcodeFile(gcodeLines: List[str], outputPath: str) -> None:
         if gcodeLines:
             f.write("\n")
 
-
-def generateGcodeFromClJson(
-        inputJsonPath: str,
-        processConfig: Dict[str, Any],
-        outputGcodePath: str,
-) -> None:
+def generateGcodeFromClJson(inputJsonPath: str, processConfig: Dict[str, Any], outputGcodePath: str) -> None:
     clData = loadClJson(inputJsonPath)
     postCfg = loadPostConfig(processConfig)
     gcodeLines = generateGcode(clData, postCfg)
     writeGcodeFile(gcodeLines, outputGcodePath)
 
-
 def generateCncGcodeInterface(partStl: str, moldStl: str, gateStl: str, riserStl: str, outputGcodePath: str, processConfig: Dict[str, Any], visualize: bool = False) -> Dict[str, Any]:
+    import os
+    import tempfile
     tempJsonPath = os.path.join(tempfile.gettempdir(), "tempCncCl.json")
     clData = generateCncJobInterface(partStl, moldStl, gateStl, riserStl, tempJsonPath, processConfig, visualize=visualize)
     generateGcodeFromClJson(tempJsonPath, processConfig, outputGcodePath)
     return clData
 
-
 if __name__ == '__main__':
-    rootDir = Path(__file__).resolve().parent.parent
-    tempCncDir = rootDir / "tempCncFiles"
-
+    tempCncDir = Path(__file__).resolve().parent.parent / "tempCncFiles"
     if not tempCncDir.exists():
         tempCncDir.mkdir(parents=True, exist_ok=True)
-        print(f"Created directory {tempCncDir}, please run cnc/pathDesigner.py first to generate cncToolpath.json")
-
     inputJson = str(tempCncDir / "cncToolpath.json")
     outputGcode = str(tempCncDir / "cnc.gcode")
-
     testConfig = {
         "subtractive": {
             "toolDiameter": 6.0,
@@ -286,14 +268,5 @@ if __name__ == '__main__':
             "angleThreshold": 1.047
         }
     }
-
     if Path(inputJson).exists():
-        print(f"Found {inputJson}, generating G-code...")
-        generateGcodeFromClJson(
-            inputJsonPath=inputJson,
-            processConfig=testConfig,
-            outputGcodePath=outputGcode
-        )
-        print(f"G-code successfully generated: {outputGcode}")
-    else:
-        print(f"Input file not found: {inputJson}. Please run cnc/pathDesigner.py first.")
+        generateGcodeFromClJson(inputJsonPath=inputJson, processConfig=testConfig, outputGcodePath=outputGcode)

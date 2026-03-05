@@ -2,13 +2,14 @@ import json
 import os
 import tempfile
 from datetime import timedelta
+import trimesh
 from PyQt5.QtCore import QObject, QTimer
 from gui.workerThread import WorkerThread
 from controlConfig import ConfigManager
 from fdmExecutor import generateGcodeInterface
 from cnc.gcodeProcessor import generateCncGcodeInterface
 from geometryAdapters import exportMeshToStl
-from cnc.pathDesigner import PathVisualizer, FiveAxisCncPathGenerator
+from cnc.pathDesigner import FiveAxisCncPathGenerator
 
 
 class MainController(QObject):
@@ -156,16 +157,20 @@ class MainController(QObject):
         gcodePath = result.get("result") if "result" in result else result.get("gcodePath", "")
         self.mainWindow.showMessage("成功", f"G代码已生成:\n{gcodePath}" if gcodePath else "生成完成")
 
+    def _createEmptyStl(self, path: str):
+        mesh = trimesh.Trimesh()
+        mesh.export(path)
+
     def handleGenerateCnc(self, outputPath, visualize):
         partStlToUse = self.partStlPath
         moldStlToUse = self.moldStlPath
 
-        if not partStlToUse and self.moldController.currentCastingMesh is not None:
+        if not partStlToUse and getattr(self.moldController, 'currentCastingMesh', None) is not None:
             tempPartPath = os.path.join(tempfile.gettempdir(), "tempPart.stl")
             exportMeshToStl(self.moldController.currentCastingMesh, tempPartPath)
             partStlToUse = tempPartPath
 
-        if not moldStlToUse and self.moldController.currentMoldShell is not None:
+        if not moldStlToUse and getattr(self.moldController, 'currentMoldShell', None) is not None:
             tempMoldPath = os.path.join(tempfile.gettempdir(), "tempMoldCnc.stl")
             exportMeshToStl(self.moldController.currentMoldShell, tempMoldPath)
             moldStlToUse = tempMoldPath
@@ -175,6 +180,26 @@ class MainController(QObject):
             self.mainWindow.setCncButtonEnabled(True)
             return
 
+        gatePathToUse = self.gateStlPath
+        if not gatePathToUse and getattr(self.moldController, 'currentGateMesh', None) is not None:
+            tempGatePath = os.path.join(tempfile.gettempdir(), "tempGate.stl")
+            exportMeshToStl(self.moldController.currentGateMesh, tempGatePath)
+            gatePathToUse = tempGatePath
+
+        riserPathToUse = self.riserStlPath
+        if not riserPathToUse and getattr(self.moldController, 'currentRiserMesh', None) is not None:
+            tempRiserPath = os.path.join(tempfile.gettempdir(), "tempRiser.stl")
+            exportMeshToStl(self.moldController.currentRiserMesh, tempRiserPath)
+            riserPathToUse = tempRiserPath
+
+        if not gatePathToUse:
+            gatePathToUse = os.path.join(tempfile.gettempdir(), "emptyGate.stl")
+            self._createEmptyStl(gatePathToUse)
+
+        if not riserPathToUse:
+            riserPathToUse = os.path.join(tempfile.gettempdir(), "emptyRiser.stl")
+            self._createEmptyStl(riserPathToUse)
+
         config = self.parameterPanel.getConfiguration()
         self.mainWindow.setStatusText("正在计算CNC G代码...")
 
@@ -182,8 +207,6 @@ class MainController(QObject):
         self._currentPartStlPath = partStlToUse
 
         def taskCallable():
-            gatePathToUse = self.gateStlPath if self.gateStlPath else partStlToUse
-            riserPathToUse = self.riserStlPath if self.riserStlPath else partStlToUse
             return generateCncGcodeInterface(
                 partStl=partStlToUse,
                 moldStl=moldStlToUse,
@@ -206,12 +229,14 @@ class MainController(QObject):
 
         if getattr(self, '_currentVisualizeFlag', False):
             try:
+                from cnc.pathDesigner import FiveAxisCncPathGenerator
+                from gui.pathVisualizerDialog import PathVisualizationDialog
                 generator = FiveAxisCncPathGenerator()
                 mesh = generator.loadMesh(self._currentPartStlPath)
-                visualizer = PathVisualizer()
-                visualizer.visualize(mesh, result)
+                self.vizDialog = PathVisualizationDialog(mesh, result, self.mainWindow)
+                self.vizDialog.show()
             except Exception as e:
-                self.mainWindow.showMessage("可视化错误", f"启动VTK可视化窗口失败: {str(e)}", isError=True)
+                self.mainWindow.showMessage("可视化错误", f"启动PyVista可视化窗口失败: {str(e)}", isError=True)
 
     def _onGenerateError(self, title, errorMsg, btnType):
         if btnType == "Gcode":

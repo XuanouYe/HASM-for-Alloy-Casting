@@ -204,7 +204,6 @@ class MainWindow(QMainWindow):
             self.toggleRightPanelButton.setText("▶")
             self.rightPanelCollapsed = True
 
-    # --- 提供给外部 Controller 更新状态的方法 ---
     def setGcodeButtonEnabled(self, enabled: bool):
         self.generateGcodeButton.setEnabled(enabled)
 
