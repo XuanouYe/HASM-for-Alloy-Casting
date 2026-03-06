@@ -229,56 +229,6 @@ class CuraEngineController:
         with open(filePath, 'w') as f:
             f.writelines(processedLines)
 
-    def updateGcodeBoundingBox(self, filePath: str) -> None:
-        minX = float('inf')
-        minY = float('inf')
-        minZ = float('inf')
-        maxX = float('-inf')
-        maxY = float('-inf')
-        maxZ = float('-inf')
-        with open(filePath, 'r') as f:
-            lines = f.readlines()
-        for line in lines:
-            if line.startswith(('G0', 'G1', 'G2', 'G3')):
-                parts = line.split(';')[0].split()
-                for part in parts[1:]:
-                    if part.startswith('X'):
-                        val = float(part[1:])
-                        if val < minX: minX = val
-                        if val > maxX: maxX = val
-                    elif part.startswith('Y'):
-                        val = float(part[1:])
-                        if val < minY: minY = val
-                        if val > maxY: maxY = val
-                    elif part.startswith('Z'):
-                        val = float(part[1:])
-                        if val < minZ: minZ = val
-                        if val > maxZ: maxZ = val
-        if minX == float('inf'): minX = 0.0
-        if minY == float('inf'): minY = 0.0
-        if minZ == float('inf'): minZ = 0.0
-        if maxX == float('-inf'): maxX = 0.0
-        if maxY == float('-inf'): maxY = 0.0
-        if maxZ == float('-inf'): maxZ = 0.0
-        for i in range(len(lines)):
-            if lines[i].startswith(';MINX:'):
-                lines[i] = f';MINX:{minX:.3f}\n'
-            elif lines[i].startswith(';MINY:'):
-                lines[i] = f';MINY:{minY:.3f}\n'
-            elif lines[i].startswith(';MINZ:'):
-                lines[i] = f';MINZ:{minZ:.3f}\n'
-            elif lines[i].startswith(';MAXX:'):
-                lines[i] = f';MAXX:{maxX:.3f}\n'
-            elif lines[i].startswith(';MAXY:'):
-                lines[i] = f';MAXY:{maxY:.3f}\n'
-            elif lines[i].startswith(';MAXZ:'):
-                lines[i] = f';MAXZ:{maxZ:.3f}\n'
-            elif lines[i].startswith(';TARGET_MACHINE.NAME'):
-                break
-        with open(filePath, 'w') as f:
-            f.writelines(lines)
-
-
     def generateGcode(self, stlPath: str, outputPath: str, settings: Optional[Dict[str, str]] = None,
                       definitionFiles: Optional[List[str]] = None, autoDropToBuildPlate: bool = True,
                       autoCenterXY: bool = True, axisLimits: Optional[Dict[str, Tuple[float, float]]] = None,
@@ -319,7 +269,6 @@ class CuraEngineController:
             retractSpeed = float(additiveConfig.get("retractionSpeed", 35.0))
             self.applyRetractionCompensation(windowsOutputPath, bufferLen, retractDist, reloadSpeed, retractSpeed)
         self.replaceExtruderAxis(windowsOutputPath)
-        self.updateGcodeBoundingBox(windowsOutputPath)
         return windowsOutputPath
 
 def generateGcodeInterface(stlPath: str, outputPath: str, processConfig: Dict[str, Any], axisLimits: Optional[Dict[str, Tuple[float, float]]] = None) -> Dict[str, str]:
