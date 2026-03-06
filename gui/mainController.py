@@ -4,12 +4,15 @@ import tempfile
 from datetime import timedelta
 import trimesh
 from PyQt5.QtCore import QObject, QTimer
-from gui.workerThread import WorkerThread
-from controlConfig import ConfigManager
-from fdmExecutor import generateGcodeInterface
+
+from .workerThread import WorkerThread
+
 from cnc.gcodeProcessor import generateCncGcodeInterface
-from geometryAdapters import exportMeshToStl
 from cnc.pathDesigner import FiveAxisCncPathGenerator
+
+from fdmExecutor import generateGcodeInterface
+from controlConfig import ConfigManager
+from geometryAdapters import exportMeshToStl
 
 
 class MainController(QObject):
