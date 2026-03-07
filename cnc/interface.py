@@ -1,7 +1,6 @@
 from pathlib import Path
 from typing import Any, Dict
-import trimesh
-from .geometryUtils import generateHemisphereAxes
+from .geometryUtils import concatenateMeshes, generateHemisphereAxes
 from .pathGenerator import FiveAxisCncPathGenerator
 from .visualization import PathVisualizer
 
@@ -15,59 +14,81 @@ def generateCncJobInterface(partStl: str, moldStl: str, gateStl: str, riserStl: 
         'safetyMargin': float(subtractiveConfig.get('toolSafetyMargin', 0.5))
     }
     feedrate = float(subtractiveConfig.get('feedRate', 500.0))
-    stepOver = float(subtractiveConfig.get('stepOver', 1.5))
+    stepOver = float(subtractiveConfig.get('stepOver', 1.0))
     layerStep = float(subtractiveConfig.get('layerStepDown', 1.0))
     safeHeight = float(subtractiveConfig.get('safeHeight', 5.0))
-    waterlineStep = float(subtractiveConfig.get('waterlineStepDown', 0.5))
     angleThreshold = float(subtractiveConfig.get('angleThreshold', 1.047))
     axisMode = str(subtractiveConfig.get('axisMode', 'hemisphere'))
     axisCount = int(subtractiveConfig.get('axisCount', 18))
-    candidateAxes = generateHemisphereAxes(axisCount, float(subtractiveConfig.get('minAxisZ', 0.02))) if axisMode == 'hemisphere' else subtractiveConfig.get('candidateAxes', [[0.0, 0.0, 1.0]])
+    minAxisZ = float(subtractiveConfig.get('minAxisZ', 0.02))
+    candidateAxes = generateHemisphereAxes(axisCount, minAxisZ) if axisMode == 'hemisphere' else subtractiveConfig.get('candidateAxes', [[0.0, 0.0, 1.0]])
+
     stepParams = [
         {
             'mode': 'zLevelRoughing',
-            'stepOver': stepOver,
-            'layerStep': layerStep,
+            'stepOver': float(subtractiveConfig.get('shellStepOver', stepOver)),
+            'layerStep': float(subtractiveConfig.get('shellLayerStepDown', layerStep)),
             'safeHeight': safeHeight,
-            'feedrate': feedrate,
-            'projectionStep': float(subtractiveConfig.get('projectionStep', 0.5))
+            'feedrate': float(subtractiveConfig.get('shellFeedRate', feedrate)),
+            'enablePathLinking': True
         },
         {
-            'mode': 'waterline',
-            'sampling': stepOver,
-            'layerStep': waterlineStep,
+            'mode': str(subtractiveConfig.get('riserMode', 'dropRaster')),
+            'stepOver': float(subtractiveConfig.get('riserStepOver', max(stepOver * 0.8, 0.8))),
             'safeHeight': safeHeight,
-            'feedrate': feedrate
+            'feedrate': float(subtractiveConfig.get('riserFeedRate', feedrate)),
+            'angleThreshold': angleThreshold,
+            'enablePathLinking': True
+        },
+        {
+            'mode': 'surfaceFinishing',
+            'stepOver': float(subtractiveConfig.get('finishStepOver', max(stepOver * 0.55, 0.6))),
+            'projectionStep': float(subtractiveConfig.get('finishProjectionStep', 0.35)),
+            'safeHeight': safeHeight,
+            'feedrate': float(subtractiveConfig.get('finishFeedRate', feedrate * 0.85)),
+            'scanAxis': str(subtractiveConfig.get('finishScanAxis', 'x')),
+            'finishNormalAngleDeg': float(subtractiveConfig.get('finishNormalAngleDeg', 82.0)),
+            'collisionSampleCount': int(subtractiveConfig.get('finishCollisionSampleCount', 18000)),
+            'keepOutSampleCount': int(subtractiveConfig.get('finishKeepOutSampleCount', 6000)),
+            'collisionClearance': float(subtractiveConfig.get('finishCollisionClearance', 0.18)),
+            'contactPatchRadius': float(subtractiveConfig.get('finishContactPatchRadius', 1.2)),
+            'lineGapTolerance': float(subtractiveConfig.get('finishLineGapTolerance', 1.0)),
+            'finishStock': float(subtractiveConfig.get('finishStock', 0.03)),
+            'enablePathLinking': False
         },
         {
             'mode': 'dropRaster',
-            'stepOver': stepOver,
+            'stepOver': float(subtractiveConfig.get('gateStepOver', stepOver)),
             'safeHeight': safeHeight,
-            'feedrate': feedrate,
-            'angleThreshold': angleThreshold
+            'feedrate': float(subtractiveConfig.get('gateFeedRate', feedrate)),
+            'angleThreshold': angleThreshold,
+            'enablePathLinking': True
         }
     ]
+
     axisStrategyParams = {
         'candidateAxes': candidateAxes,
-        'shellBaseAxisCount': int(subtractiveConfig.get('shellBaseAxisCount', max(axisCount * 3, 48))),
-        'shellLocalAxisCount': int(subtractiveConfig.get('shellLocalAxisCount', 16)),
-        'shellMaxAxes': int(subtractiveConfig.get('shellMaxAxes', 12)),
-        'shellCoverageTarget': float(subtractiveConfig.get('shellCoverageTarget', 0.985)),
-        'shellCoverageSamples': int(subtractiveConfig.get('shellCoverageSamples', 8000)),
-        'shellAccessAngleDeg': float(subtractiveConfig.get('shellAccessAngleDeg', 72.0)),
-        'shellMinAxisZ': float(subtractiveConfig.get('shellMinAxisZ', 0.02)),
-        'shellMinAxisScore': float(subtractiveConfig.get('shellMinAxisScore', 20.0)),
-        'shellCoverageStrict': bool(subtractiveConfig.get('shellCoverageStrict', True))
+        'step3AxisCount': int(subtractiveConfig.get('step3AxisCount', min(4, axisCount))),
+        'step3AxisSampleCount': int(subtractiveConfig.get('step3AxisSampleCount', 8000)),
+        'step3MinNormalDot': float(subtractiveConfig.get('step3MinNormalDot', 0.2))
     }
-    generator = FiveAxisCncPathGenerator(version='2.0')
+
+    generator = FiveAxisCncPathGenerator(version='2.2')
     clData = generator.generateJob(partStl, moldStl, gateStl, riserStl, toolParams, stepParams, axisStrategyParams, 'WCS_MAIN', jobId)
     generator.exportClJson(clData, outputJsonPath)
+
     if visualize:
         partMesh = generator.loadMesh(partStl)
         gateMesh = generator.loadMesh(gateStl)
         riserMesh = generator.loadMesh(riserStl)
-        stepCollisionMeshes = [trimesh.util.concatenate([partMesh, gateMesh, riserMesh]), gateMesh, partMesh]
-        PathVisualizer().visualize(partMesh, clData, stepCollisionMeshes)
+        displayMesh = concatenateMeshes([partMesh, gateMesh, riserMesh])
+        stepCollisionMeshes = [
+            concatenateMeshes([partMesh, gateMesh, riserMesh]),
+            concatenateMeshes([partMesh, gateMesh]),
+            partMesh,
+            partMesh
+        ]
+        PathVisualizer().visualize(displayMesh, clData, stepCollisionMeshes, {'partFinishing'})
     return clData
 
 
@@ -85,20 +106,34 @@ if __name__ == '__main__':
                     'toolDiameter': 6.0,
                     'toolSafetyMargin': 0.5,
                     'feedRate': 500.0,
-                    'stepOver': 1.5,
+                    'shellFeedRate': 500.0,
+                    'riserFeedRate': 480.0,
+                    'finishFeedRate': 420.0,
+                    'gateFeedRate': 500.0,
+                    'stepOver': 1.2,
+                    'shellStepOver': 1.2,
+                    'riserStepOver': 1.0,
+                    'gateStepOver': 1.2,
+                    'finishStepOver': 0.7,
                     'layerStepDown': 1.0,
+                    'shellLayerStepDown': 1.0,
                     'safeHeight': 5.0,
-                    'waterlineStepDown': 0.5,
                     'axisMode': 'hemisphere',
                     'axisCount': 18,
-                    'angleThreshold': 1.047,
-                    'projectionStep': 0.5,
-                    'shellBaseAxisCount': 48,
-                    'shellLocalAxisCount': 16,
-                    'shellMaxAxes': 12,
-                    'shellCoverageTarget': 0.985,
-                    'shellCoverageSamples': 8000,
-                    'shellCoverageStrict': True
+                    'minAxisZ': 0.02,
+                    'finishProjectionStep': 0.35,
+                    'finishScanAxis': 'x',
+                    'finishNormalAngleDeg': 82.0,
+                    'finishCollisionSampleCount': 18000,
+                    'finishKeepOutSampleCount': 6000,
+                    'finishCollisionClearance': 0.18,
+                    'finishContactPatchRadius': 1.2,
+                    'finishLineGapTolerance': 1.0,
+                    'finishStock': 0.03,
+                    'step3AxisCount': 4,
+                    'step3AxisSampleCount': 8000,
+                    'step3MinNormalDot': 0.2,
+                    'angleThreshold': 1.047
                 }
             },
             jobId='JOB_TEST',

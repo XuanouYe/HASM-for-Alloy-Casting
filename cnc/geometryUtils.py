@@ -1,123 +1,131 @@
+from typing import List, Tuple
 import numpy as np
 import trimesh
-from scipy.spatial import cKDTree
-from typing import List, Tuple
 
 
 def normalizeVector(vec: np.ndarray) -> np.ndarray:
-    normVal = float(np.linalg.norm(vec))
-    if normVal > 0.0:
-        return vec / normVal
+    normValue = float(np.linalg.norm(vec))
+    if normValue > 0.0:
+        return vec / normValue
     return vec
 
 
 def buildRotationFromTo(fromVec: np.ndarray, toVec: np.ndarray) -> np.ndarray:
-    fromVec = normalizeVector(fromVec)
-    toVec = normalizeVector(toVec)
-    crossVec = np.cross(fromVec, toVec)
-    dotVal = float(np.dot(fromVec, toVec))
-    sinVal = float(np.linalg.norm(crossVec))
-    if sinVal == 0.0:
-        if dotVal > 0.0:
+    fromUnit = normalizeVector(np.asarray(fromVec, dtype=float))
+    toUnit = normalizeVector(np.asarray(toVec, dtype=float))
+    crossValue = np.cross(fromUnit, toUnit)
+    dotValue = float(np.dot(fromUnit, toUnit))
+    sinValue = float(np.linalg.norm(crossValue))
+    if sinValue == 0.0:
+        if dotValue > 0.0:
             return np.eye(3)
-        axisVec = np.array([1.0, 0.0, 0.0], dtype=float)
-        if abs(fromVec[0]) > 0.9:
-            axisVec = np.array([0.0, 1.0, 0.0], dtype=float)
-        crossVec = normalizeVector(np.cross(fromVec, axisVec))
+        helperAxis = np.array([1.0, 0.0, 0.0], dtype=float)
+        if abs(fromUnit[0]) > 0.9:
+            helperAxis = np.array([0.0, 1.0, 0.0], dtype=float)
+        axisValue = normalizeVector(np.cross(fromUnit, helperAxis))
         skewMat = np.array([
-            [0.0, -crossVec[2], crossVec[1]],
-            [crossVec[2], 0.0, -crossVec[0]],
-            [-crossVec[1], crossVec[0], 0.0]
+            [0.0, -axisValue[2], axisValue[1]],
+            [axisValue[2], 0.0, -axisValue[0]],
+            [-axisValue[1], axisValue[0], 0.0]
         ], dtype=float)
-        return np.eye(3) + 2.0 * (skewMat @ skewMat)
+        return np.eye(3) + 2.0 * skewMat @ skewMat
     skewMat = np.array([
-        [0.0, -crossVec[2], crossVec[1]],
-        [crossVec[2], 0.0, -crossVec[0]],
-        [-crossVec[1], crossVec[0], 0.0]
+        [0.0, -crossValue[2], crossValue[1]],
+        [crossValue[2], 0.0, -crossValue[0]],
+        [-crossValue[1], crossValue[0], 0.0]
     ], dtype=float)
-    return np.eye(3) + skewMat + (skewMat @ skewMat) * ((1.0 - dotVal) / (sinVal * sinVal))
+    rotMat = np.eye(3) + skewMat + skewMat @ skewMat * ((1.0 - dotValue) / (sinValue * sinValue))
+    return rotMat
 
 
 def applyRotation(points: np.ndarray, rotMat: np.ndarray) -> np.ndarray:
     if len(points) == 0:
-        return points
-    return (rotMat @ points.T).T
+        return np.asarray(points, dtype=float)
+    pointsArray = np.asarray(points, dtype=float)
+    return (rotMat @ pointsArray.T).T
 
 
-def generateHemisphereAxes(numAxes: int, minZ: float = 0.0) -> List[np.ndarray]:
-    axes = []
-    if numAxes <= 1:
-        return [np.array([0.0, 0.0, 1.0], dtype=float)]
-    phiVal = np.pi * (3.0 - np.sqrt(5.0))
+def generateHemisphereAxes(numAxes: int, minAxisZ: float = 0.0) -> List[List[float]]:
+    if numAxes <= 0:
+        return [[0.0, 0.0, 1.0]]
+    axesList = []
+    goldenAngle = np.pi * (3.0 - np.sqrt(5.0))
     for axisIndex in range(numAxes):
-        zVal = 1.0 - (axisIndex / float(numAxes - 1))
-        if zVal < minZ:
+        zValue = 1.0 - axisIndex / float(max(numAxes - 1, 1))
+        if zValue < minAxisZ:
             continue
-        radiusVal = np.sqrt(max(0.0, 1.0 - zVal * zVal))
-        thetaVal = phiVal * axisIndex
-        xVal = np.cos(thetaVal) * radiusVal
-        yVal = np.sin(thetaVal) * radiusVal
-        axes.append(normalizeVector(np.array([xVal, yVal, zVal], dtype=float)))
-    if not axes:
-        axes = [np.array([0.0, 0.0, 1.0], dtype=float)]
-    return axes
+        radiusValue = np.sqrt(max(0.0, 1.0 - zValue * zValue))
+        thetaValue = goldenAngle * axisIndex
+        xValue = np.cos(thetaValue) * radiusValue
+        yValue = np.sin(thetaValue) * radiusValue
+        axesList.append([float(xValue), float(yValue), float(zValue)])
+    if not axesList:
+        axesList.append([0.0, 0.0, 1.0])
+    return axesList
 
 
-def angleBetweenAxesDeg(axisA: np.ndarray, axisB: np.ndarray) -> float:
-    dotVal = float(np.clip(np.dot(normalizeVector(axisA), normalizeVector(axisB)), -1.0, 1.0))
-    return float(np.degrees(np.arccos(dotVal)))
-
-
-def deduplicateAxes(candidateAxes: List[np.ndarray], angleThresholdDeg: float = 12.0) -> List[np.ndarray]:
-    uniqueAxes = []
-    for axisVec in candidateAxes:
-        axisVec = normalizeVector(np.asarray(axisVec, dtype=float))
-        if axisVec[2] < 0.0:
-            continue
-        isDuplicate = False
-        for uniqueAxis in uniqueAxes:
-            if angleBetweenAxesDeg(axisVec, uniqueAxis) < angleThresholdDeg:
-                isDuplicate = True
-                break
-        if not isDuplicate:
-            uniqueAxes.append(axisVec)
-    return uniqueAxes
-
-
-def densifyPolyline(pathPoints: np.ndarray, sampleStep: float) -> np.ndarray:
-    if len(pathPoints) < 2:
-        return np.asarray(pathPoints, dtype=float)
-    densePoints = [np.asarray(pathPoints[0], dtype=float)]
-    for pointIndex in range(1, len(pathPoints)):
-        startPoint = np.asarray(pathPoints[pointIndex - 1], dtype=float)
-        endPoint = np.asarray(pathPoints[pointIndex], dtype=float)
-        segLen = float(np.linalg.norm(endPoint - startPoint))
-        if segLen <= sampleStep:
+def densifyPolyline(pathPoints: np.ndarray, maxStep: float) -> np.ndarray:
+    pathArray = np.asarray(pathPoints, dtype=float)
+    if len(pathArray) <= 1 or maxStep <= 0.0:
+        return pathArray
+    densePoints = [pathArray[0]]
+    for pointIndex in range(1, len(pathArray)):
+        startPoint = pathArray[pointIndex - 1]
+        endPoint = pathArray[pointIndex]
+        segVec = endPoint - startPoint
+        segLen = float(np.linalg.norm(segVec))
+        if segLen <= maxStep:
             densePoints.append(endPoint)
             continue
-        sampleCount = int(np.ceil(segLen / sampleStep))
-        tValues = np.linspace(0.0, 1.0, sampleCount + 1)
-        for tVal in tValues[1:]:
-            densePoints.append((1.0 - tVal) * startPoint + tVal * endPoint)
+        splitCount = int(np.ceil(segLen / maxStep))
+        for splitIndex in range(1, splitCount + 1):
+            ratioValue = splitIndex / float(splitCount)
+            densePoints.append(startPoint * (1.0 - ratioValue) + endPoint * ratioValue)
     return np.asarray(densePoints, dtype=float)
 
 
-def sampleMeshSurface(mesh: trimesh.Trimesh, sampleCount: int) -> Tuple[np.ndarray, np.ndarray]:
-    if mesh.is_empty:
-        return np.zeros((0, 3), dtype=float), np.zeros((0, 3), dtype=float)
-    try:
-        points, faceIndices = trimesh.sample.sample_surface(mesh, sampleCount)
-        normals = mesh.face_normals[faceIndices]
-        return np.asarray(points, dtype=float), np.asarray(normals, dtype=float)
-    except Exception:
-        return np.zeros((0, 3), dtype=float), np.zeros((0, 3), dtype=float)
+def splitPolylineByGap(pathPoints: np.ndarray, maxGap: float) -> List[np.ndarray]:
+    pathArray = np.asarray(pathPoints, dtype=float)
+    if len(pathArray) == 0:
+        return []
+    if len(pathArray) == 1:
+        return [pathArray]
+    subPaths = []
+    currentPath = [pathArray[0]]
+    for pointIndex in range(1, len(pathArray)):
+        prevPoint = pathArray[pointIndex - 1]
+        nextPoint = pathArray[pointIndex]
+        if float(np.linalg.norm(nextPoint - prevPoint)) > maxGap:
+            if len(currentPath) >= 2:
+                subPaths.append(np.asarray(currentPath, dtype=float))
+            currentPath = [nextPoint]
+        else:
+            currentPath.append(nextPoint)
+    if len(currentPath) >= 2:
+        subPaths.append(np.asarray(currentPath, dtype=float))
+    return subPaths
 
 
-def nearestDistanceToPath(samplePoints: np.ndarray, pathPoints: np.ndarray) -> np.ndarray:
-    if len(samplePoints) == 0:
-        return np.zeros(0, dtype=float)
-    if len(pathPoints) == 0:
-        return np.full(len(samplePoints), np.inf, dtype=float)
-    tree = cKDTree(pathPoints)
-    distances, _ = tree.query(samplePoints, k=1)
-    return np.asarray(distances, dtype=float)
+def createEmptyMesh() -> trimesh.Trimesh:
+    return trimesh.Trimesh(
+        vertices=np.zeros((0, 3), dtype=float),
+        faces=np.zeros((0, 3), dtype=int),
+        process=False
+    )
+
+
+def concatenateMeshes(meshList: List[trimesh.Trimesh]) -> trimesh.Trimesh:
+    validMeshes = [meshItem for meshItem in meshList if meshItem is not None and not meshItem.is_empty]
+    if not validMeshes:
+        return createEmptyMesh()
+    if len(validMeshes) == 1:
+        return validMeshes[0].copy()
+    return trimesh.util.concatenate(validMeshes)
+
+
+def sampleMeshPointsWithNormals(mesh: trimesh.Trimesh, sampleCount: int) -> Tuple[np.ndarray, np.ndarray]:
+    if mesh is None or mesh.is_empty or sampleCount <= 0:
+        return np.zeros((0, 3), dtype=float), np.zeros((0, 3), dtype=float)
+    samplePoints, faceIndices = trimesh.sample.sample_surface(mesh, sampleCount)
+    sampleNormals = mesh.face_normals[np.asarray(faceIndices, dtype=int)]
+    return np.asarray(samplePoints, dtype=float), np.asarray(sampleNormals, dtype=float)
