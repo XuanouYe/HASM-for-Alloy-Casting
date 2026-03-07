@@ -1,18 +1,15 @@
 from typing import Any, Dict, List, Optional
 import numpy as np
 import trimesh
-from .geometryUtils import deduplicateAxes, densifyPolyline, generateHemisphereAxes, nearestDistanceToPath, normalizeVector, sampleMeshSurface
-
+from .geometryUtils import deduplicateAxes, densifyPolyline, generateHemisphereAxes, nearestDistanceToPath, normalizeVector, sampleMeshPointsWithNormals
 
 class ShellCoveragePlanner:
-    def __init__(self, shellMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh, toolRadius: float,
-                 safetyMargin: float, sampleCount: int = 8000, accessAngleDeg: float = 72.0,
-                 minAxisZ: float = 0.02):
+    def __init__(self, shellMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh, toolRadius: float, safetyMargin: float, sampleCount: int = 8000, accessAngleDeg: float = 72.0, minAxisZ: float = 0.02):
         self.shellMesh = shellMesh
         self.keepOutMesh = keepOutMesh
         self.toolRadius = float(toolRadius)
         self.safetyMargin = float(safetyMargin)
-        self.samplePoints, self.sampleNormals = sampleMeshSurface(shellMesh, sampleCount)
+        self.samplePoints, self.sampleNormals = sampleMeshPointsWithNormals(shellMesh, sampleCount)
         self.coveredMask = np.zeros(len(self.samplePoints), dtype=bool)
         self.accessCos = float(np.cos(np.radians(accessAngleDeg)))
         self.minAxisZ = float(minAxisZ)
@@ -45,7 +42,7 @@ class ShellCoveragePlanner:
             axisVec = normalizeVector(np.asarray(uncoveredNormals[orderIndex], dtype=float))
             if axisVec[2] < self.minAxisZ:
                 axisVec[2] = self.minAxisZ
-                axisVec = normalizeVector(axisVec)
+            axisVec = normalizeVector(axisVec)
             candidateAxes.append(axisVec)
             if len(candidateAxes) >= localAxisCount:
                 break
@@ -55,7 +52,7 @@ class ShellCoveragePlanner:
                 axisVec = normalizeVector(np.asarray(uncoveredNormals[pointIndex], dtype=float))
                 if axisVec[2] < self.minAxisZ:
                     axisVec[2] = self.minAxisZ
-                    axisVec = normalizeVector(axisVec)
+                axisVec = normalizeVector(axisVec)
                 candidateAxes.append(axisVec)
         return deduplicateAxes(candidateAxes, 10.0)
 
@@ -82,10 +79,7 @@ class ShellCoveragePlanner:
         candidatePoints = self.samplePoints[candidateIndices]
         rayOrigins = candidatePoints + toolAxis * self.rayOffset
         rayDirections = np.tile(-toolAxis, (len(candidatePoints), 1))
-        try:
-            locations, rayIndices, _ = self.combinedMesh.ray.intersects_location(ray_origins=rayOrigins, ray_directions=rayDirections)
-        except Exception:
-            return {'axis': toolAxis, 'score': 0.0, 'indices': np.zeros(0, dtype=int)}
+        locations, rayIndices, _ = self.combinedMesh.ray.intersects_location(ray_origins=rayOrigins, ray_directions=rayDirections)
         if len(locations) == 0:
             return {'axis': toolAxis, 'score': 0.0, 'indices': np.zeros(0, dtype=int)}
         accessibleIndices = []

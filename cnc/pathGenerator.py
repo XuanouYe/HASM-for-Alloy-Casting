@@ -7,6 +7,7 @@ from scipy.spatial.distance import cdist
 from .geometryUtils import applyRotation, buildRotationFromTo, concatenateMeshes, normalizeVector, \
     sampleMeshPointsWithNormals
 from .toolpathStrategies import ToolpathStrategyFactory
+from .coveragePlanner import ShellCoveragePlanner
 
 
 class PointCloudIpw:
@@ -141,84 +142,24 @@ class FiveAxisCncPathGenerator:
             for pointIndex, pointValue in enumerate(np.asarray(positions, dtype=float))
         ]
 
-    def selectAxesGreedyCoverage(self, targetMesh: trimesh.Trimesh, candidateAxes: List[np.ndarray],
-                                 axisStrategyParams: Dict[str, Any]) -> List[np.ndarray]:
-        if not candidateAxes:
-            return [np.array([0.0, 0.0, 1.0], dtype=float)]
-
-        sampleCount = int(axisStrategyParams.get('step3AxisSampleCount', 8000))
-        maxAxisCount = int(axisStrategyParams.get('step3AxisCount', min(6, len(candidateAxes))))
-        minNormalDot = float(axisStrategyParams.get('step3MinNormalDot', 0.15))
-        targetCoverage = float(axisStrategyParams.get('step3TargetCoverage', 0.95))
-
-        samplePoints, sampleNormals = sampleMeshPointsWithNormals(targetMesh, sampleCount)
-        if len(sampleNormals) == 0:
-            return candidateAxes[:maxAxisCount]
-
-        axisCoverages = []
-        for i, axisItem in enumerate(candidateAxes):
-            axisUnit = normalizeVector(np.asarray(axisItem, dtype=float))
-            dotValues = sampleNormals @ axisUnit
-            coveredIndices = set(np.where(dotValues >= minNormalDot)[0])
-            axisCoverages.append({
-                'axis': axisUnit,
-                'covered_set': coveredIndices,
-                'original_index': i
-            })
-
-        selectedAxes = []
-        universeCovered = set()
-        totalPoints = len(samplePoints)
-
-        while len(selectedAxes) < maxAxisCount:
-            bestAxis = None
-            bestNewCoverage = 0
-            bestSet = set()
-
-            for ac in axisCoverages:
-                newCoverageSet = ac['covered_set'] - universeCovered
-                newCoverageCount = len(newCoverageSet)
-                if newCoverageCount > bestNewCoverage:
-                    bestNewCoverage = newCoverageCount
-                    bestAxis = ac['axis']
-                    bestSet = newCoverageSet
-
-            if bestNewCoverage == 0:
-                break
-
-            selectedAxes.append(bestAxis)
-            universeCovered |= bestSet
-
-            currentCoverageRatio = len(universeCovered) / totalPoints
-            if currentCoverageRatio >= targetCoverage:
-                break
-
-        if not selectedAxes:
-            selectedAxes = [normalizeVector(np.asarray(candidateAxes[0], dtype=float))]
-
-        return selectedAxes
-
     def generateStepWithAxes(self, stepId: int, stepType: str, targetMesh: trimesh.Trimesh,
-                             keepOutMesh: trimesh.Trimesh,
-                             toolParams: Dict[str, Any], stepParam: Dict[str, Any], candidateAxes: List[np.ndarray],
-                             globalMinZ: float, safetyMargin: float) -> Dict[str, Any]:
+                             keepOutMesh: trimesh.Trimesh, toolParams: Dict[str, Any], stepParam: Dict[str, Any],
+                             candidateAxes: List[np.ndarray], globalMinZ: float, safetyMargin: float,
+                             startSegmentId: int = 0, startPointId: int = 0) -> Dict[str, Any]:
         modeValue = str(stepParam.get('mode', 'dropRaster'))
         feedrate = float(stepParam.get('feedrate', 500.0))
         toolRadius = float(toolParams.get('diameter', 6.0)) * 0.5
         platformSafeZ = float(globalMinZ + toolRadius + safetyMargin)
         stepOver = float(stepParam.get('stepOver', 1.0))
         enablePathLinking = bool(stepParam.get('enablePathLinking', True))
-
         isFinishing = (modeValue.lower() in {'surfacefinishing', 'spf'})
-
         strategy = ToolpathStrategyFactory.getStrategy(modeValue)
         useIpw = modeValue.lower() in {'zlevelroughing', 'zlr', 'dropraster'}
         ipwData = PointCloudIpw(targetMesh, int(stepParam.get('ipwSampleCount', 50000))) if useIpw else None
-
         segments = []
         allClPoints = []
-        pointId = 0
-        outputSegmentId = 0
+        pointId = startPointId
+        outputSegmentId = startSegmentId
 
         for toolAxis in candidateAxes:
             axisUnit = normalizeVector(np.asarray(toolAxis, dtype=float))
@@ -227,7 +168,6 @@ class FiveAxisCncPathGenerator:
             rotatedTarget = self.rotateMesh(targetMesh, rotToToolFrame)
             rotatedKeepOut = self.rotateMesh(keepOutMesh, rotToToolFrame)
             localSafeZ = float(rotatedTarget.bounds[1, 2] + float(stepParam.get('safeHeight', 5.0)))
-
             rawPathsLocal = strategy.generate(rotatedTarget, rotatedKeepOut, toolRadius, stepParam, safetyMargin)
             validPathsLocal = []
 
@@ -281,9 +221,8 @@ class FiveAxisCncPathGenerator:
             'clPoints': allClPoints
         }
 
-    def generateJob(self, partStl: str, moldStl: str, gateStl: str, riserStl: str,
-                    toolParams: Dict[str, Any], stepParams: List[Dict[str, Any]],
-                    axisStrategyParams: Dict[str, Any], wcsId: str = 'WCS_MAIN',
+    def generateJob(self, partStl: str, moldStl: str, gateStl: str, riserStl: str, toolParams: Dict[str, Any],
+                    stepParams: List[Dict[str, Any]], axisStrategyParams: Dict[str, Any], wcsId: str = 'WCS_MAIN',
                     jobId: Optional[str] = None) -> Dict[str, Any]:
         partMesh = self.loadMesh(partStl)
         moldMesh = self.loadMesh(moldStl)
@@ -296,47 +235,77 @@ class FiveAxisCncPathGenerator:
         safetyMargin = float(toolParams.get('safetyMargin', 0.5))
 
         keepOutMeshStep1 = concatenateMeshes([partMesh, gateMesh, riserMesh])
-        step1 = self.generateStepWithAxes(
-            1, 'shellRemoval', moldMesh, keepOutMeshStep1,
-            toolParams, stepParams[0], candidateAxes, globalMinZ, safetyMargin
-        )
+        step1Params = stepParams[0].copy()
+        step1Params['roughStock'] = float(axisStrategyParams.get('shellRoughStock', 1.0))
+        step1 = self.generateStepWithAxes(1, 'shellRemoval', moldMesh, keepOutMeshStep1, toolParams, step1Params,
+                                          candidateAxes, globalMinZ, safetyMargin)
 
         riserAxes = [np.array([0.0, 0.0, 1.0], dtype=float)]
         keepOutMeshStep2 = concatenateMeshes([partMesh, gateMesh])
-        step2 = self.generateStepWithAxes(
-            2, 'riserRemoval', riserMesh, keepOutMeshStep2,
-            toolParams, stepParams[1], riserAxes, globalMinZ, safetyMargin
-        )
+        step2 = self.generateStepWithAxes(2, 'riserRemoval', riserMesh, keepOutMeshStep2, toolParams, stepParams[1],
+                                          riserAxes, globalMinZ, safetyMargin)
 
         keepOutMeshStep3 = gateMesh
-        step3Axes = self.selectAxesGreedyCoverage(partMesh, candidateAxes, axisStrategyParams)
+        coveragePlanner = ShellCoveragePlanner(partMesh, keepOutMeshStep3, float(toolParams.get('diameter', 6.0)) * 0.5,
+                                               safetyMargin, int(axisStrategyParams.get('step3AxisSampleCount', 12000)),
+                                               float(axisStrategyParams.get('finishNormalAngleDeg', 72.0)),
+                                               float(axisStrategyParams.get('minAxisZ', 0.02)))
+        targetCoverage = float(axisStrategyParams.get('step3TargetCoverage', 0.95))
+        maxAxes = int(axisStrategyParams.get('step3AxisCount', 12))
+        baseAxisCount = int(axisStrategyParams.get('axisCount', 48))
 
-        step3ConfigX = stepParams[2].copy()
-        step3ConfigX['scanAxis'] = 'x'
-        step3X = self.generateStepWithAxes(
-            3, 'partFinishing_X', partMesh, keepOutMeshStep3,
-            toolParams, step3ConfigX, step3Axes, globalMinZ, safetyMargin
-        )
+        step3Segments = []
+        step3ClPoints = []
+        existingAxes = []
+        currentSegId = 0
+        currentPtId = 0
 
-        step3ConfigY = stepParams[2].copy()
-        step3ConfigY['scanAxis'] = 'y'
-        step3Y = self.generateStepWithAxes(
-            3, 'partFinishing_Y', partMesh, keepOutMeshStep3,
-            toolParams, step3ConfigY, step3Axes, globalMinZ, safetyMargin
-        )
+        for _ in range(maxAxes):
+            if coveragePlanner.getCoverageRatio() >= targetCoverage:
+                break
+            bestAxes = coveragePlanner.suggestAxes(baseAxisCount, 12, existingAxes, 1)
+            if not bestAxes:
+                break
+            chosenAxis = bestAxes[0]['axis']
+            existingAxes.append(chosenAxis)
+
+            step3ConfigX = stepParams[2].copy()
+            step3ConfigX['scanAxis'] = 'x'
+            step3X = self.generateStepWithAxes(3, 'partFinishing_X', partMesh, keepOutMeshStep3, toolParams,
+                                               step3ConfigX, [chosenAxis], globalMinZ, safetyMargin, currentSegId,
+                                               currentPtId)
+            currentSegId += len(step3X['segments'])
+            currentPtId += len(step3X['clPoints'])
+
+            step3ConfigY = stepParams[2].copy()
+            step3ConfigY['scanAxis'] = 'y'
+            step3Y = self.generateStepWithAxes(3, 'partFinishing_Y', partMesh, keepOutMeshStep3, toolParams,
+                                               step3ConfigY, [chosenAxis], globalMinZ, safetyMargin, currentSegId,
+                                               currentPtId)
+            currentSegId += len(step3Y['segments'])
+            currentPtId += len(step3Y['clPoints'])
+
+            ptsX = [pt['position'] for pt in step3X['clPoints']]
+            ptsY = [pt['position'] for pt in step3Y['clPoints']]
+            allPts = np.array(ptsX + ptsY, dtype=float) if ptsX or ptsY else np.array([])
+            if len(allPts) > 0:
+                coveragePlanner.updateCoverageByPath(chosenAxis, allPts)
+
+            step3Segments.extend(step3X['segments'])
+            step3Segments.extend(step3Y['segments'])
+            step3ClPoints.extend(step3X['clPoints'])
+            step3ClPoints.extend(step3Y['clPoints'])
 
         step3 = {
             'stepId': 3,
             'stepType': 'partFinishing',
-            'toolParams': step3X['toolParams'],
-            'segments': step3X['segments'] + step3Y['segments'],
-            'clPoints': step3X['clPoints'] + step3Y['clPoints']
+            'toolParams': toolParams,
+            'segments': step3Segments,
+            'clPoints': step3ClPoints
         }
 
-        step4 = self.generateStepWithAxes(
-            4, 'gateRemoval', gateMesh, partMesh,
-            toolParams, stepParams[3], [np.array([0.0, 0.0, 1.0], dtype=float)], globalMinZ, safetyMargin
-        )
+        step4 = self.generateStepWithAxes(4, 'gateRemoval', gateMesh, partMesh, toolParams, stepParams[3],
+                                          [np.array([0.0, 0.0, 1.0], dtype=float)], globalMinZ, safetyMargin)
 
         outputData = {
             'version': self.version,

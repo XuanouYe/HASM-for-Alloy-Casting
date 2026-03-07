@@ -1,14 +1,13 @@
-from typing import List, Tuple
+from typing import Any, List, Tuple
 import numpy as np
 import trimesh
-
+from scipy.spatial import cKDTree
 
 def normalizeVector(vec: np.ndarray) -> np.ndarray:
     normValue = float(np.linalg.norm(vec))
     if normValue > 0.0:
         return vec / normValue
     return vec
-
 
 def buildRotationFromTo(fromVec: np.ndarray, toVec: np.ndarray) -> np.ndarray:
     fromUnit = normalizeVector(np.asarray(fromVec, dtype=float))
@@ -37,13 +36,11 @@ def buildRotationFromTo(fromVec: np.ndarray, toVec: np.ndarray) -> np.ndarray:
     rotMat = np.eye(3) + skewMat + skewMat @ skewMat * ((1.0 - dotValue) / (sinValue * sinValue))
     return rotMat
 
-
 def applyRotation(points: np.ndarray, rotMat: np.ndarray) -> np.ndarray:
     if len(points) == 0:
         return np.asarray(points, dtype=float)
     pointsArray = np.asarray(points, dtype=float)
     return (rotMat @ pointsArray.T).T
-
 
 def generateHemisphereAxes(numAxes: int, minAxisZ: float = 0.0) -> List[List[float]]:
     if numAxes <= 0:
@@ -63,7 +60,6 @@ def generateHemisphereAxes(numAxes: int, minAxisZ: float = 0.0) -> List[List[flo
         axesList.append([0.0, 0.0, 1.0])
     return axesList
 
-
 def densifyPolyline(pathPoints: np.ndarray, maxStep: float) -> np.ndarray:
     pathArray = np.asarray(pathPoints, dtype=float)
     if len(pathArray) <= 1 or maxStep <= 0.0:
@@ -82,7 +78,6 @@ def densifyPolyline(pathPoints: np.ndarray, maxStep: float) -> np.ndarray:
             ratioValue = splitIndex / float(splitCount)
             densePoints.append(startPoint * (1.0 - ratioValue) + endPoint * ratioValue)
     return np.asarray(densePoints, dtype=float)
-
 
 def splitPolylineByGap(pathPoints: np.ndarray, maxGap: float) -> List[np.ndarray]:
     pathArray = np.asarray(pathPoints, dtype=float)
@@ -105,14 +100,12 @@ def splitPolylineByGap(pathPoints: np.ndarray, maxGap: float) -> List[np.ndarray
         subPaths.append(np.asarray(currentPath, dtype=float))
     return subPaths
 
-
 def createEmptyMesh() -> trimesh.Trimesh:
     return trimesh.Trimesh(
         vertices=np.zeros((0, 3), dtype=float),
         faces=np.zeros((0, 3), dtype=int),
         process=False
     )
-
 
 def concatenateMeshes(meshList: List[trimesh.Trimesh]) -> trimesh.Trimesh:
     validMeshes = [meshItem for meshItem in meshList if meshItem is not None and not meshItem.is_empty]
@@ -122,10 +115,30 @@ def concatenateMeshes(meshList: List[trimesh.Trimesh]) -> trimesh.Trimesh:
         return validMeshes[0].copy()
     return trimesh.util.concatenate(validMeshes)
 
-
 def sampleMeshPointsWithNormals(mesh: trimesh.Trimesh, sampleCount: int) -> Tuple[np.ndarray, np.ndarray]:
     if mesh is None or mesh.is_empty or sampleCount <= 0:
         return np.zeros((0, 3), dtype=float), np.zeros((0, 3), dtype=float)
     samplePoints, faceIndices = trimesh.sample.sample_surface(mesh, sampleCount)
     sampleNormals = mesh.face_normals[np.asarray(faceIndices, dtype=int)]
     return np.asarray(samplePoints, dtype=float), np.asarray(sampleNormals, dtype=float)
+
+def deduplicateAxes(axesList: List[Any], angleToleranceDeg: float) -> List[np.ndarray]:
+    uniqueAxes = []
+    cosTol = float(np.cos(np.radians(angleToleranceDeg)))
+    for ax in axesList:
+        axVec = np.asarray(ax, dtype=float)
+        isDup = False
+        for uAx in uniqueAxes:
+            if float(np.dot(axVec, uAx)) > cosTol:
+                isDup = True
+                break
+        if not isDup:
+            uniqueAxes.append(axVec)
+    return uniqueAxes
+
+def nearestDistanceToPath(points: np.ndarray, pathArray: np.ndarray) -> np.ndarray:
+    if len(pathArray) == 0 or len(points) == 0:
+        return np.full(len(points), np.inf, dtype=float)
+    searchTree = cKDTree(pathArray)
+    dists, _ = searchTree.query(points, k=1)
+    return np.asarray(dists, dtype=float)

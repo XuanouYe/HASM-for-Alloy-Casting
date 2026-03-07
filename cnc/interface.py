@@ -4,9 +4,7 @@ from .geometryUtils import concatenateMeshes, generateHemisphereAxes
 from .pathGenerator import FiveAxisCncPathGenerator
 from .visualization import PathVisualizer
 
-
-def generateCncJobInterface(partStl: str, moldStl: str, gateStl: str, riserStl: str, outputJsonPath: str,
-                            processConfig: Dict[str, Any], jobId: str = 'JOB_AUTO', visualize: bool = False) -> Dict[str, Any]:
+def generateCncJobInterface(partStl: str, moldStl: str, gateStl: str, riserStl: str, outputJsonPath: str, processConfig: Dict[str, Any], jobId: str = 'JOB_AUTO', visualize: bool = False) -> Dict[str, Any]:
     subtractiveConfig = processConfig.get('subtractive', {})
     toolParams = {
         'type': 'ball',
@@ -19,10 +17,10 @@ def generateCncJobInterface(partStl: str, moldStl: str, gateStl: str, riserStl: 
     safeHeight = float(subtractiveConfig.get('safeHeight', 5.0))
     angleThreshold = float(subtractiveConfig.get('angleThreshold', 1.047))
     axisMode = str(subtractiveConfig.get('axisMode', 'hemisphere'))
-    axisCount = int(subtractiveConfig.get('axisCount', 24))  # 提升可选刀轴密度
+    axisCount = int(subtractiveConfig.get('axisCount', 48))
     minAxisZ = float(subtractiveConfig.get('minAxisZ', 0.02))
+    shellRoughStock = float(subtractiveConfig.get('shellRoughStock', 1.0))
     candidateAxes = generateHemisphereAxes(axisCount, minAxisZ) if axisMode == 'hemisphere' else subtractiveConfig.get('candidateAxes', [[0.0, 0.0, 1.0]])
-
     stepParams = [
         {
             'mode': 'zLevelRoughing',
@@ -46,8 +44,8 @@ def generateCncJobInterface(partStl: str, moldStl: str, gateStl: str, riserStl: 
             'projectionStep': float(subtractiveConfig.get('finishProjectionStep', 0.35)),
             'safeHeight': safeHeight,
             'feedrate': float(subtractiveConfig.get('finishFeedRate', feedrate * 0.85)),
-            'scanAxis': 'x', # Generator 内会自动派生出 x 和 y 两次扫描
-            'finishNormalAngleDeg': float(subtractiveConfig.get('finishNormalAngleDeg', 88.0)), # 放宽法向限制，容忍更陡峭截面
+            'scanAxis': 'x',
+            'finishNormalAngleDeg': float(subtractiveConfig.get('finishNormalAngleDeg', 88.0)),
             'collisionSampleCount': int(subtractiveConfig.get('finishCollisionSampleCount', 18000)),
             'keepOutSampleCount': int(subtractiveConfig.get('finishKeepOutSampleCount', 6000)),
             'collisionClearance': float(subtractiveConfig.get('finishCollisionClearance', 0.18)),
@@ -65,19 +63,19 @@ def generateCncJobInterface(partStl: str, moldStl: str, gateStl: str, riserStl: 
             'enablePathLinking': True
         }
     ]
-
     axisStrategyParams = {
         'candidateAxes': candidateAxes,
-        'step3AxisCount': int(subtractiveConfig.get('step3AxisCount', min(5, axisCount))),
-        'step3AxisSampleCount': int(subtractiveConfig.get('step3AxisSampleCount', 12000)),
-        'step3MinNormalDot': float(subtractiveConfig.get('step3MinNormalDot', 0.05)), # 极大降低最小法向点积要求，增加覆盖
-        'step3TargetCoverage': float(subtractiveConfig.get('step3TargetCoverage', 0.98)) # 目标覆盖率 98%
+        'step3AxisCount': int(subtractiveConfig.get('step3AxisCount', 12)),
+        'step3AxisSampleCount': int(subtractiveConfig.get('step3AxisSampleCount', 18000)),
+        'step3TargetCoverage': float(subtractiveConfig.get('step3TargetCoverage', 0.95)),
+        'axisCount': axisCount,
+        'minAxisZ': minAxisZ,
+        'finishNormalAngleDeg': float(subtractiveConfig.get('finishNormalAngleDeg', 88.0)),
+        'shellRoughStock': shellRoughStock
     }
-
     generator = FiveAxisCncPathGenerator(version='2.3')
     clData = generator.generateJob(partStl, moldStl, gateStl, riserStl, toolParams, stepParams, axisStrategyParams, 'WCS_MAIN', jobId)
     generator.exportClJson(clData, outputJsonPath)
-
     if visualize:
         partMesh = generator.loadMesh(partStl)
         gateMesh = generator.loadMesh(gateStl)
@@ -89,9 +87,9 @@ def generateCncJobInterface(partStl: str, moldStl: str, gateStl: str, riserStl: 
             partMesh,
             partMesh
         ]
-        PathVisualizer().visualize(displayMesh, clData, stepCollisionMeshes, {'partFinishing'})
+        visualizer = PathVisualizer()
+        visualizer.visualize(displayMesh, clData, stepCollisionMeshes, {'partFinishing'})
     return clData
-
 
 if __name__ == '__main__':
     tempCncDir = Path('../tempCncFiles')
@@ -120,7 +118,7 @@ if __name__ == '__main__':
                     'shellLayerStepDown': 1.0,
                     'safeHeight': 5.0,
                     'axisMode': 'hemisphere',
-                    'axisCount': 24,
+                    'axisCount': 48,
                     'minAxisZ': 0.02,
                     'finishProjectionStep': 0.35,
                     'finishNormalAngleDeg': 88.0,
@@ -130,10 +128,10 @@ if __name__ == '__main__':
                     'finishContactPatchRadius': 1.2,
                     'finishLineGapTolerance': 1.0,
                     'finishStock': 0.03,
-                    'step3AxisCount': 5,
-                    'step3AxisSampleCount': 12000,
-                    'step3MinNormalDot': 0.05,
-                    'step3TargetCoverage': 0.98,
+                    'shellRoughStock': 1.0,
+                    'step3AxisCount': 12,
+                    'step3AxisSampleCount': 18000,
+                    'step3TargetCoverage': 0.95,
                     'angleThreshold': 1.047
                 }
             },

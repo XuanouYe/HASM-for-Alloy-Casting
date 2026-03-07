@@ -8,48 +8,46 @@ from shapely.ops import unary_union
 from shapely.validation import make_valid
 from .geometryUtils import densifyPolyline, sampleMeshPointsWithNormals, splitPolylineByGap
 
-
 class IToolpathStrategy(ABC):
     @abstractmethod
     def generate(self, targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh, toolRadius: float, params: Dict[str, Any], safetyMargin: float) -> List[np.ndarray]:
         pass
 
-    def cleanPolygon(self, polys: List[Any]) -> Any:
-        cleanPolys = []
-        for polyItem in polys:
-            fixedPoly = polyItem
-            if not fixedPoly.is_valid:
-                fixedPoly = make_valid(fixedPoly)
-                fixedPoly = fixedPoly.buffer(0)
-            if not fixedPoly.is_empty:
-                cleanPolys.append(fixedPoly)
-        if not cleanPolys:
-            return MultiPolygon()
-        return unary_union(cleanPolys)
+def cleanPolygon(polys: List[Any]) -> Any:
+    cleanPolys = []
+    for polyItem in polys:
+        fixedPoly = polyItem
+        if not fixedPoly.is_valid:
+            fixedPoly = make_valid(fixedPoly)
+        fixedPoly = fixedPoly.buffer(0)
+        if not fixedPoly.is_empty:
+            cleanPolys.append(fixedPoly)
+    if not cleanPolys:
+        return MultiPolygon()
+    return unary_union(cleanPolys)
 
-    def robustSection(self, mesh: trimesh.Trimesh, zValue: float, tolerance: float = 0.05) -> Any:
-        sectionResult = mesh.section(plane_origin=[0.0, 0.0, zValue], plane_normal=[0.0, 0.0, 1.0])
-        if sectionResult is None:
-            sectionResult = mesh.section(plane_origin=[0.0, 0.0, zValue - tolerance], plane_normal=[0.0, 0.0, 1.0])
-        if sectionResult is None:
-            sectionResult = mesh.section(plane_origin=[0.0, 0.0, zValue + tolerance], plane_normal=[0.0, 0.0, 1.0])
-        if sectionResult is None:
-            return None
-        slice2d, _ = sectionResult.to_2D()
-        return slice2d.polygons_full
+def robustSection(mesh: trimesh.Trimesh, zValue: float, tolerance: float = 0.05) -> Any:
+    sectionResult = mesh.section(plane_origin=[0.0, 0.0, zValue], plane_normal=[0.0, 0.0, 1.0])
+    if sectionResult is None:
+        sectionResult = mesh.section(plane_origin=[0.0, 0.0, zValue - tolerance], plane_normal=[0.0, 0.0, 1.0])
+    if sectionResult is None:
+        sectionResult = mesh.section(plane_origin=[0.0, 0.0, zValue + tolerance], plane_normal=[0.0, 0.0, 1.0])
+    if sectionResult is None:
+        return None
+    slice2d, _ = sectionResult.to_2D()
+    return slice2d.polygons_full
 
-    def extractLineStrings(self, geomValue: Any) -> List[Any]:
-        if geomValue is None or geomValue.is_empty:
-            return []
-        geomType = geomValue.geom_type
-        if geomType == 'LineString':
-            return [geomValue]
-        if geomType == 'MultiLineString':
-            return [lineItem for lineItem in geomValue.geoms if lineItem.geom_type == 'LineString']
-        if geomType == 'GeometryCollection':
-            return [lineItem for lineItem in geomValue.geoms if lineItem.geom_type == 'LineString']
+def extractLineStrings(geomValue: Any) -> List[Any]:
+    if geomValue is None or geomValue.is_empty:
         return []
-
+    geomType = geomValue.geom_type
+    if geomType == 'LineString':
+        return [geomValue]
+    if geomType == 'MultiLineString':
+        return [lineItem for lineItem in geomValue.geoms if lineItem.geom_type == 'LineString']
+    if geomType == 'GeometryCollection':
+        return [lineItem for lineItem in geomValue.geoms if lineItem.geom_type == 'LineString']
+    return []
 
 class ZLevelRoughingStrategy(IToolpathStrategy):
     def generate(self, targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh, toolRadius: float, params: Dict[str, Any], safetyMargin: float) -> List[np.ndarray]:
@@ -57,25 +55,26 @@ class ZLevelRoughingStrategy(IToolpathStrategy):
             return []
         stepOver = float(params.get('stepOver', 1.0))
         layerStep = float(params.get('layerStep', 1.0))
+        roughStock = float(params.get('roughStock', 0.0))
         boundsArray = np.asarray(targetMesh.bounds, dtype=float)
         zMin = float(boundsArray[0, 2])
         zMax = float(boundsArray[1, 2])
         zLevels = np.arange(zMax - layerStep, zMin, -layerStep, dtype=float)
         allPaths = []
         for zValue in zLevels:
-            targetPolys = self.robustSection(targetMesh, zValue)
+            targetPolys = robustSection(targetMesh, zValue)
             if not targetPolys:
                 continue
             targetSlice = targetMesh.section(plane_origin=[0.0, 0.0, zValue], plane_normal=[0.0, 0.0, 1.0])
             if targetSlice is None:
                 continue
             _, to3dMat = targetSlice.to_2D()
-            machinablePoly = self.cleanPolygon(targetPolys).buffer(-toolRadius)
+            machinablePoly = cleanPolygon(targetPolys).buffer(-toolRadius)
             keepOutPoly = MultiPolygon()
             if keepOutMesh is not None and not keepOutMesh.is_empty:
-                keepOutPolys = self.robustSection(keepOutMesh, zValue)
+                keepOutPolys = robustSection(keepOutMesh, zValue)
                 if keepOutPolys:
-                    keepOutPoly = self.cleanPolygon(keepOutPolys).buffer(toolRadius + safetyMargin + stepOver)
+                    keepOutPoly = cleanPolygon(keepOutPolys).buffer(toolRadius + safetyMargin + roughStock)
             if machinablePoly.is_empty:
                 continue
             safePoly = machinablePoly.difference(keepOutPoly.buffer(0))
@@ -91,7 +90,7 @@ class ZLevelRoughingStrategy(IToolpathStrategy):
                 for yValue in yList:
                     scanLine = LineString([(minX - 1.0, yValue), (maxX + 1.0, yValue)])
                     interResult = scanLine.intersection(polyItem)
-                    lineItems = self.extractLineStrings(interResult)
+                    lineItems = extractLineStrings(interResult)
                     for lineItem in lineItems:
                         coordArray = np.asarray(lineItem.coords, dtype=float)
                         if len(coordArray) < 2:
@@ -102,9 +101,8 @@ class ZLevelRoughingStrategy(IToolpathStrategy):
                         path3d = (to3dMat @ coordHomo.T).T[:, :3]
                         if len(path3d) >= 2:
                             allPaths.append(path3d)
-                            reverseFlag = not reverseFlag
+                    reverseFlag = not reverseFlag
         return allPaths
-
 
 class DropRasterStrategy(IToolpathStrategy):
     def generate(self, targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh, toolRadius: float, params: Dict[str, Any], safetyMargin: float) -> List[np.ndarray]:
@@ -149,7 +147,6 @@ class DropRasterStrategy(IToolpathStrategy):
             if len(linePoints) >= 2:
                 allPaths.append(np.asarray(linePoints, dtype=float))
         return allPaths
-
 
 class SurfaceProjectionFinishingStrategy(IToolpathStrategy):
     def isBallCollisionFree(self, centerPoint: np.ndarray, contactPoint: np.ndarray, targetTree: cKDTree, targetSamples: np.ndarray, keepOutTree: cKDTree, toolRadius: float, safetyMargin: float, collisionClearance: float, contactPatchRadius: float, localAllowance: float) -> bool:
@@ -241,7 +238,6 @@ class SurfaceProjectionFinishingStrategy(IToolpathStrategy):
                 reverseFlag = not reverseFlag
                 allPaths.extend(subPaths)
         return allPaths
-
 
 class ToolpathStrategyFactory:
     strategies = {
