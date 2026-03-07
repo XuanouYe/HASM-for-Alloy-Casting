@@ -19,7 +19,7 @@ def generateCncJobInterface(partStl: str, moldStl: str, gateStl: str, riserStl: 
     safeHeight = float(subtractiveConfig.get('safeHeight', 5.0))
     angleThreshold = float(subtractiveConfig.get('angleThreshold', 1.047))
     axisMode = str(subtractiveConfig.get('axisMode', 'hemisphere'))
-    axisCount = int(subtractiveConfig.get('axisCount', 18))
+    axisCount = int(subtractiveConfig.get('axisCount', 24))  # 提升可选刀轴密度
     minAxisZ = float(subtractiveConfig.get('minAxisZ', 0.02))
     candidateAxes = generateHemisphereAxes(axisCount, minAxisZ) if axisMode == 'hemisphere' else subtractiveConfig.get('candidateAxes', [[0.0, 0.0, 1.0]])
 
@@ -46,8 +46,8 @@ def generateCncJobInterface(partStl: str, moldStl: str, gateStl: str, riserStl: 
             'projectionStep': float(subtractiveConfig.get('finishProjectionStep', 0.35)),
             'safeHeight': safeHeight,
             'feedrate': float(subtractiveConfig.get('finishFeedRate', feedrate * 0.85)),
-            'scanAxis': str(subtractiveConfig.get('finishScanAxis', 'x')),
-            'finishNormalAngleDeg': float(subtractiveConfig.get('finishNormalAngleDeg', 82.0)),
+            'scanAxis': 'x', # Generator 内会自动派生出 x 和 y 两次扫描
+            'finishNormalAngleDeg': float(subtractiveConfig.get('finishNormalAngleDeg', 88.0)), # 放宽法向限制，容忍更陡峭截面
             'collisionSampleCount': int(subtractiveConfig.get('finishCollisionSampleCount', 18000)),
             'keepOutSampleCount': int(subtractiveConfig.get('finishKeepOutSampleCount', 6000)),
             'collisionClearance': float(subtractiveConfig.get('finishCollisionClearance', 0.18)),
@@ -68,12 +68,13 @@ def generateCncJobInterface(partStl: str, moldStl: str, gateStl: str, riserStl: 
 
     axisStrategyParams = {
         'candidateAxes': candidateAxes,
-        'step3AxisCount': int(subtractiveConfig.get('step3AxisCount', min(4, axisCount))),
-        'step3AxisSampleCount': int(subtractiveConfig.get('step3AxisSampleCount', 8000)),
-        'step3MinNormalDot': float(subtractiveConfig.get('step3MinNormalDot', 0.2))
+        'step3AxisCount': int(subtractiveConfig.get('step3AxisCount', min(5, axisCount))),
+        'step3AxisSampleCount': int(subtractiveConfig.get('step3AxisSampleCount', 12000)),
+        'step3MinNormalDot': float(subtractiveConfig.get('step3MinNormalDot', 0.05)), # 极大降低最小法向点积要求，增加覆盖
+        'step3TargetCoverage': float(subtractiveConfig.get('step3TargetCoverage', 0.98)) # 目标覆盖率 98%
     }
 
-    generator = FiveAxisCncPathGenerator(version='2.2')
+    generator = FiveAxisCncPathGenerator(version='2.3')
     clData = generator.generateJob(partStl, moldStl, gateStl, riserStl, toolParams, stepParams, axisStrategyParams, 'WCS_MAIN', jobId)
     generator.exportClJson(clData, outputJsonPath)
 
@@ -114,25 +115,25 @@ if __name__ == '__main__':
                     'shellStepOver': 1.2,
                     'riserStepOver': 1.0,
                     'gateStepOver': 1.2,
-                    'finishStepOver': 0.7,
+                    'finishStepOver': 0.6,
                     'layerStepDown': 1.0,
                     'shellLayerStepDown': 1.0,
                     'safeHeight': 5.0,
                     'axisMode': 'hemisphere',
-                    'axisCount': 18,
+                    'axisCount': 24,
                     'minAxisZ': 0.02,
                     'finishProjectionStep': 0.35,
-                    'finishScanAxis': 'x',
-                    'finishNormalAngleDeg': 82.0,
+                    'finishNormalAngleDeg': 88.0,
                     'finishCollisionSampleCount': 18000,
                     'finishKeepOutSampleCount': 6000,
                     'finishCollisionClearance': 0.18,
                     'finishContactPatchRadius': 1.2,
                     'finishLineGapTolerance': 1.0,
                     'finishStock': 0.03,
-                    'step3AxisCount': 4,
-                    'step3AxisSampleCount': 8000,
-                    'step3MinNormalDot': 0.2,
+                    'step3AxisCount': 5,
+                    'step3AxisSampleCount': 12000,
+                    'step3MinNormalDot': 0.05,
+                    'step3TargetCoverage': 0.98,
                     'angleThreshold': 1.047
                 }
             },

@@ -4,7 +4,8 @@ import numpy as np
 import trimesh
 from scipy.spatial import cKDTree
 from scipy.spatial.distance import cdist
-from .geometryUtils import applyRotation, buildRotationFromTo, concatenateMeshes, normalizeVector, sampleMeshPointsWithNormals
+from .geometryUtils import applyRotation, buildRotationFromTo, concatenateMeshes, normalizeVector, \
+    sampleMeshPointsWithNormals
 from .toolpathStrategies import ToolpathStrategyFactory
 
 
@@ -16,7 +17,8 @@ class PointCloudIpw:
     def getActivePointsWcs(self) -> np.ndarray:
         return self.points[self.activeMask]
 
-    def filterPathsLocal(self, pathsLocal: List[np.ndarray], rotToToolFrame: np.ndarray, toolRadius: float, stepOver: float) -> List[np.ndarray]:
+    def filterPathsLocal(self, pathsLocal: List[np.ndarray], rotToToolFrame: np.ndarray, toolRadius: float,
+                         stepOver: float) -> List[np.ndarray]:
         if not pathsLocal or not np.any(self.activeMask):
             return pathsLocal
         activePointsWcs = self.getActivePointsWcs()
@@ -90,7 +92,8 @@ class TrimeshToolpathEngine:
             unvisited.pop(chosenListIndex)
         return np.vstack(linkedPaths) if linkedPaths else np.array([], dtype=float)
 
-    def slicePathByPlatformZ(self, pathLocal: np.ndarray, rotBack: np.ndarray, platformSafeZ: float) -> List[np.ndarray]:
+    def slicePathByPlatformZ(self, pathLocal: np.ndarray, rotBack: np.ndarray, platformSafeZ: float) -> List[
+        np.ndarray]:
         pathWcs = applyRotation(pathLocal, rotBack)
         validMask = pathWcs[:, 2] >= platformSafeZ
         validPaths = []
@@ -108,7 +111,7 @@ class TrimeshToolpathEngine:
 
 
 class FiveAxisCncPathGenerator:
-    def __init__(self, version: str = '2.2'):
+    def __init__(self, version: str = '2.3'):
         self.version = str(version)
         self.toolpathEngine = TrimeshToolpathEngine()
 
@@ -124,7 +127,8 @@ class FiveAxisCncPathGenerator:
         rotatedVertices = applyRotation(np.asarray(mesh.vertices, dtype=float), rotMat)
         return trimesh.Trimesh(vertices=rotatedVertices, faces=np.asarray(mesh.faces, dtype=int), process=False)
 
-    def buildClPointDicts(self, positions: np.ndarray, toolAxis: np.ndarray, feedrate: float, segmentId: int, startPointId: int) -> List[Dict[str, Any]]:
+    def buildClPointDicts(self, positions: np.ndarray, toolAxis: np.ndarray, feedrate: float, segmentId: int,
+                          startPointId: int) -> List[Dict[str, Any]]:
         toolAxisUnit = normalizeVector(np.asarray(toolAxis, dtype=float))
         return [
             {
@@ -137,31 +141,65 @@ class FiveAxisCncPathGenerator:
             for pointIndex, pointValue in enumerate(np.asarray(positions, dtype=float))
         ]
 
-    def rankAxesForSurfaceFinishing(self, targetMesh: trimesh.Trimesh, candidateAxes: List[np.ndarray], axisStrategyParams: Dict[str, Any]) -> List[np.ndarray]:
+    def selectAxesGreedyCoverage(self, targetMesh: trimesh.Trimesh, candidateAxes: List[np.ndarray],
+                                 axisStrategyParams: Dict[str, Any]) -> List[np.ndarray]:
         if not candidateAxes:
             return [np.array([0.0, 0.0, 1.0], dtype=float)]
-        sampleCount = int(axisStrategyParams.get('step3AxisSampleCount', 6000))
+
+        sampleCount = int(axisStrategyParams.get('step3AxisSampleCount', 8000))
         maxAxisCount = int(axisStrategyParams.get('step3AxisCount', min(6, len(candidateAxes))))
-        minNormalDot = float(axisStrategyParams.get('step3MinNormalDot', 0.18))
-        _, sampleNormals = sampleMeshPointsWithNormals(targetMesh, sampleCount)
+        minNormalDot = float(axisStrategyParams.get('step3MinNormalDot', 0.15))
+        targetCoverage = float(axisStrategyParams.get('step3TargetCoverage', 0.95))
+
+        samplePoints, sampleNormals = sampleMeshPointsWithNormals(targetMesh, sampleCount)
         if len(sampleNormals) == 0:
             return candidateAxes[:maxAxisCount]
-        rankedAxes = []
-        for axisItem in candidateAxes:
+
+        axisCoverages = []
+        for i, axisItem in enumerate(candidateAxes):
             axisUnit = normalizeVector(np.asarray(axisItem, dtype=float))
             dotValues = sampleNormals @ axisUnit
-            visibleMask = dotValues >= minNormalDot
-            visibleCount = int(np.count_nonzero(visibleMask))
-            meanDot = float(np.mean(dotValues[visibleMask])) if visibleCount > 0 else 0.0
-            axisScore = float(visibleCount) + meanDot * 1000.0
-            rankedAxes.append((axisScore, axisUnit))
-        rankedAxes.sort(key=lambda scoreItem: scoreItem[0], reverse=True)
-        outputAxes = [axisItem for _, axisItem in rankedAxes[:maxAxisCount]]
-        if not outputAxes:
-            outputAxes = [normalizeVector(np.asarray(candidateAxes[0], dtype=float))]
-        return outputAxes
+            coveredIndices = set(np.where(dotValues >= minNormalDot)[0])
+            axisCoverages.append({
+                'axis': axisUnit,
+                'covered_set': coveredIndices,
+                'original_index': i
+            })
 
-    def generateStepWithAxes(self, stepId: int, stepType: str, targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh,
+        selectedAxes = []
+        universeCovered = set()
+        totalPoints = len(samplePoints)
+
+        while len(selectedAxes) < maxAxisCount:
+            bestAxis = None
+            bestNewCoverage = 0
+            bestSet = set()
+
+            for ac in axisCoverages:
+                newCoverageSet = ac['covered_set'] - universeCovered
+                newCoverageCount = len(newCoverageSet)
+                if newCoverageCount > bestNewCoverage:
+                    bestNewCoverage = newCoverageCount
+                    bestAxis = ac['axis']
+                    bestSet = newCoverageSet
+
+            if bestNewCoverage == 0:
+                break
+
+            selectedAxes.append(bestAxis)
+            universeCovered |= bestSet
+
+            currentCoverageRatio = len(universeCovered) / totalPoints
+            if currentCoverageRatio >= targetCoverage:
+                break
+
+        if not selectedAxes:
+            selectedAxes = [normalizeVector(np.asarray(candidateAxes[0], dtype=float))]
+
+        return selectedAxes
+
+    def generateStepWithAxes(self, stepId: int, stepType: str, targetMesh: trimesh.Trimesh,
+                             keepOutMesh: trimesh.Trimesh,
                              toolParams: Dict[str, Any], stepParam: Dict[str, Any], candidateAxes: List[np.ndarray],
                              globalMinZ: float, safetyMargin: float) -> Dict[str, Any]:
         modeValue = str(stepParam.get('mode', 'dropRaster'))
@@ -170,13 +208,18 @@ class FiveAxisCncPathGenerator:
         platformSafeZ = float(globalMinZ + toolRadius + safetyMargin)
         stepOver = float(stepParam.get('stepOver', 1.0))
         enablePathLinking = bool(stepParam.get('enablePathLinking', True))
+
+        isFinishing = (modeValue.lower() in {'surfacefinishing', 'spf'})
+
         strategy = ToolpathStrategyFactory.getStrategy(modeValue)
         useIpw = modeValue.lower() in {'zlevelroughing', 'zlr', 'dropraster'}
         ipwData = PointCloudIpw(targetMesh, int(stepParam.get('ipwSampleCount', 50000))) if useIpw else None
+
         segments = []
         allClPoints = []
         pointId = 0
         outputSegmentId = 0
+
         for toolAxis in candidateAxes:
             axisUnit = normalizeVector(np.asarray(toolAxis, dtype=float))
             rotToToolFrame = buildRotationFromTo(axisUnit, np.array([0.0, 0.0, 1.0], dtype=float))
@@ -184,17 +227,25 @@ class FiveAxisCncPathGenerator:
             rotatedTarget = self.rotateMesh(targetMesh, rotToToolFrame)
             rotatedKeepOut = self.rotateMesh(keepOutMesh, rotToToolFrame)
             localSafeZ = float(rotatedTarget.bounds[1, 2] + float(stepParam.get('safeHeight', 5.0)))
+
             rawPathsLocal = strategy.generate(rotatedTarget, rotatedKeepOut, toolRadius, stepParam, safetyMargin)
             validPathsLocal = []
+
             for pathLocal in rawPathsLocal:
                 if len(pathLocal) < 2:
                     continue
-                validPathsLocal.extend(self.toolpathEngine.slicePathByPlatformZ(pathLocal, rotBack, platformSafeZ))
+                if isFinishing:
+                    validPathsLocal.append(pathLocal)
+                else:
+                    validPathsLocal.extend(self.toolpathEngine.slicePathByPlatformZ(pathLocal, rotBack, platformSafeZ))
+
             if ipwData is not None and validPathsLocal:
                 validPathsLocal = ipwData.filterPathsLocal(validPathsLocal, rotToToolFrame, toolRadius, stepOver)
                 ipwData.updateIpwLocal(validPathsLocal, rotToToolFrame, toolRadius)
+
             if not validPathsLocal:
                 continue
+
             if enablePathLinking:
                 optimizedLocalPath = self.toolpathEngine.optimizePathLinking(validPathsLocal, localSafeZ, stepOver)
                 if len(optimizedLocalPath) == 0:
@@ -221,6 +272,7 @@ class FiveAxisCncPathGenerator:
                     })
                     allClPoints.extend(clPointsWcs)
                     outputSegmentId += 1
+
         return {
             'stepId': int(stepId),
             'stepType': str(stepType),
@@ -245,55 +297,45 @@ class FiveAxisCncPathGenerator:
 
         keepOutMeshStep1 = concatenateMeshes([partMesh, gateMesh, riserMesh])
         step1 = self.generateStepWithAxes(
-            1,
-            'shellRemoval',
-            moldMesh,
-            keepOutMeshStep1,
-            toolParams,
-            stepParams[0],
-            candidateAxes,
-            globalMinZ,
-            safetyMargin
+            1, 'shellRemoval', moldMesh, keepOutMeshStep1,
+            toolParams, stepParams[0], candidateAxes, globalMinZ, safetyMargin
         )
 
         riserAxes = [np.array([0.0, 0.0, 1.0], dtype=float)]
         keepOutMeshStep2 = concatenateMeshes([partMesh, gateMesh])
         step2 = self.generateStepWithAxes(
-            2,
-            'riserRemoval',
-            riserMesh,
-            keepOutMeshStep2,
-            toolParams,
-            stepParams[1],
-            riserAxes,
-            globalMinZ,
-            safetyMargin
+            2, 'riserRemoval', riserMesh, keepOutMeshStep2,
+            toolParams, stepParams[1], riserAxes, globalMinZ, safetyMargin
         )
 
         keepOutMeshStep3 = gateMesh
-        step3Axes = self.rankAxesForSurfaceFinishing(partMesh, candidateAxes, axisStrategyParams)
-        step3 = self.generateStepWithAxes(
-            3,
-            'partFinishing',
-            partMesh,
-            keepOutMeshStep3,
-            toolParams,
-            stepParams[2],
-            step3Axes,
-            globalMinZ,
-            safetyMargin
+        step3Axes = self.selectAxesGreedyCoverage(partMesh, candidateAxes, axisStrategyParams)
+
+        step3ConfigX = stepParams[2].copy()
+        step3ConfigX['scanAxis'] = 'x'
+        step3X = self.generateStepWithAxes(
+            3, 'partFinishing_X', partMesh, keepOutMeshStep3,
+            toolParams, step3ConfigX, step3Axes, globalMinZ, safetyMargin
         )
 
+        step3ConfigY = stepParams[2].copy()
+        step3ConfigY['scanAxis'] = 'y'
+        step3Y = self.generateStepWithAxes(
+            3, 'partFinishing_Y', partMesh, keepOutMeshStep3,
+            toolParams, step3ConfigY, step3Axes, globalMinZ, safetyMargin
+        )
+
+        step3 = {
+            'stepId': 3,
+            'stepType': 'partFinishing',
+            'toolParams': step3X['toolParams'],
+            'segments': step3X['segments'] + step3Y['segments'],
+            'clPoints': step3X['clPoints'] + step3Y['clPoints']
+        }
+
         step4 = self.generateStepWithAxes(
-            4,
-            'gateRemoval',
-            gateMesh,
-            partMesh,
-            toolParams,
-            stepParams[3],
-            [np.array([0.0, 0.0, 1.0], dtype=float)],
-            globalMinZ,
-            safetyMargin
+            4, 'gateRemoval', gateMesh, partMesh,
+            toolParams, stepParams[3], [np.array([0.0, 0.0, 1.0], dtype=float)], globalMinZ, safetyMargin
         )
 
         outputData = {
