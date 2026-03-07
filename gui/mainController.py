@@ -8,7 +8,6 @@ from PyQt5.QtCore import QObject, QTimer
 from .workerThread import WorkerThread
 
 from cnc.gcodeProcessor import generateCncGcodeInterface
-from cnc.__main__ import FiveAxisCncPathGenerator
 
 from fdmExecutor import generateGcodeInterface
 from controlConfig import ConfigManager
