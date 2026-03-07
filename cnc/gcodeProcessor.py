@@ -10,7 +10,7 @@ if str(rootDir) not in sys.path:
     sys.path.append(str(rootDir))
 
 from controlConfig import parameterSchema
-from cnc.pathDesigner import generateCncJobInterface
+from cnc.__main__ import generateCncJobInterface
 
 def loadClJson(inputJsonPath: str) -> Dict[str, Any]:
     with open(inputJsonPath, "r", encoding="utf-8") as f:

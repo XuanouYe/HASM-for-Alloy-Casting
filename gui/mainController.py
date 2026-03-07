@@ -8,7 +8,7 @@ from PyQt5.QtCore import QObject, QTimer
 from .workerThread import WorkerThread
 
 from cnc.gcodeProcessor import generateCncGcodeInterface
-from cnc.pathDesigner import FiveAxisCncPathGenerator
+from cnc.__main__ import FiveAxisCncPathGenerator
 
 from fdmExecutor import generateGcodeInterface
 from controlConfig import ConfigManager
@@ -232,7 +232,7 @@ class MainController(QObject):
 
         if getattr(self, '_currentVisualizeFlag', False):
             try:
-                from cnc.pathDesigner import FiveAxisCncPathGenerator
+                from cnc.__main__ import FiveAxisCncPathGenerator
                 from gui.pathVisualizerDialog import PathVisualizationDialog
                 generator = FiveAxisCncPathGenerator()
                 mesh = generator.loadMesh(self._currentPartStlPath)
