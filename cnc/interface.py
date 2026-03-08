@@ -19,7 +19,6 @@ def generateCncJobInterface(partStl: str, moldStl: str, gateStl: str, riserStl: 
     axisMode = str(subtractiveConfig.get('axisMode', 'hemisphere'))
     axisCount = int(subtractiveConfig.get('axisCount', 48))
     minAxisZ = float(subtractiveConfig.get('minAxisZ', 0.02))
-    shellRoughStock = float(subtractiveConfig.get('shellRoughStock', 1.0))
     candidateAxes = generateHemisphereAxes(axisCount, minAxisZ) if axisMode == 'hemisphere' else subtractiveConfig.get('candidateAxes', [[0.0, 0.0, 1.0]])
     stepParams = [
         {
@@ -28,6 +27,7 @@ def generateCncJobInterface(partStl: str, moldStl: str, gateStl: str, riserStl: 
             'layerStep': float(subtractiveConfig.get('shellLayerStepDown', layerStep)),
             'safeHeight': safeHeight,
             'feedrate': float(subtractiveConfig.get('shellFeedRate', feedrate)),
+            'roughStock': float(subtractiveConfig.get('shellRoughStock', 0.0)),
             'enablePathLinking': True
         },
         {
@@ -40,17 +40,18 @@ def generateCncJobInterface(partStl: str, moldStl: str, gateStl: str, riserStl: 
         },
         {
             'mode': 'surfaceFinishing',
-            'stepOver': float(subtractiveConfig.get('finishStepOver', max(stepOver * 0.55, 0.6))),
-            'projectionStep': float(subtractiveConfig.get('finishProjectionStep', 0.35)),
+            'stepOver': float(subtractiveConfig.get('finishStepOver', 0.45)),
+            'projectionStep': float(subtractiveConfig.get('finishProjectionStep', 0.25)),
             'safeHeight': safeHeight,
             'feedrate': float(subtractiveConfig.get('finishFeedRate', feedrate * 0.85)),
             'scanAxis': 'x',
-            'finishNormalAngleDeg': float(subtractiveConfig.get('finishNormalAngleDeg', 88.0)),
-            'collisionSampleCount': int(subtractiveConfig.get('finishCollisionSampleCount', 18000)),
-            'keepOutSampleCount': int(subtractiveConfig.get('finishKeepOutSampleCount', 6000)),
-            'collisionClearance': float(subtractiveConfig.get('finishCollisionClearance', 0.18)),
-            'contactPatchRadius': float(subtractiveConfig.get('finishContactPatchRadius', 1.2)),
-            'lineGapTolerance': float(subtractiveConfig.get('finishLineGapTolerance', 1.0)),
+            'finishNormalAngleDeg': float(subtractiveConfig.get('finishNormalAngleDeg', 95.0)),
+            'surfaceSampleCount': int(subtractiveConfig.get('finishSurfaceSampleCount', 36000)),
+            'keepOutSampleCount': int(subtractiveConfig.get('finishKeepOutSampleCount', 8000)),
+            'collisionClearance': float(subtractiveConfig.get('finishCollisionClearance', 0.12)),
+            'contactPatchRadius': float(subtractiveConfig.get('finishContactPatchRadius', 1.6)),
+            'lineGapTolerance': float(subtractiveConfig.get('finishLineGapTolerance', 1.2)),
+            'localAllowance': float(subtractiveConfig.get('finishLocalAllowance', 0.06)),
             'finishStock': float(subtractiveConfig.get('finishStock', 0.03)),
             'enablePathLinking': False
         },
@@ -65,15 +66,13 @@ def generateCncJobInterface(partStl: str, moldStl: str, gateStl: str, riserStl: 
     ]
     axisStrategyParams = {
         'candidateAxes': candidateAxes,
-        'step3AxisCount': int(subtractiveConfig.get('step3AxisCount', 12)),
-        'step3AxisSampleCount': int(subtractiveConfig.get('step3AxisSampleCount', 18000)),
-        'step3TargetCoverage': float(subtractiveConfig.get('step3TargetCoverage', 0.95)),
-        'axisCount': axisCount,
-        'minAxisZ': minAxisZ,
-        'finishNormalAngleDeg': float(subtractiveConfig.get('finishNormalAngleDeg', 88.0)),
-        'shellRoughStock': shellRoughStock
+        'step3AxisCount': int(subtractiveConfig.get('step3AxisCount', min(8, axisCount))),
+        'step3AxisSampleCount': int(subtractiveConfig.get('step3AxisSampleCount', 16000)),
+        'step3MinNormalDot': float(subtractiveConfig.get('step3MinNormalDot', 0.02)),
+        'step3TargetCoverage': float(subtractiveConfig.get('step3TargetCoverage', 0.995)),
+        'step3AxisDiversityDot': float(subtractiveConfig.get('step3AxisDiversityDot', 0.985))
     }
-    generator = FiveAxisCncPathGenerator(version='2.3')
+    generator = FiveAxisCncPathGenerator(version='2.4')
     clData = generator.generateJob(partStl, moldStl, gateStl, riserStl, toolParams, stepParams, axisStrategyParams, 'WCS_MAIN', jobId)
     generator.exportClJson(clData, outputJsonPath)
     if visualize:
@@ -87,8 +86,7 @@ def generateCncJobInterface(partStl: str, moldStl: str, gateStl: str, riserStl: 
             partMesh,
             partMesh
         ]
-        visualizer = PathVisualizer()
-        visualizer.visualize(displayMesh, clData, stepCollisionMeshes, {'partFinishing'})
+        PathVisualizer().visualize(displayMesh, clData, stepCollisionMeshes, {'shellRemoval', 'riserRemoval', 'partFinishing', 'gateRemoval'})
     return clData
 
 if __name__ == '__main__':
@@ -113,25 +111,27 @@ if __name__ == '__main__':
                     'shellStepOver': 1.2,
                     'riserStepOver': 1.0,
                     'gateStepOver': 1.2,
-                    'finishStepOver': 0.6,
+                    'finishStepOver': 0.45,
                     'layerStepDown': 1.0,
                     'shellLayerStepDown': 1.0,
                     'safeHeight': 5.0,
                     'axisMode': 'hemisphere',
                     'axisCount': 48,
                     'minAxisZ': 0.02,
-                    'finishProjectionStep': 0.35,
-                    'finishNormalAngleDeg': 88.0,
-                    'finishCollisionSampleCount': 18000,
-                    'finishKeepOutSampleCount': 6000,
-                    'finishCollisionClearance': 0.18,
-                    'finishContactPatchRadius': 1.2,
-                    'finishLineGapTolerance': 1.0,
+                    'finishProjectionStep': 0.25,
+                    'finishNormalAngleDeg': 95.0,
+                    'finishSurfaceSampleCount': 36000,
+                    'finishKeepOutSampleCount': 8000,
+                    'finishCollisionClearance': 0.12,
+                    'finishContactPatchRadius': 1.6,
+                    'finishLineGapTolerance': 1.2,
+                    'finishLocalAllowance': 0.06,
                     'finishStock': 0.03,
-                    'shellRoughStock': 1.0,
-                    'step3AxisCount': 12,
-                    'step3AxisSampleCount': 18000,
-                    'step3TargetCoverage': 0.95,
+                    'step3AxisCount': 8,
+                    'step3AxisSampleCount': 16000,
+                    'step3MinNormalDot': 0.02,
+                    'step3TargetCoverage': 0.995,
+                    'step3AxisDiversityDot': 0.985,
                     'angleThreshold': 1.047
                 }
             },

@@ -1,7 +1,7 @@
 from typing import Dict, List, Optional, Set, Tuple
+import numpy as np
 import trimesh
 import vtk
-
 
 class VtkInteractorStyle(vtk.vtkInteractorStyleTrackballCamera):
     def __init__(self, visualizer):
@@ -11,26 +11,20 @@ class VtkInteractorStyle(vtk.vtkInteractorStyleTrackballCamera):
     def keyPressEvent(self, obj, event):
         keyValue = self.GetInteractor().GetKeySym()
         if keyValue.isdigit():
-            stepValue = int(keyValue)
-            if stepValue == 0:
-                for actorItem in self.visualizer.stepActors:
-                    actorItem.SetVisibility(1)
-            else:
-                stepIndex = stepValue - 1
-                for actorIndex, actorItem in enumerate(self.visualizer.stepActors):
-                    actorItem.SetVisibility(1 if actorIndex == stepIndex else 0)
+            self.visualizer.setVisibleStep(int(keyValue))
+            self.GetInteractor().GetRenderWindow().Render()
         elif keyValue in ['c', 'C']:
-            if self.visualizer.collisionActor is not None:
-                isVisible = self.visualizer.collisionActor.GetVisibility()
-                self.visualizer.collisionActor.SetVisibility(1 - isVisible)
-        self.GetInteractor().GetRenderWindow().Render()
-
+            self.visualizer.toggleCollisionVisibility()
+            self.GetInteractor().GetRenderWindow().Render()
 
 class PathVisualizer:
     def __init__(self):
         self.windowSize = (1200, 800)
         self.stepActors = []
-        self.collisionActor = None
+        self.stepCollisionActors = []
+        self.currentVisibleStep = 0
+        self.collisionVisible = False
+        self.legendActor = None
 
     def buildPolyData(self, mesh: trimesh.Trimesh) -> vtk.vtkPolyData:
         vtkPoints = vtk.vtkPoints()
@@ -68,7 +62,20 @@ class PathVisualizer:
         distanceFunc.SetInput(polyData)
         return distanceFunc
 
-    def evaluatePointCollisions(self, points: List[List[float]], distanceFunc: vtk.vtkImplicitPolyDataDistance):
+    def isSegmentColliding(self, pointA: List[float], pointB: List[float], distanceFunc: vtk.vtkImplicitPolyDataDistance, sampleStep: float = 0.4) -> bool:
+        pointAArray = np.asarray(pointA, dtype=float)
+        pointBArray = np.asarray(pointB, dtype=float)
+        segmentLength = float(np.linalg.norm(pointBArray - pointAArray))
+        sampleCount = max(int(np.ceil(segmentLength / max(sampleStep, 1e-6))), 1)
+        for sampleIndex in range(sampleCount + 1):
+            ratioValue = sampleIndex / float(sampleCount)
+            samplePoint = pointAArray * (1.0 - ratioValue) + pointBArray * ratioValue
+            distanceValue = float(distanceFunc.FunctionValue(samplePoint.tolist()))
+            if distanceValue <= 0.0:
+                return True
+        return False
+
+    def evaluatePointCollisions(self, points: List[List[float]], distanceFunc: vtk.vtkImplicitPolyDataDistance, sampleStep: float = 0.4):
         normalLines = []
         collisionLines = []
         if not points:
@@ -76,15 +83,13 @@ class PathVisualizer:
         for pointIndex in range(1, len(points)):
             pointA = points[pointIndex - 1]
             pointB = points[pointIndex]
-            distA = float(distanceFunc.FunctionValue(pointA))
-            distB = float(distanceFunc.FunctionValue(pointB))
-            if distA < 0.0 or distB < 0.0:
+            if self.isSegmentColliding(pointA, pointB, distanceFunc, sampleStep):
                 collisionLines.append((pointA, pointB))
             else:
                 normalLines.append((pointA, pointB))
         return normalLines, collisionLines
 
-    def createLinesActor(self, lines: List[Tuple[List[float], List[float]]], colorValue: Tuple[float, float, float], lineWidth: float) -> vtk.vtkActor:
+    def createLinesActor(self, lines: List[Tuple[List[float], List[float]]], colorValue: Tuple[float, float, float], lineWidth: float, opacityValue: float = 1.0) -> vtk.vtkActor:
         vtkPoints = vtk.vtkPoints()
         vtkLines = vtk.vtkCellArray()
         pointIndex = 0
@@ -106,16 +111,55 @@ class PathVisualizer:
         actor.SetMapper(mapper)
         actor.GetProperty().SetColor(colorValue[0], colorValue[1], colorValue[2])
         actor.GetProperty().SetLineWidth(lineWidth)
+        actor.GetProperty().SetOpacity(opacityValue)
         return actor
 
-    def visualize(self, targetMesh: trimesh.Trimesh, clData: Dict, stepCollisionMeshes: Optional[List[trimesh.Trimesh]] = None,
-                  collisionCheckStepTypes: Optional[Set[str]] = None) -> None:
+    def createLegendActor(self, clData: Dict) -> vtk.vtkTextActor:
+        legendLines = ['0: show all', '1-9: show step', 'C: toggle collision']
+        for stepIndex, stepItem in enumerate(clData.get('steps', []), start=1):
+            legendLines.append(f'{stepIndex}: {stepItem.get("stepType", "unknown")}')
+        textActor = vtk.vtkTextActor()
+        textActor.SetInput('\n'.join(legendLines))
+        textActor.SetDisplayPosition(20, 20)
+        textProperty = textActor.GetTextProperty()
+        textProperty.SetFontSize(18)
+        textProperty.SetColor(0.1, 0.1, 0.1)
+        textProperty.SetBackgroundColor(1.0, 1.0, 1.0)
+        textProperty.SetBackgroundOpacity(0.7)
+        return textActor
+
+    def updateActorsVisibility(self) -> None:
+        showAll = self.currentVisibleStep == 0
+        for actorIndex, actorItem in enumerate(self.stepActors):
+            actorItem.SetVisibility(1 if showAll or actorIndex == self.currentVisibleStep - 1 else 0)
+        for actorIndex, actorItem in enumerate(self.stepCollisionActors):
+            if actorItem is None:
+                continue
+            shouldShow = self.collisionVisible and (showAll or actorIndex == self.currentVisibleStep - 1)
+            actorItem.SetVisibility(1 if shouldShow else 0)
+
+    def setVisibleStep(self, stepValue: int) -> None:
+        self.currentVisibleStep = max(int(stepValue), 0)
+        self.updateActorsVisibility()
+
+    def toggleCollisionVisibility(self) -> None:
+        self.collisionVisible = not self.collisionVisible
+        self.updateActorsVisibility()
+
+    def visualize(self, targetMesh: trimesh.Trimesh, clData: Dict, stepCollisionMeshes: Optional[List[trimesh.Trimesh]] = None, collisionCheckStepTypes: Optional[Set[str]] = None) -> None:
         renderer = vtk.vtkRenderer()
         renderer.SetBackground(1.0, 1.0, 1.0)
         renderer.AddActor(self.createVtkMeshActor(targetMesh, (0.7, 0.7, 0.7), 0.45))
-        colors = [(1.0, 0.0, 0.0), (1.0, 0.6, 0.0), (0.0, 0.8, 0.0), (0.0, 0.2, 1.0), (0.6, 0.0, 0.8)]
-        allCollisionLines = []
+        colors = [
+            (1.0, 0.0, 0.0),
+            (1.0, 0.6, 0.0),
+            (0.0, 0.75, 0.0),
+            (0.0, 0.2, 1.0),
+            (0.6, 0.0, 0.8),
+            (0.0, 0.7, 0.7)
+        ]
         self.stepActors = []
+        self.stepCollisionActors = []
         distanceFuncs = []
         if stepCollisionMeshes is not None:
             for meshItem in stepCollisionMeshes:
@@ -128,14 +172,19 @@ class PathVisualizer:
             else:
                 normalLines = [(pointsList[i - 1], pointsList[i]) for i in range(1, len(pointsList))]
                 collisionLines = []
-            stepActor = self.createLinesActor(normalLines, colors[stepIndex % len(colors)], 2.0)
+            stepColor = colors[stepIndex % len(colors)]
+            stepActor = self.createLinesActor(normalLines, stepColor, 2.0, 1.0)
             self.stepActors.append(stepActor)
             renderer.AddActor(stepActor)
-            allCollisionLines.extend(collisionLines)
-        if allCollisionLines:
-            self.collisionActor = self.createLinesActor(allCollisionLines, (1.0, 0.0, 1.0), 4.0)
-            self.collisionActor.SetVisibility(0)
-            renderer.AddActor(self.collisionActor)
+            if collisionLines:
+                collisionActor = self.createLinesActor(collisionLines, stepColor, 5.0, 1.0)
+                collisionActor.SetVisibility(0)
+                self.stepCollisionActors.append(collisionActor)
+                renderer.AddActor(collisionActor)
+            else:
+                self.stepCollisionActors.append(None)
+        self.legendActor = self.createLegendActor(clData)
+        renderer.AddActor2D(self.legendActor)
         renderWindow = vtk.vtkRenderWindow()
         renderWindow.AddRenderer(renderer)
         renderWindow.SetSize(self.windowSize[0], self.windowSize[1])
@@ -150,6 +199,9 @@ class PathVisualizer:
         axesWidget.SetInteractor(interactor)
         axesWidget.SetEnabled(1)
         axesWidget.InteractiveOff()
+        self.currentVisibleStep = 0
+        self.collisionVisible = False
+        self.updateActorsVisibility()
         renderer.ResetCamera()
         renderer.GetActiveCamera().Azimuth(30)
         renderer.GetActiveCamera().Elevation(30)

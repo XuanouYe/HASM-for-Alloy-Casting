@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 import numpy as np
 import trimesh
 from scipy.spatial import cKDTree
@@ -69,12 +69,12 @@ class ZLevelRoughingStrategy(IToolpathStrategy):
             if targetSlice is None:
                 continue
             _, to3dMat = targetSlice.to_2D()
-            machinablePoly = cleanPolygon(targetPolys).buffer(-toolRadius)
+            machinablePoly = cleanPolygon(targetPolys).buffer(-(toolRadius + roughStock))
             keepOutPoly = MultiPolygon()
             if keepOutMesh is not None and not keepOutMesh.is_empty:
                 keepOutPolys = robustSection(keepOutMesh, zValue)
                 if keepOutPolys:
-                    keepOutPoly = cleanPolygon(keepOutPolys).buffer(toolRadius + safetyMargin + roughStock)
+                    keepOutPoly = cleanPolygon(keepOutPolys).buffer(toolRadius + safetyMargin + stepOver + roughStock)
             if machinablePoly.is_empty:
                 continue
             safePoly = machinablePoly.difference(keepOutPoly.buffer(0))
@@ -149,95 +149,146 @@ class DropRasterStrategy(IToolpathStrategy):
         return allPaths
 
 class SurfaceProjectionFinishingStrategy(IToolpathStrategy):
-    def isBallCollisionFree(self, centerPoint: np.ndarray, contactPoint: np.ndarray, targetTree: cKDTree, targetSamples: np.ndarray, keepOutTree: cKDTree, toolRadius: float, safetyMargin: float, collisionClearance: float, contactPatchRadius: float, localAllowance: float) -> bool:
+    def isBallCollisionFree(self, centerPoint: np.ndarray, contactPoint: np.ndarray, contactNormal: np.ndarray, targetTree: cKDTree, targetSamples: np.ndarray, keepOutTree: cKDTree, toolRadius: float, safetyMargin: float, collisionClearance: float, contactPatchRadius: float, localAllowance: float) -> bool:
         if keepOutTree is not None:
             keepOutDist, _ = keepOutTree.query(centerPoint, k=1)
             if np.isfinite(keepOutDist) and keepOutDist < toolRadius + safetyMargin:
                 return False
         if targetTree is None or len(targetSamples) == 0:
             return True
-        sphereRadius = max(toolRadius - collisionClearance, toolRadius * 0.75)
+        sphereRadius = max(toolRadius - collisionClearance, toolRadius * 0.78)
         nearIndices = targetTree.query_ball_point(centerPoint, r=sphereRadius + localAllowance)
         if not nearIndices:
             return True
         for sampleIndex in nearIndices:
             samplePoint = targetSamples[sampleIndex]
-            radialDist = float(np.linalg.norm(samplePoint[:2] - centerPoint[:2]))
-            if radialDist >= sphereRadius:
+            centerDist = float(np.linalg.norm(samplePoint - centerPoint))
+            if centerDist >= sphereRadius + localAllowance:
                 continue
-            sphereLowerZ = centerPoint[2] - np.sqrt(max(sphereRadius * sphereRadius - radialDist * radialDist, 0.0))
-            if samplePoint[2] > sphereLowerZ + localAllowance:
-                if float(np.linalg.norm(samplePoint - contactPoint)) > contactPatchRadius:
-                    return False
+            deltaVec = samplePoint - contactPoint
+            normalOffset = float(np.dot(deltaVec, contactNormal))
+            tangentVec = deltaVec - normalOffset * contactNormal
+            tangentDist = float(np.linalg.norm(tangentVec))
+            if tangentDist > contactPatchRadius and normalOffset > -localAllowance:
+                return False
         return True
 
-    def generateSingleRaster(self, targetMesh: trimesh.Trimesh, keepOutTree: cKDTree, targetTree: cKDTree, targetSamples: np.ndarray, toolRadius: float, params: Dict[str, Any], safetyMargin: float, fixedValue: float, scanAxis: str, reverseFlag: bool) -> List[np.ndarray]:
-        boundsArray = np.asarray(targetMesh.bounds, dtype=float)
-        projectionStep = float(params.get('projectionStep', 0.35))
-        safeHeight = float(params.get('safeHeight', 5.0))
+    def sampleReachableCenters(self, targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh, toolRadius: float, params: Dict[str, Any], safetyMargin: float) -> Tuple[np.ndarray, np.ndarray]:
         finishStock = float(params.get('finishStock', 0.03))
-        finishNormalAngleDeg = float(params.get('finishNormalAngleDeg', 88.0))
-        collisionClearance = float(params.get('collisionClearance', max(0.08 * toolRadius, 0.03)))
-        contactPatchRadius = float(params.get('contactPatchRadius', max(0.75 * toolRadius, projectionStep * 2.4)))
-        lineGapTolerance = float(params.get('lineGapTolerance', projectionStep * 3.0))
-        localAllowance = float(params.get('localAllowance', 0.05))
+        finishNormalAngleDeg = float(params.get('finishNormalAngleDeg', 95.0))
+        collisionClearance = float(params.get('collisionClearance', max(0.05 * toolRadius, 0.02)))
+        contactPatchRadius = float(params.get('contactPatchRadius', max(0.85 * toolRadius, 0.8)))
+        localAllowance = float(params.get('localAllowance', 0.06))
+        surfaceSampleCount = int(params.get('surfaceSampleCount', 36000))
+        keepOutSampleCount = int(params.get('keepOutSampleCount', 8000))
         minVisibleNormalZ = float(np.cos(np.deg2rad(finishNormalAngleDeg)))
-        zStart = float(boundsArray[1, 2] + safeHeight + toolRadius + finishStock)
-        if scanAxis == 'x':
-            scanValues = np.arange(boundsArray[0, 0], boundsArray[1, 0] + projectionStep * 0.5, projectionStep, dtype=float)
-            rayOrigins = np.column_stack([scanValues, np.full(len(scanValues), fixedValue), np.full(len(scanValues), zStart)])
-        else:
-            scanValues = np.arange(boundsArray[0, 1], boundsArray[1, 1] + projectionStep * 0.5, projectionStep, dtype=float)
-            rayOrigins = np.column_stack([np.full(len(scanValues), fixedValue), scanValues, np.full(len(scanValues), zStart)])
-        rayDirs = np.tile([0.0, 0.0, -1.0], (len(rayOrigins), 1))
-        locations, indexRay, indexTri = targetMesh.ray.intersects_location(ray_origins=rayOrigins, ray_directions=rayDirs)
-        lineCenters = []
-        for rayIndex in range(len(rayOrigins)):
-            hitIndices = np.where(indexRay == rayIndex)[0]
-            if len(hitIndices) == 0:
-                continue
-            bestHit = hitIndices[np.argmax(locations[hitIndices, 2])]
-            triIndex = int(indexTri[bestHit])
-            triNormal = targetMesh.face_normals[triIndex]
-            if triNormal[2] < minVisibleNormalZ:
-                continue
-            contactPoint = np.asarray(locations[bestHit], dtype=float)
-            centerPoint = contactPoint + np.array([0.0, 0.0, toolRadius + finishStock], dtype=float)
-            if not self.isBallCollisionFree(centerPoint, contactPoint, targetTree, targetSamples, keepOutTree, toolRadius, safetyMargin, collisionClearance, contactPatchRadius, localAllowance):
-                continue
-            lineCenters.append(centerPoint)
-        if reverseFlag:
-            lineCenters.reverse()
-        if len(lineCenters) < 2:
+        targetSamples, targetNormals = sampleMeshPointsWithNormals(targetMesh, surfaceSampleCount)
+        if len(targetSamples) == 0:
+            return np.empty((0, 3), dtype=float), np.empty((0, 3), dtype=float)
+        keepOutTree = None
+        if keepOutMesh is not None and not keepOutMesh.is_empty:
+            keepOutSamples, _ = sampleMeshPointsWithNormals(keepOutMesh, keepOutSampleCount)
+            if len(keepOutSamples) > 0:
+                keepOutTree = cKDTree(keepOutSamples)
+        targetTree = cKDTree(targetSamples)
+        visibleMask = targetNormals[:, 2] >= minVisibleNormalZ
+        candidateContacts = np.asarray(targetSamples[visibleMask], dtype=float)
+        candidateNormals = np.asarray(targetNormals[visibleMask], dtype=float)
+        if len(candidateContacts) == 0:
+            return np.empty((0, 3), dtype=float), np.empty((0, 3), dtype=float)
+        candidateCenters = candidateContacts + candidateNormals * (toolRadius + finishStock)
+        validContacts = []
+        validCenters = []
+        for pointIndex in range(len(candidateCenters)):
+            centerPoint = candidateCenters[pointIndex]
+            contactPoint = candidateContacts[pointIndex]
+            contactNormal = candidateNormals[pointIndex]
+            if self.isBallCollisionFree(centerPoint, contactPoint, contactNormal, targetTree, targetSamples, keepOutTree, toolRadius, safetyMargin, collisionClearance, contactPatchRadius, localAllowance):
+                validContacts.append(contactPoint)
+                validCenters.append(centerPoint)
+        if not validCenters:
+            return np.empty((0, 3), dtype=float), np.empty((0, 3), dtype=float)
+        return np.asarray(validContacts, dtype=float), np.asarray(validCenters, dtype=float)
+
+    def reduceOrderedCenters(self, centerPoints: np.ndarray, projectionStep: float) -> np.ndarray:
+        if len(centerPoints) <= 2:
+            return np.asarray(centerPoints, dtype=float)
+        reducedPoints = [centerPoints[0]]
+        lastPoint = centerPoints[0]
+        minKeepDist = max(projectionStep * 0.65, 1e-6)
+        for pointItem in centerPoints[1:]:
+            if float(np.linalg.norm(pointItem - lastPoint)) >= minKeepDist:
+                reducedPoints.append(pointItem)
+                lastPoint = pointItem
+        if len(reducedPoints) == 1:
+            reducedPoints.append(centerPoints[-1])
+        return np.asarray(reducedPoints, dtype=float)
+
+    def buildStripePaths(self, contactPoints: np.ndarray, centerPoints: np.ndarray, boundsArray: np.ndarray, scanAxis: str, stepOver: float, projectionStep: float, lineGapTolerance: float) -> List[np.ndarray]:
+        if len(contactPoints) == 0 or len(centerPoints) == 0:
             return []
-        lineArray = densifyPolyline(np.asarray(lineCenters, dtype=float), projectionStep)
-        return splitPolylineByGap(lineArray, max(lineGapTolerance, projectionStep * 2.5))
+        if scanAxis == 'x':
+            fixedIndex = 1
+            travelIndex = 0
+        else:
+            fixedIndex = 0
+            travelIndex = 1
+        bandHalfWidth = max(stepOver * 0.55, projectionStep * 1.4)
+        fixedValues = np.arange(boundsArray[0, fixedIndex], boundsArray[1, fixedIndex] + stepOver * 0.5, stepOver, dtype=float)
+        reverseFlag = False
+        allPaths = []
+        for fixedValue in fixedValues:
+            bandMask = np.abs(contactPoints[:, fixedIndex] - fixedValue) <= bandHalfWidth
+            if int(np.count_nonzero(bandMask)) < 2:
+                continue
+            stripeContacts = np.asarray(contactPoints[bandMask], dtype=float)
+            stripeCenters = np.asarray(centerPoints[bandMask], dtype=float)
+            order = np.argsort(stripeContacts[:, travelIndex])
+            stripeContacts = stripeContacts[order]
+            stripeCenters = stripeCenters[order]
+            subPaths = []
+            currentStripe = [stripeCenters[0]]
+            for pointIndex in range(1, len(stripeCenters)):
+                travelGap = abs(float(stripeContacts[pointIndex, travelIndex] - stripeContacts[pointIndex - 1, travelIndex]))
+                spatialGap = float(np.linalg.norm(stripeCenters[pointIndex] - stripeCenters[pointIndex - 1]))
+                if travelGap > lineGapTolerance or spatialGap > lineGapTolerance * 1.5:
+                    if len(currentStripe) >= 2:
+                        subPaths.append(np.asarray(currentStripe, dtype=float))
+                    currentStripe = [stripeCenters[pointIndex]]
+                else:
+                    currentStripe.append(stripeCenters[pointIndex])
+            if len(currentStripe) >= 2:
+                subPaths.append(np.asarray(currentStripe, dtype=float))
+            for subPath in subPaths:
+                reducedPath = self.reduceOrderedCenters(subPath, projectionStep)
+                if len(reducedPath) < 2:
+                    continue
+                densePath = densifyPolyline(reducedPath, projectionStep)
+                denseSubPaths = splitPolylineByGap(densePath, max(lineGapTolerance, projectionStep * 3.0))
+                for denseSubPath in denseSubPaths:
+                    if len(denseSubPath) < 2:
+                        continue
+                    finalPath = np.asarray(denseSubPath, dtype=float)
+                    if reverseFlag:
+                        finalPath = finalPath[::-1]
+                    allPaths.append(finalPath)
+            reverseFlag = not reverseFlag
+        return allPaths
 
     def generate(self, targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh, toolRadius: float, params: Dict[str, Any], safetyMargin: float) -> List[np.ndarray]:
         if targetMesh.is_empty:
             return []
-        scanMode = str(params.get('scanMode', 'xy')).lower()
-        stepOver = float(params.get('stepOver', 0.8))
-        collisionSampleCount = int(params.get('collisionSampleCount', 18000))
-        keepOutSampleCount = int(params.get('keepOutSampleCount', 6000))
-        targetSamples, _ = sampleMeshPointsWithNormals(targetMesh, collisionSampleCount)
-        keepOutSamples, _ = sampleMeshPointsWithNormals(keepOutMesh, keepOutSampleCount)
-        targetTree = cKDTree(targetSamples) if len(targetSamples) > 0 else None
-        keepOutTree = cKDTree(keepOutSamples) if len(keepOutSamples) > 0 else None
+        scanAxis = str(params.get('scanAxis', 'x')).lower()
+        if scanAxis not in {'x', 'y'}:
+            scanAxis = 'x'
+        stepOver = float(params.get('stepOver', 0.45))
+        projectionStep = float(params.get('projectionStep', 0.25))
+        lineGapTolerance = float(params.get('lineGapTolerance', max(stepOver * 2.0, projectionStep * 4.0)))
+        contactPoints, centerPoints = self.sampleReachableCenters(targetMesh, keepOutMesh, toolRadius, params, safetyMargin)
+        if len(centerPoints) == 0:
+            return []
         boundsArray = np.asarray(targetMesh.bounds, dtype=float)
-        reverseFlag = False
-        allPaths = []
-        scanAxes = ['x', 'y'] if scanMode == 'xy' else [scanMode]
-        for scanAxis in scanAxes:
-            if scanAxis == 'x':
-                fixedValues = np.arange(boundsArray[0, 1], boundsArray[1, 1] + stepOver * 0.5, stepOver, dtype=float)
-            else:
-                fixedValues = np.arange(boundsArray[0, 0], boundsArray[1, 0] + stepOver * 0.5, stepOver, dtype=float)
-            for fixedValue in fixedValues:
-                subPaths = self.generateSingleRaster(targetMesh, keepOutTree, targetTree, targetSamples, toolRadius, params, safetyMargin, fixedValue, scanAxis, reverseFlag)
-                reverseFlag = not reverseFlag
-                allPaths.extend(subPaths)
-        return allPaths
+        return self.buildStripePaths(contactPoints, centerPoints, boundsArray, scanAxis, stepOver, projectionStep, lineGapTolerance)
 
 class ToolpathStrategyFactory:
     strategies = {

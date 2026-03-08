@@ -93,7 +93,8 @@ class CuraEngineController:
         subprocess.run(cmdArgs, capture_output=True, text=True, encoding="utf-8", errors="replace")
         self.lastExecutionTime = time.time() - startTime
 
-    def applyRetractionCompensation(self, filePath: str, bufferLength: float, retractDist: float, reloadSpeed: float, retractSpeedMms: float) -> None:
+    def applyRetractionCompensation(self, filePath: str, bufferLength: float, retractDist: float, reloadSpeed: float,
+                                    retractSpeedMms: float) -> None:
         with open(filePath, 'r') as f:
             lines = f.readlines()
         retractFeedrate = retractSpeedMms * 60.0
@@ -103,24 +104,32 @@ class CuraEngineController:
         currentY = 0.0
         currentE = 0.0
         needsReload = False
+        currentLayer = -1  # 初始设为-1，遇到 ;LAYER:0 时更新
 
         def calculateDistance(startX, startY, endX, endY):
-            return math.sqrt((endX - startX)**2 + (endY - startY)**2)
+            return math.sqrt((endX - startX) ** 2 + (endY - startY) ** 2)
 
         def processSegmentBuffer():
             nonlocal needsReload
             if not segmentBuffer:
+                return
+            if currentLayer == 0:
+                for seg in segmentBuffer:
+                    optimizedLines.append(seg["raw"])
+                segmentBuffer.clear()
+                needsReload = False
                 return
             totalDist = sum(seg["dist"] for seg in segmentBuffer)
             if totalDist <= bufferLength:
                 for seg in segmentBuffer[:-1]:
                     optimizedLines.append(seg["raw"])
                 lastSeg = segmentBuffer[-1]
-                optimizedLines.append(f"G1 X{lastSeg['x']:.3f} Y{lastSeg['y']:.3f} E{currentE - retractDist:.5f} F{retractFeedrate:.1f}\n")
+                optimizedLines.append(
+                    f"G1 X{lastSeg['x']:.3f} Y{lastSeg['y']:.3f} E{currentE - retractDist:.5f} F{retractFeedrate:.1f}\n")
             else:
                 accumulated = 0.0
                 splitIndex = -1
-                for i in range(len(segmentBuffer)-1, -1, -1):
+                for i in range(len(segmentBuffer) - 1, -1, -1):
                     accumulated += segmentBuffer[i]["dist"]
                     if accumulated >= bufferLength:
                         splitIndex = i
@@ -136,12 +145,17 @@ class CuraEngineController:
                 splitFeedrate = splitSeg["f"] if splitSeg["f"] else "2400"
                 optimizedLines.append(f"G1 X{splitX:.3f} Y{splitY:.3f} E{splitE:.5f} F{splitFeedrate}\n")
                 finalSeg = segmentBuffer[-1]
-                optimizedLines.append(f"G1 X{finalSeg['x']:.3f} Y{finalSeg['y']:.3f} E{currentE - retractDist:.5f} F{retractFeedrate:.1f}\n")
+                optimizedLines.append(
+                    f"G1 X{finalSeg['x']:.3f} Y{finalSeg['y']:.3f} E{currentE - retractDist:.5f} F{retractFeedrate:.1f}\n")
             segmentBuffer.clear()
             needsReload = True
-
         isExtruding = False
         for line in lines:
+            if line.startswith(";LAYER:"):
+                try:
+                    currentLayer = int(line.strip().split(":")[1])
+                except ValueError:
+                    pass
             parts = line.strip().split()
             if not parts:
                 optimizedLines.append(line)
@@ -168,9 +182,9 @@ class CuraEngineController:
                         nextF = part[1:]
                 isExtrusionMove = hasXy and hasE and nextE > currentE
                 if isExtrusionMove:
-                    if needsReload:
+                    if needsReload and currentLayer != 0:
                         optimizedLines.append(f"G1 E{currentE:.5f} F{reloadSpeed:.1f}\n")
-                        needsReload = False
+                    needsReload = False
                     dist = calculateDistance(currentX, currentY, nextX, nextY)
                     segmentBuffer.append({
                         "raw": line,
@@ -182,7 +196,7 @@ class CuraEngineController:
                 else:
                     if isExtruding:
                         processSegmentBuffer()
-                        isExtruding = False
+                    isExtruding = False
                     optimizedLines.append(line)
                 if hasXy:
                     currentX = nextX
@@ -192,7 +206,7 @@ class CuraEngineController:
             elif cmd == "G92":
                 if isExtruding:
                     processSegmentBuffer()
-                    isExtruding = False
+                isExtruding = False
                 for part in parts[1:]:
                     if part.startswith("E"):
                         currentE = float(part[1:])
@@ -355,40 +369,3 @@ def generateGcodeInterface(stlPath: str, outputPath: str, processConfig: Dict[st
         additiveConfig=additiveConfig
     )
     return {"gcodePath": resultPath, "status": "success"}
-
-def main(stlPath: str):
-    wslEnginePath = "/mnt/c/users/xuanouye/desktop/thesis/04-implementation/pc/external/curaengine/build/release/CuraEngine"
-    outputPath = stlPath.replace(".stl", ".gcode")
-    definitionFiles = [
-        "C:\\Users\\XuanouYe\\Desktop\\Thesis\\04-Implementation\\HASM-for-Alloy-Casting\\external\\Cura\\resources\\definitions\\fdmprinter.def.json",
-        "C:\\Users\\XuanouYe\\Desktop\\Thesis\\04-Implementation\\HASM-for-Alloy-Casting\\external\\Cura\\resources\\definitions\\fdmextruder.def.json",
-    ]
-    settings = {
-        "layer_height": "0.2",
-        "wall_thickness": "0.8",
-        "roofing_layer_count": "0",
-        "flooring_layer_count": "0",
-        "top_layers": "4",
-        "bottom_layers": "4",
-    }
-    axisLimits = {
-        "X": (-100.0, 100.0),
-        "Y": (-100.0, 100.0),
-        "Z": (0.0, 100.0)
-    }
-    controller = CuraEngineController(wslEnginePath)
-    out = controller.generateGcode(
-        stlPath=stlPath,
-        outputPath=outputPath,
-        settings=settings,
-        definitionFiles=definitionFiles,
-        autoDropToBuildPlate=True,
-        autoCenterXY=True,
-        axisLimits=axisLimits,
-        additiveConfig=None
-    )
-    print(out)
-
-if __name__ == "__main__":
-    targetStlPath = "C:\\Users\\XuanouYe\\Desktop\\Thesis\\04-Implementation\\HASM-for-Alloy-Casting\\testModels\\cylinder.mold.stl"
-    main(targetStlPath)
