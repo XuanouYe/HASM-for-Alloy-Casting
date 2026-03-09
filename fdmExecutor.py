@@ -104,7 +104,6 @@ class CuraEngineController:
         currentY = 0.0
         currentE = 0.0
         needsReload = False
-        currentLayer = -1  # 初始设为-1，遇到 ;LAYER:0 时更新
 
         def calculateDistance(startX, startY, endX, endY):
             return math.sqrt((endX - startX) ** 2 + (endY - startY) ** 2)
@@ -112,12 +111,6 @@ class CuraEngineController:
         def processSegmentBuffer():
             nonlocal needsReload
             if not segmentBuffer:
-                return
-            if currentLayer == 0:
-                for seg in segmentBuffer:
-                    optimizedLines.append(seg["raw"])
-                segmentBuffer.clear()
-                needsReload = False
                 return
             totalDist = sum(seg["dist"] for seg in segmentBuffer)
             if totalDist <= bufferLength:
@@ -149,13 +142,9 @@ class CuraEngineController:
                     f"G1 X{finalSeg['x']:.3f} Y{finalSeg['y']:.3f} E{currentE - retractDist:.5f} F{retractFeedrate:.1f}\n")
             segmentBuffer.clear()
             needsReload = True
+
         isExtruding = False
         for line in lines:
-            if line.startswith(";LAYER:"):
-                try:
-                    currentLayer = int(line.strip().split(":")[1])
-                except ValueError:
-                    pass
             parts = line.strip().split()
             if not parts:
                 optimizedLines.append(line)
@@ -182,14 +171,19 @@ class CuraEngineController:
                         nextF = part[1:]
                 isExtrusionMove = hasXy and hasE and nextE > currentE
                 if isExtrusionMove:
-                    if needsReload and currentLayer != 0:
+                    if needsReload:
                         optimizedLines.append(f"G1 E{currentE:.5f} F{reloadSpeed:.1f}\n")
                     needsReload = False
                     dist = calculateDistance(currentX, currentY, nextX, nextY)
                     segmentBuffer.append({
                         "raw": line,
-                        "x": nextX, "y": nextY, "e": nextE, "f": nextF,
-                        "prevX": currentX, "prevY": currentY, "prevE": currentE,
+                        "x": nextX,
+                        "y": nextY,
+                        "e": nextE,
+                        "f": nextF,
+                        "prevX": currentX,
+                        "prevY": currentY,
+                        "prevE": currentE,
                         "dist": dist
                     })
                     isExtruding = True
@@ -213,8 +207,10 @@ class CuraEngineController:
                 optimizedLines.append(line)
             else:
                 optimizedLines.append(line)
+
         if segmentBuffer:
             processSegmentBuffer()
+
         with open(filePath, 'w') as f:
             f.writelines(optimizedLines)
 
