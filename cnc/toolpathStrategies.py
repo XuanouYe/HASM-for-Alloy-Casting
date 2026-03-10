@@ -8,10 +8,12 @@ from shapely.ops import unary_union
 from shapely.validation import make_valid
 from .geometryUtils import densifyPolyline, sampleMeshPointsWithNormals, splitPolylineByGap
 
+
 class IToolpathStrategy(ABC):
     @abstractmethod
     def generate(self, targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh, toolRadius: float, params: Dict[str, Any], safetyMargin: float) -> List[np.ndarray]:
         pass
+
 
 def cleanPolygon(polys: List[Any]) -> Any:
     cleanPolys = []
@@ -26,6 +28,7 @@ def cleanPolygon(polys: List[Any]) -> Any:
         return MultiPolygon()
     return unary_union(cleanPolys)
 
+
 def robustSection(mesh: trimesh.Trimesh, zValue: float, tolerance: float = 0.05) -> Any:
     sectionResult = mesh.section(plane_origin=[0.0, 0.0, zValue], plane_normal=[0.0, 0.0, 1.0])
     if sectionResult is None:
@@ -37,6 +40,7 @@ def robustSection(mesh: trimesh.Trimesh, zValue: float, tolerance: float = 0.05)
     slice2d, _ = sectionResult.to_2D()
     return slice2d.polygons_full
 
+
 def extractLineStrings(geomValue: Any) -> List[Any]:
     if geomValue is None or geomValue.is_empty:
         return []
@@ -44,10 +48,11 @@ def extractLineStrings(geomValue: Any) -> List[Any]:
     if geomType == 'LineString':
         return [geomValue]
     if geomType == 'MultiLineString':
-        return [lineItem for lineItem in geomValue.geoms if lineItem.geom_type == 'LineString']
+        return [l for l in geomValue.geoms if l.geom_type == 'LineString']
     if geomType == 'GeometryCollection':
-        return [lineItem for lineItem in geomValue.geoms if lineItem.geom_type == 'LineString']
+        return [l for l in geomValue.geoms if l.geom_type == 'LineString']
     return []
+
 
 class ZLevelRoughingStrategy(IToolpathStrategy):
     def generate(self, targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh, toolRadius: float, params: Dict[str, Any], safetyMargin: float) -> List[np.ndarray]:
@@ -74,7 +79,7 @@ class ZLevelRoughingStrategy(IToolpathStrategy):
             if keepOutMesh is not None and not keepOutMesh.is_empty:
                 keepOutPolys = robustSection(keepOutMesh, zValue)
                 if keepOutPolys:
-                    keepOutPoly = cleanPolygon(keepOutPolys).buffer(toolRadius + safetyMargin + stepOver + roughStock)
+                    keepOutPoly = cleanPolygon(keepOutPolys).buffer(toolRadius + safetyMargin + roughStock)
             if machinablePoly.is_empty:
                 continue
             safePoly = machinablePoly.difference(keepOutPoly.buffer(0))
@@ -104,23 +109,19 @@ class ZLevelRoughingStrategy(IToolpathStrategy):
                     reverseFlag = not reverseFlag
         return allPaths
 
+
 class DropRasterStrategy(IToolpathStrategy):
     def generate(self, targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh, toolRadius: float, params: Dict[str, Any], safetyMargin: float) -> List[np.ndarray]:
         if targetMesh.is_empty:
             return []
-        if keepOutMesh is not None and not keepOutMesh.is_empty:
-            combinedMesh = trimesh.util.concatenate([targetMesh, keepOutMesh])
-        else:
-            combinedMesh = targetMesh
+        combinedMesh = trimesh.util.concatenate([targetMesh, keepOutMesh]) if keepOutMesh is not None and not keepOutMesh.is_empty else targetMesh
         boundsArray = np.asarray(targetMesh.bounds, dtype=float)
         stepOver = float(params.get('stepOver', 1.0))
         safeHeight = float(params.get('safeHeight', 5.0))
         angleThreshold = float(params.get('angleThreshold', 1.047))
         minNormalZ = float(np.cos(angleThreshold))
-        xMin = float(boundsArray[0, 0])
-        yMin = float(boundsArray[0, 1])
-        xMax = float(boundsArray[1, 0])
-        yMax = float(boundsArray[1, 1])
+        xMin, yMin = float(boundsArray[0, 0]), float(boundsArray[0, 1])
+        xMax, yMax = float(boundsArray[1, 0]), float(boundsArray[1, 1])
         zMax = float(boundsArray[1, 2])
         xList = np.arange(xMin, xMax + stepOver * 0.5, stepOver, dtype=float)
         yList = np.arange(yMin, yMax + stepOver * 0.5, stepOver, dtype=float)
@@ -138,8 +139,7 @@ class DropRasterStrategy(IToolpathStrategy):
                     continue
                 bestHit = hitIndices[np.argmax(locations[hitIndices, 2])]
                 triIndex = int(indexTri[bestHit])
-                triNormal = combinedMesh.face_normals[triIndex]
-                if triNormal[2] >= minNormalZ:
+                if combinedMesh.face_normals[triIndex][2] >= minNormalZ:
                     linePoints.append([xList[rayIndex], yValue, float(locations[bestHit, 2]) + toolRadius])
             if reverseFlag:
                 linePoints.reverse()
@@ -147,6 +147,7 @@ class DropRasterStrategy(IToolpathStrategy):
             if len(linePoints) >= 2:
                 allPaths.append(np.asarray(linePoints, dtype=float))
         return allPaths
+
 
 class SurfaceProjectionFinishingStrategy(IToolpathStrategy):
     def isBallCollisionFree(self, centerPoint: np.ndarray, contactPoint: np.ndarray, contactNormal: np.ndarray, targetTree: cKDTree, targetSamples: np.ndarray, keepOutTree: cKDTree, toolRadius: float, safetyMargin: float, collisionClearance: float, contactPatchRadius: float, localAllowance: float) -> bool:
@@ -224,15 +225,11 @@ class SurfaceProjectionFinishingStrategy(IToolpathStrategy):
             reducedPoints.append(centerPoints[-1])
         return np.asarray(reducedPoints, dtype=float)
 
-    def buildStripePaths(self, contactPoints: np.ndarray, centerPoints: np.ndarray, boundsArray: np.ndarray, scanAxis: str, stepOver: float, projectionStep: float, lineGapTolerance: float) -> List[np.ndarray]:
+    def buildStripePaths(self, contactPoints: np.ndarray, centerPoints: np.ndarray, boundsArray: np.ndarray, scanAxis: str, stepOver: float, projectionStep: float, lineGapTolerance: float, keepOutChecker: Any, toolpathEngine: Any, hmSampleStep: float) -> List[np.ndarray]:
         if len(contactPoints) == 0 or len(centerPoints) == 0:
             return []
-        if scanAxis == 'x':
-            fixedIndex = 1
-            travelIndex = 0
-        else:
-            fixedIndex = 0
-            travelIndex = 1
+        fixedIndex = 1 if scanAxis == 'x' else 0
+        travelIndex = 0 if scanAxis == 'x' else 1
         bandHalfWidth = max(stepOver * 0.55, projectionStep * 1.4)
         fixedValues = np.arange(boundsArray[0, fixedIndex], boundsArray[1, fixedIndex] + stepOver * 0.5, stepOver, dtype=float)
         reverseFlag = False
@@ -271,7 +268,13 @@ class SurfaceProjectionFinishingStrategy(IToolpathStrategy):
                     finalPath = np.asarray(denseSubPath, dtype=float)
                     if reverseFlag:
                         finalPath = finalPath[::-1]
-                    allPaths.append(finalPath)
+                    if keepOutChecker is not None and toolpathEngine is not None and not keepOutChecker.isEmpty:
+                        clipped = toolpathEngine.clipPathsByCollisionChecker([finalPath], keepOutChecker, hmSampleStep)
+                        for cp in clipped:
+                            if len(cp) >= 2:
+                                allPaths.append(cp)
+                    else:
+                        allPaths.append(finalPath)
             reverseFlag = not reverseFlag
         return allPaths
 
@@ -284,11 +287,15 @@ class SurfaceProjectionFinishingStrategy(IToolpathStrategy):
         stepOver = float(params.get('stepOver', 0.45))
         projectionStep = float(params.get('projectionStep', 0.25))
         lineGapTolerance = float(params.get('lineGapTolerance', max(stepOver * 2.0, projectionStep * 4.0)))
+        keepOutChecker = params.get('_keepOutChecker', None)
+        toolpathEngine = params.get('_toolpathEngine', None)
+        hmSampleStep = float(params.get('_hmSampleStep', projectionStep))
         contactPoints, centerPoints = self.sampleReachableCenters(targetMesh, keepOutMesh, toolRadius, params, safetyMargin)
         if len(centerPoints) == 0:
             return []
         boundsArray = np.asarray(targetMesh.bounds, dtype=float)
-        return self.buildStripePaths(contactPoints, centerPoints, boundsArray, scanAxis, stepOver, projectionStep, lineGapTolerance)
+        return self.buildStripePaths(contactPoints, centerPoints, boundsArray, scanAxis, stepOver, projectionStep, lineGapTolerance, keepOutChecker, toolpathEngine, hmSampleStep)
+
 
 class ToolpathStrategyFactory:
     strategies = {
