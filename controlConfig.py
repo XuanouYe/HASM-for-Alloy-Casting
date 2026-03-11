@@ -21,8 +21,6 @@ parameterSchema = {
         "simplificationTarget":         {"type": int,  "min": 100,   "max": 10000000, "default": 10000,                   "required": False, "description": "简化目标面数"},
         "meshRepair":                   {"type": bool,                                 "default": True,                    "required": False, "description": "网格修复"},
         "validateOutput":               {"type": bool,                                 "default": True,                    "required": False, "description": "验证输出"},
-        "logLevel":                     {"type": str,  "options": ["DEBUG","INFO","WARNING","ERROR"], "default": "INFO",  "required": False, "description": "日志级别"},
-        "logFile":                      {"type": (str, type(None)),                    "default": None,                    "required": False, "description": "日志文件"},
     },
     "additive": {
         # ── 几何参数 ──────────────────────────────────────────────────────────
@@ -42,17 +40,17 @@ parameterSchema = {
         "bedTemperatureLayer0": {"type": int,   "min": 0,    "max": 150,    "default": 60,    "unit": "°C",     "required": False, "description": "首层热床温度"},
         # ── 速度 ──────────────────────────────────────────────────────────────
         "printSpeed":           {"type": int,   "min": 1,    "max": 150,    "default": 40,    "unit": "mm/s",   "required": True,  "description": "打印速度"},
-        "printSpeedLayer0":     {"type": int,   "min": 1,    "max": 100,    "default": 20,    "unit": "mm/s",   "required": False, "description": "首层打印速度"},
+        "printSpeedLayer0":     {"type": int,   "min": 1,    "max": 100,    "default": 10,    "unit": "mm/s",   "required": False, "description": "首层打印速度"},
         "travelSpeed":          {"type": int,   "min": 10,   "max": 300,    "default": 150,   "unit": "mm/s",   "required": False, "description": "空走速度"},
         # ── 冷却 ──────────────────────────────────────────────────────────────
-        "fanEnabled":           {"type": bool,                                "default": True,                   "required": False, "description": "启用风扇"},
+        "fanEnabled":           {"type": bool,                              "default": True,                    "required": False, "description": "启用风扇"},
         "coolFanSpeed":         {"type": int,   "min": 0,    "max": 100,    "default": 100,   "unit": "%",      "required": False, "description": "风扇速度"},
         "coolMinLayerTime":     {"type": float, "min": 1.0,  "max": 60.0,   "default": 10.0,  "unit": "s",      "required": False, "description": "最小层时间"},
         # ── 挤出机物理参数（颗粒料适配）─────────────────────────────────────
         "nozzleDiameter":       {"type": float, "min": 0.1,  "max": 5.0,    "default": 0.4,   "unit": "mm",     "required": False, "description": "喷嘴直径"},
         "materialDiameter":     {"type": float, "min": 0.5,  "max": 20.0,   "default": 1.75,  "unit": "mm",     "required": False, "description": "等效线径（颗粒料标定值）"},
         "materialFlow":         {"type": int,   "min": 10,   "max": 500,    "default": 200,   "unit": "%",      "required": False, "description": "挤出流量倍率"},
-        "extrusionScaleFactor": {"type": float, "min": 0.01, "max": 100.0,  "default": 1.0,                     "required": False, "description": "E→C轴换算系数（颗粒料标定）"},
+        "extrusionScaleFactor": {"type": float, "min": 0.01, "max": 100.0,  "default": 2.5,                     "required": False, "description": "E→C轴换算系数（颗粒料标定）"},
         # ── 回抽后处理参数（颗粒料专用，与 CuraEngine 内置回抽完全分离）────
         # 语义说明：
         #   retractionEnabled      → 控制 applyRetractionCompensation 后处理是否执行

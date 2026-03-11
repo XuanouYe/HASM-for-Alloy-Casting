@@ -97,8 +97,7 @@ class CuraEngineController:
     def executeSlice(self, cmdArgs: list) -> None:
         """
         执行 CuraEngine 切片命令。
-        FIX: 检查 returncode，失败时将 stderr 内容拼入异常消息抛出，
-             不再静默忽略切片错误。
+        检查 returncode，失败时将 stderr 内容拼入异常消息抛出。
         """
         startTime = time.time()
         result = subprocess.run(
@@ -127,99 +126,170 @@ class CuraEngineController:
                                     reloadSpeed: float,
                                     retractSpeedMms: float) -> None:
         """
-        颗粒料回抽后处理（后处理专用，与 CuraEngine 内置回抽完全独立）。
+        颗粒料回抽后处理。
 
-        在每段连续挤出路径末尾插入 C 轴回抽指令，
-        在下一段挤出开始前插入 C 轴重载指令。
+        策略：
+          - 第一层（;LAYER:0）期间不执行回抽，所有挤出段原样输出。
+            理由：首层需要良好的床面粘附，回抽会导致挤出中断、拉丝和粘附失败；
+                  颗粒料螺杆在首层低速挤出时回抽响应滞后，效果适得其反。
+          - 第二层起（;LAYER:1 及以后）恢复正常回抽补偿算法。
 
-        参数含义：
-          bufferLength    — 路径末尾多少 mm 内触发回抽（mm，XY 平面距离）
-          retractDist     — 回抽量（C 轴当量 mm，即螺杆等效后退量）
-          reloadSpeed     — 重载进给速度（mm/min）
-          retractSpeedMms — 回抽速度（mm/s，内部转换为 mm/min）
+        层号判断依据：
+          CuraEngine 输出的 G 代码在每层开始前插入注释 ;LAYER:N（N 从 0 起）。
+          本函数扫描此注释更新 isFirstLayer 状态，不依赖 Z 高度，
+          因此对多材料、变层高等特殊切片均可靠有效。
 
-        注意：此函数在 replaceExtruderAxis（E→C 替换）之前调用，
-              文件中此时仍为 E 轴；回抽指令直接写 C 轴（不经过 E→C 替换），
-              因此插入顺序为：
-                1. applyRetractionCompensation（操作 E 轴数据，插入 C 轴回抽）
-                2. replaceExtruderAxis（将剩余 E 轴替换为 C 轴）
+        flushBuffer 行为差异：
+          isFirstLayer=True  → 原样输出 buffer 中所有挤出行，不插回抽/重载指令，
+                               不置 needsReload=True（避免第二层开头出现多余重载）
+          isFirstLayer=False → 正常执行回抽补偿算法，插入 C 轴回抽和重载指令
+
+        执行顺序（在 generateGcode 流水线中）：
+          1. applyRetractionCompensation（此函数）—— 操作 E 轴数据，插入 C 轴回抽
+          2. replaceExtruderAxis —— 将剩余 E 轴替换为 C 轴并乘换算系数
         """
         logger.info(
             f"[回抽后处理] 开始 | 文件={filePath} | "
             f"buffer={bufferLength}mm retract={retractDist}mm "
-            f"reload={reloadSpeed}mm/min speed={retractSpeedMms}mm/s"
+            f"reload={reloadSpeed}mm/min speed={retractSpeedMms}mm/s | "
+            f"第一层回抽=禁用"
         )
 
         with open(filePath, 'r') as f:
             lines = f.readlines()
 
         retractFeedrate = retractSpeedMms * 60.0
-        optimizedLines = []
-        segmentBuffer = []
+        optimizedLines  = []
+        segmentBuffer   = []
         currentX = 0.0; currentY = 0.0; currentE = 0.0
-        needsReload = False
+        needsReload  = False
+        isFirstLayer = True   # 初始假定在第一层之前（序言区），等同于第一层行为
+        layerSeen    = False  # 是否已遇到第一个 ;LAYER: 注释
 
         def dist(x1, y1, x2, y2):
             return math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
 
         def flushBuffer():
+            """
+            将 segmentBuffer 中的挤出段写入 optimizedLines。
+            isFirstLayer=True  → 原样输出，不插回抽，不修改 needsReload
+            isFirstLayer=False → 执行缓冲区分割，在路径末尾插入 C 轴回抽指令
+            """
             nonlocal needsReload
             if not segmentBuffer:
                 return
+
+            if isFirstLayer:
+                # 第一层：原样透传，完全不插入回抽/重载指令
+                for s in segmentBuffer:
+                    optimizedLines.append(s["raw"])
+                segmentBuffer.clear()
+                # 故意不置 needsReload=True，避免第二层开头出现无效重载
+                return
+
+            # 第二层及以后：正常回抽补偿
             totalDist = sum(s["dist"] for s in segmentBuffer)
             if totalDist <= bufferLength:
+                # 整段路径都在缓冲区内 → 最后一个移动点同时插入回抽
                 for s in segmentBuffer[:-1]:
                     optimizedLines.append(s["raw"])
                 last = segmentBuffer[-1]
                 optimizedLines.append(
                     f"G1 X{last['x']:.3f} Y{last['y']:.3f} "
-                    f"C{currentE - retractDist:.5f} F{retractFeedrate:.1f}\n")
+                    f"C{currentE - retractDist:.5f} F{retractFeedrate:.1f}\n"
+                )
             else:
-                accumulated = 0.0; splitIndex = -1
+                # 路径超出缓冲区 → 找到距路径末尾 bufferLength 处的分割点
+                accumulated = 0.0
+                splitIndex  = -1
                 for i in range(len(segmentBuffer) - 1, -1, -1):
                     accumulated += segmentBuffer[i]["dist"]
                     if accumulated >= bufferLength:
-                        splitIndex = i; break
+                        splitIndex = i
+                        break
+
+                # 分割点之前的线段原样输出
                 for i in range(splitIndex):
                     optimizedLines.append(segmentBuffer[i]["raw"])
-                sp = segmentBuffer[splitIndex]
+
+                # 分割点线段：在触发位置截断，插入部分挤出 + 回抽起始
+                sp       = segmentBuffer[splitIndex]
                 overflow = accumulated - bufferLength
-                ratio = overflow / sp["dist"]
+                ratio    = overflow / sp["dist"]
                 sx = sp["prevX"] + (sp["x"] - sp["prevX"]) * ratio
                 sy = sp["prevY"] + (sp["y"] - sp["prevY"]) * ratio
                 se = sp["prevE"] + (sp["e"] - sp["prevE"]) * ratio
                 sf = sp["f"] if sp["f"] else "2400"
                 optimizedLines.append(f"G1 X{sx:.3f} Y{sy:.3f} C{se:.5f} F{sf}\n")
+
+                # 最后一个移动点同时完成 XY 到位 + 回抽到位
                 final = segmentBuffer[-1]
                 optimizedLines.append(
                     f"G1 X{final['x']:.3f} Y{final['y']:.3f} "
-                    f"C{currentE - retractDist:.5f} F{retractFeedrate:.1f}\n")
+                    f"C{currentE - retractDist:.5f} F{retractFeedrate:.1f}\n"
+                )
+
             segmentBuffer.clear()
             needsReload = True
 
         isExtruding = False
         for line in lines:
-            parts = line.strip().split()
+            # ── 层号追踪：通过 ;LAYER:N 注释判断当前所在层 ──────────────────
+            stripped = line.strip()
+            if stripped.startswith(";LAYER:"):
+                try:
+                    layerNum = int(stripped.split(":")[1])
+                except (IndexError, ValueError):
+                    layerNum = -1
+
+                # 进入第一层：开始屏蔽回抽
+                if layerNum == 0:
+                    if isExtruding:
+                        flushBuffer()   # 清空序言区残余 buffer（通常为空）
+                    isExtruding  = False
+                    isFirstLayer = True
+                    layerSeen    = True
+                    logger.debug("[回抽后处理] 进入第一层，回抽已禁用")
+
+                # 进入第二层：恢复回抽
+                elif layerNum >= 1 and isFirstLayer:
+                    if isExtruding:
+                        flushBuffer()   # 清空第一层末尾残余 buffer（原样输出）
+                    isExtruding  = False
+                    isFirstLayer = False
+                    logger.debug(f"[回抽后处理] 进入第 {layerNum} 层，回抽已启用")
+
+                optimizedLines.append(line)
+                continue
+
+            # ── 运动指令处理 ──────────────────────────────────────────────────
+            parts = stripped.split()
             if not parts:
-                optimizedLines.append(line); continue
+                optimizedLines.append(line)
+                continue
+
             cmd = parts[0]
             if cmd in ["G0", "G1"]:
                 nextX = currentX; nextY = currentY; nextE = currentE
                 nextF = None; hasXy = False; hasE = False
                 for p in parts[1:]:
-                    if p.startswith("X"):   nextX = float(p[1:]); hasXy = True
+                    if   p.startswith("X"): nextX = float(p[1:]); hasXy = True
                     elif p.startswith("Y"): nextY = float(p[1:]); hasXy = True
                     elif p.startswith("E"): nextE = float(p[1:]); hasE = True
                     elif p.startswith("F"): nextF = p[1:]
+
                 isExtrusion = hasXy and hasE and nextE > currentE
                 if isExtrusion:
-                    if needsReload:
+                    # 非第一层时，若上一段已回抽，先插入重载指令
+                    if not isFirstLayer and needsReload:
                         optimizedLines.append(f"G1 C{currentE:.5f} F{reloadSpeed:.1f}\n")
                     needsReload = False
                     segmentBuffer.append({
-                        "raw": line, "x": nextX, "y": nextY, "e": nextE, "f": nextF,
+                        "raw":   line,
+                        "x":     nextX,  "y":     nextY,  "e":     nextE,
+                        "f":     nextF,
                         "prevX": currentX, "prevY": currentY, "prevE": currentE,
-                        "dist": dist(currentX, currentY, nextX, nextY)
+                        "dist":  dist(currentX, currentY, nextX, nextY),
                     })
                     isExtruding = True
                 else:
@@ -227,24 +297,33 @@ class CuraEngineController:
                         flushBuffer()
                     isExtruding = False
                     optimizedLines.append(line)
+
                 if hasXy: currentX = nextX; currentY = nextY
                 if hasE:  currentE = nextE
+
             elif cmd == "G92":
-                if isExtruding: flushBuffer()
+                if isExtruding:
+                    flushBuffer()
                 isExtruding = False
                 for p in parts[1:]:
-                    if p.startswith("E"): currentE = float(p[1:])
+                    if p.startswith("E"):
+                        currentE = float(p[1:])
                 optimizedLines.append(line)
+
             else:
                 optimizedLines.append(line)
 
+        # 文件末尾残余 buffer 清空
         if segmentBuffer:
             flushBuffer()
 
         with open(filePath, 'w') as f:
             f.writelines(optimizedLines)
 
-        logger.info(f"[回抽后处理] 完成 | 处理行数={len(lines)} → {len(optimizedLines)}")
+        logger.info(
+            f"[回抽后处理] 完成 | 处理行数={len(lines)} → {len(optimizedLines)} | "
+            f"层注释识别={'是' if layerSeen else '否（未找到 ;LAYER: 注释，全程回抽）'}"
+        )
 
     def replaceExtruderAxis(self, filePath: str, extrusionScaleFactor: float = 1.0) -> None:
         """
@@ -320,13 +399,9 @@ class CuraEngineController:
           3. STL 包围盒计算 → 自动落床 / 居中
           4. CuraEngine 切片（内置回抽已在 generateCuraConfig 中禁用）
           5. 验证输出文件存在
-          6. [可选] applyRetractionCompensation — 后处理回抽（由 retractionConfig 控制）
+          6. [可选] applyRetractionCompensation — 后处理回抽（第一层自动跳过）
           7. replaceExtruderAxis — E→C 轴替换 + 物理换算
           8. updateGcodeBoundingBox — 更新文件头包围盒注释
-
-        参数：
-          retractionConfig — 由 ConfigManager.getRetractionConfig() 返回，
-                             None 表示跳过回抽后处理。
         """
         wslStlPath = self.windowsPathToWsl(stlPath)
         wslOutputPath = self.ensureOutputDirectory(outputPath)
@@ -362,7 +437,6 @@ class CuraEngineController:
 
         windowsOutputPath = self.wslPathToWindows(wslOutputPath)
 
-        # 验证输出文件存在（CuraEngine 静默失败时的兜底检查）
         if not Path(windowsOutputPath).exists():
             raise RuntimeError(
                 f"CuraEngine 未生成输出文件: {windowsOutputPath}\n"
@@ -373,7 +447,6 @@ class CuraEngineController:
                 f"  4. 输出目录是否有写入权限"
             )
 
-        # FIX: 后处理回抽由 retractionConfig 参数控制，与 CuraEngine 内置回抽完全隔离
         if retractionConfig and retractionConfig.get("enabled", False):
             self.applyRetractionCompensation(
                 filePath=windowsOutputPath,
@@ -398,37 +471,23 @@ def generateGcodeInterface(stlPath: str, outputPath: str,
                            axisLimits: Optional[Dict[str, Tuple[float, float]]] = None) -> Dict[str, str]:
     """
     FDM G 代码生成入口，供 GUI MainController 和 WorkflowManager 调用。
-
-    processConfig 约定（两种调用方式均支持）：
-      方式 A — GUI/MainController 调用：
-        processConfig = {"additive": {...}, "casting": {...}, "fdm": {...}, ...}
-        （完整 config dict，additive 段在外层键下）
-
-      方式 B — WorkflowManager 调用（FIX: 修正原来直接传 stepConfig 的断裂）：
-        WorkflowManager.execute() 应传完整 config 而非展开的 stepConfig，
-        详见 controlWorkflow.py 修正说明。
     """
     cm = ConfigManager()
     defaultConfig = cm.getDefaultConfig()
 
-    # FIX: 支持两种调用形态
-    # 若 processConfig 含 "additive" 键 → 完整 config（方式 A，正常路径）
-    # 若不含 → 可能是已展开的 additive 段（方式 B 的旧调用，做兼容包装）
     if "additive" in processConfig:
         additiveConfig = processConfig.get("additive") or defaultConfig.get("additive") or {}
-        fdmConfig = processConfig.get("fdm") or defaultConfig.get("fdm") or {}
+        fdmConfig      = processConfig.get("fdm") or defaultConfig.get("fdm") or {}
     else:
-        # 兼容 WorkflowManager 旧调用：直接传入的是 additive 段内容
         logger.warning(
             "[generateGcodeInterface] processConfig 不含 'additive' 键，"
             "按旧调用兼容处理。建议 WorkflowManager 传完整 config dict。"
         )
         additiveConfig = processConfig or defaultConfig.get("additive") or {}
-        fdmConfig = defaultConfig.get("fdm") or {}
+        fdmConfig      = defaultConfig.get("fdm") or {}
 
     settings = cm.generateCuraConfig(additiveConfig)
 
-    # FIX: 引擎路径从 Windows 格式转换为 WSL 路径，保留原始大小写
     _tmp = CuraEngineController("")
     rawEnginePath = fdmConfig.get(
         "wslEnginePath",
@@ -453,7 +512,6 @@ def generateGcodeInterface(stlPath: str, outputPath: str,
             for axis, v in rawLimits.items()
         }
 
-    # FIX: 使用 ConfigManager.getRetractionConfig() 统一提取回抽参数
     retractionConfig = cm.getRetractionConfig(additiveConfig)
 
     controller = CuraEngineController(enginePath)
