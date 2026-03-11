@@ -41,24 +41,24 @@ parameterSchema = {
         "nozzleTemperatureLayer0": {"type": int,"min": 180,   "max": 450,    "default": 210,   "unit": "°C",    "required": False, "description": "首层喷嘴温度"},
         "bedTemperatureLayer0": {"type": int,   "min": 0,     "max": 150,    "default": 60,    "unit": "°C",    "required": False, "description": "首层热床温度"},
         # ── 速度 ──────────────────────────────────────────────────────────────
-        "printSpeed":           {"type": int,   "min": 1,     "max": 150,    "default": 60,    "unit": "mm/s",  "required": True,  "description": "打印速度"},
-        "printSpeedLayer0":     {"type": int,   "min": 1,     "max": 100,    "default": 60,    "unit": "mm/s",  "required": False, "description": "首层打印速度"},
+        "printSpeed":           {"type": int,   "min": 1,     "max": 150,    "default": 40,    "unit": "mm/s",  "required": True,  "description": "打印速度"},
+        "printSpeedLayer0":     {"type": int,   "min": 1,     "max": 100,    "default": 20,    "unit": "mm/s",  "required": False, "description": "首层打印速度"},
         "travelSpeed":          {"type": int,   "min": 10,    "max": 300,    "default": 150,   "unit": "mm/s",  "required": False, "description": "空走速度"},
         # ── 冷却 ──────────────────────────────────────────────────────────────
-        "fanEnabled":           {"type": bool,                                "default": True,                   "required": False, "description": "启用风扇"},
+        "fanEnabled":           {"type": bool,                               "default": True,                   "required": False, "description": "启用风扇"},
         "coolFanSpeed":         {"type": int,   "min": 0,     "max": 100,    "default": 100,   "unit": "%",     "required": False, "description": "风扇速度"},
         "coolMinLayerTime":     {"type": float, "min": 1.0,   "max": 60.0,   "default": 10.0,  "unit": "s",     "required": False, "description": "最小层时间"},
         # ── 挤出机物理参数（颗粒料适配）─────────────────────────────────────
         "nozzleDiameter":       {"type": float, "min": 0.1,   "max": 5.0,    "default": 0.4,   "unit": "mm",    "required": False, "description": "喷嘴直径"},
         "materialDiameter":     {"type": float, "min": 0.5,   "max": 20.0,   "default": 1.75,  "unit": "mm",    "required": False, "description": "等效线径（颗粒料标定值）"},
-        "materialFlow":         {"type": int,   "min": 10,    "max": 500,    "default": 100,   "unit": "%",     "required": False, "description": "挤出流量倍率"},
+        "materialFlow":         {"type": int,   "min": 10,    "max": 500,    "default": 200,   "unit": "%",     "required": False, "description": "挤出流量倍率"},
         "extrusionScaleFactor": {"type": float, "min": 0.01,  "max": 100.0,  "default": 1.0,                    "required": False, "description": "E→C轴换算系数（颗粒料标定）"},
         # ── 回抽（颗粒料适配默认值）─────────────────────────────────────────
-        "retractionEnabled":    {"type": bool,                                "default": False,                  "required": False, "description": "启用回抽（后处理）"},
-        "retractionDistance":   {"type": float, "min": 0.0,   "max": 50.0,   "default": 1.0,   "unit": "mm",    "required": False, "description": "回抽距离（螺杆当量）"},
-        "retractionSpeed":      {"type": float, "min": 1.0,   "max": 100.0,  "default": 10.0,  "unit": "mm/s",  "required": False, "description": "回抽速度"},
-        "retractionBufferLength":{"type": float,"min": 0.0,   "max": 50.0,   "default": 8.0,   "unit": "mm",    "required": False, "description": "回抽触发缓冲长度"},
-        "retractionReloadSpeed":{"type": float, "min": 10.0,  "max": 2000.0, "default": 120.0, "unit": "mm/min","required": False, "description": "重载速度"},
+        "retractionEnabled":    {"type": bool,                               "default": True,                   "required": False, "description": "启用回抽（后处理）"},
+        "retractionDistance":   {"type": float, "min": 0.0,   "max": 50.0,   "default": 25.0,   "unit": "mm",    "required": False, "description": "回抽距离（螺杆当量）"},
+        "retractionSpeed":      {"type": float, "min": 1.0,   "max": 100.0,  "default": 35.0,  "unit": "mm/s",  "required": False, "description": "回抽速度"},
+        "retractionBufferLength":{"type": float,"min": 0.0,   "max": 50.0,   "default": 3.0,   "unit": "mm",    "required": False, "description": "回抽触发缓冲长度"},
+        "retractionReloadSpeed":{"type": float, "min": 10.0,  "max": 2000.0, "default": 500.0, "unit": "mm/min","required": False, "description": "重载速度"},
         # ── 支撑 / 粘附 ───────────────────────────────────────────────────────
         "supportEnabled":       {"type": bool,                                "default": False,                  "required": False, "description": "启用支撑"},
         "adhesionType":         {"type": str,   "options": ["none","raft","brim","skirt"], "default": "none",   "required": False, "description": "粘附类型"},
