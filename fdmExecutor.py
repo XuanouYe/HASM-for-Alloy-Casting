@@ -9,6 +9,15 @@ from typing import Dict, Optional, List, Tuple, Any
 from controlConfig import ConfigManager
 logger = logging.getLogger(__name__)
 
+FDM_ENGINE_PATH = "C:\\Users\\XuanouYe\\Desktop\\Thesis\\04-Implementation\\HASM-for-Alloy-Casting\\external\\CuraEngine\\build\\Release\\CuraEngine"
+FDM_DEFINITION_FILES = [
+    "C:\\Users\\XuanouYe\\Desktop\\Thesis\\04-Implementation\\HASM-for-Alloy-Casting\\external\\Cura\\resources\\definitions\\fdmprinter.def.json",
+    "C:\\Users\\XuanouYe\\Desktop\\Thesis\\04-Implementation\\HASM-for-Alloy-Casting\\external\\Cura\\resources\\definitions\\fdmextruder.def.json",
+]
+FDM_AUTO_DROP      = True
+FDM_AUTO_CENTER_XY = True
+
+
 class CuraEngineController:
 
     def __init__(self, wslEnginePath: str):
@@ -343,26 +352,21 @@ class CuraEngineController:
         self.updateGcodeBoundingBox(windowsOutputPath)
         return windowsOutputPath
 
+
 def generateGcodeInterface(stlPath: str, outputPath: str, processConfig: Dict[str, Any], axisLimits: Optional[Dict[str, Tuple[float, float]]]=None) -> Dict[str, str]:
     cm = ConfigManager()
     defaultConfig = cm.getDefaultConfig()
     if 'additive' in processConfig:
-        additiveConfig = processConfig.get('additive') or defaultConfig.get('additive') or {}
-        fdmConfig = processConfig.get('fdm') or defaultConfig.get('fdm') or {}
+        additiveConfig = processConfig.get('additive') or defaultConfig['additive']
     else:
-        additiveConfig = processConfig or defaultConfig.get('additive') or {}
-        fdmConfig = defaultConfig.get('fdm') or {}
+        additiveConfig = processConfig or defaultConfig['additive']
     settings = cm.generateCuraConfig(additiveConfig)
     _tmp = CuraEngineController('')
-    rawEnginePath = fdmConfig.get('wslEnginePath', 'C:\\Users\\XuanouYe\\Desktop\\Thesis\\04-Implementation\\HASM-for-Alloy-Casting\\external\\CuraEngine\\build\\Release\\CuraEngine')
-    enginePath = rawEnginePath if rawEnginePath.startswith('/') else _tmp.windowsPathToWsl(rawEnginePath)
-    defs = fdmConfig.get('definitionFiles') or ['C:\\Users\\XuanouYe\\Desktop\\Thesis\\04-Implementation\\HASM-for-Alloy-Casting\\external\\Cura\\resources\\definitions\\fdmprinter.def.json', 'C:\\Users\\XuanouYe\\Desktop\\Thesis\\04-Implementation\\HASM-for-Alloy-Casting\\external\\Cura\\resources\\definitions\\fdmextruder.def.json']
-    autoDrop = fdmConfig.get('autoDropToBuildPlate', True)
-    autoCenter = fdmConfig.get('autoCenterXY', True)
+    enginePath = FDM_ENGINE_PATH if FDM_ENGINE_PATH.startswith('/') else _tmp.windowsPathToWsl(FDM_ENGINE_PATH)
     if not axisLimits:
         rawLimits = additiveConfig.get('axisLimits', {'X': [-100.0, 100.0], 'Y': [-100.0, 100.0], 'Z': [0.0, 100.0]})
         axisLimits = {axis: tuple(v) if isinstance(v, list) else v for axis, v in rawLimits.items()}
     retractionConfig = cm.getRetractionConfig(additiveConfig)
     controller = CuraEngineController(enginePath)
-    resultPath = controller.generateGcode(stlPath=stlPath, outputPath=outputPath, settings=settings, definitionFiles=defs, autoDropToBuildPlate=autoDrop, autoCenterXY=autoCenter, axisLimits=axisLimits, additiveConfig=additiveConfig, retractionConfig=retractionConfig)
+    resultPath = controller.generateGcode(stlPath=stlPath, outputPath=outputPath, settings=settings, definitionFiles=FDM_DEFINITION_FILES, autoDropToBuildPlate=FDM_AUTO_DROP, autoCenterXY=FDM_AUTO_CENTER_XY, axisLimits=axisLimits, additiveConfig=additiveConfig, retractionConfig=retractionConfig)
     return {'gcodePath': resultPath, 'status': 'success'}
