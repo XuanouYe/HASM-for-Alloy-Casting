@@ -9,7 +9,7 @@ parameterSchema = {
     "mold": {
         "boundingBoxOffset":            {"type": float, "min": 0.1,  "max": 100.0,    "default": 2.0,   "unit": "mm",     "required": True,  "description": "边界框偏移"},
         "targetFillTime":               {"type": float, "min": 0.1,  "max": 100.0,    "default": 5.0,   "unit": "s",      "required": False, "description": "目标充型时间"},
-        "sprueInletOffset":             {"type": float, "min": 0.0,  "max": 100.0,    "default": 5.0,   "unit": "mm",     "required": False, "description": "浇口偏移"},
+        "sprueInletOffset":             {"type": float, "min": 0.0,  "max": 100.0,    "default": 2.0,   "unit": "mm",     "required": False, "description": "浇口偏移"},
         "enableOrientationOptimization":{"type": bool,                                 "default": False,                   "required": False, "description": "启用方向优化"},
         "optimizationCriteria":         {"type": str,  "options": ["printability","strength","material"], "default": "printability", "required": False, "description": "优化目标"},
         "orientationConstraints":       {"type": list,                                 "default": [],                      "required": False, "description": "方向约束"},
