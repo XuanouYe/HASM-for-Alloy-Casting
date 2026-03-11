@@ -6,48 +6,64 @@ from controlConfig import ConfigManager
 
 logger = logging.getLogger(__name__)
 
+
 class WorkflowState(Enum):
-    IDLE = "idle"
+    IDLE        = "idle"
     INITIALIZED = "initialized"
-    RUNNING = "running"
-    PAUSED = "paused"
-    COMPLETED = "completed"
-    FAILED = "failed"
+    RUNNING     = "running"
+    PAUSED      = "paused"
+    COMPLETED   = "completed"
+    FAILED      = "failed"
+
 
 class ExecutionStep:
     def __init__(self, stepName: str, stepDisplay: str):
-        self.stepName = stepName
+        self.stepName    = stepName
         self.stepDisplay = stepDisplay
-        self.status = "pending"
-        self.output = None
-        self.error = None
-        self.startTime = None
-        self.endTime = None
+        self.status      = "pending"
+        self.output      = None
+        self.error       = None
+        self.startTime   = None
+        self.endTime     = None
 
     def toDict(self) -> Dict[str, Any]:
         return {
-            "step": self.stepName,
-            "display": self.stepDisplay,
-            "status": self.status,
-            "output": self.output,
-            "error": self.error,
+            "step":      self.stepName,
+            "display":   self.stepDisplay,
+            "status":    self.status,
+            "output":    self.output,
+            "error":     self.error,
             "startTime": self.startTime,
-            "endTime": self.endTime
+            "endTime":   self.endTime,
         }
 
+
 class WorkflowManager:
+    """
+    工作流管理器，串联增材 → 铸造 → 减材三个步骤。
+
+    moduleRegistry 约定：
+      每个模块函数签名为 func(projectId: str, fullConfig: Dict[str, Any]) -> Any
+      其中 fullConfig 为完整的配置字典（含 "additive"、"casting"、"subtractive" 等顶层键）。
+
+    FIX: execute() 原来传 stepConfig（已展开的单段参数），
+         导致 generateGcodeInterface 等函数无法通过 config.get("additive") 取到参数，
+         回抽等配置全部 fallback 到默认值。
+         现改为传完整 self.config，各模块函数自行按需取用所需段落。
+    """
+
     def __init__(self, configManager: Optional[ConfigManager] = None):
-        self.state = WorkflowState.IDLE
-        self.projectId = None
-        self.config = None
-        self.executionHistory = []
-        self.currentStepIndex = -1
-        self.configManager = configManager or ConfigManager()
+        self.state              = WorkflowState.IDLE
+        self.projectId          = None
+        self.config             = None
+        self.executionHistory   = []
+        self.currentStepIndex   = -1
+        self.configManager      = configManager or ConfigManager()
 
         self.steps = [
-            ("additive", "Additive Process - Mold Generation"),
-            ("casting", "Casting Process - Part Casting"),
-            ("subtractive", "Subtractive Process - Mold Removal")
+            ("additive",    "Additive Process - Mold Generation"),
+            ("casting",     "Casting Process - Part Casting"),
+            ("subtractive", "Subtractive Process - Mold Removal"),
         ]
 
         logger.info("Workflow manager initialized")
@@ -58,13 +74,9 @@ class WorkflowManager:
             return False
 
         self.projectId = projectId
+        self.config    = config if config is not None else self.configManager.loadConfig(projectId)
 
-        if config is None:
-            self.config = self.configManager.loadConfig(projectId)
-        else:
-            self.config = config
-
-        self.state = WorkflowState.INITIALIZED
+        self.state            = WorkflowState.INITIALIZED
         self.executionHistory = []
         self.currentStepIndex = -1
 
@@ -72,6 +84,12 @@ class WorkflowManager:
         return True
 
     def execute(self, moduleRegistry: Dict[str, Callable]) -> bool:
+        """
+        顺序执行三个步骤。
+
+        FIX: 每步调用时传入完整 self.config（而非 self.config.get(stepKey)），
+             确保各模块函数能访问所有配置段（如 fdmExecutor 需要 additive + fdm 两段）。
+        """
         if self.state != WorkflowState.INITIALIZED:
             logger.error(f"Workflow not properly initialized. Current state: {self.state.value}")
             return False
@@ -89,25 +107,25 @@ class WorkflowManager:
                 logger.info(f"Executing step {index + 1}/3: {stepDisplay}")
 
                 if stepKey not in moduleRegistry:
-                    raise KeyError(f"Module not found: {stepKey}")
+                    raise KeyError(f"Module not found in registry: {stepKey}")
 
                 moduleFunc = moduleRegistry[stepKey]
-                stepConfig = self.config.get(stepKey, {})
 
                 try:
-                    stepRecord.status = "running"
+                    stepRecord.status    = "running"
                     stepRecord.startTime = datetime.now().isoformat()
 
-                    output = moduleFunc(self.projectId, stepConfig)
+                    # FIX: 传完整 self.config，不再传展开的单段 stepConfig
+                    output = moduleFunc(self.projectId, self.config)
 
-                    stepRecord.status = "completed"
-                    stepRecord.output = output
+                    stepRecord.status  = "completed"
+                    stepRecord.output  = output
                     stepRecord.endTime = datetime.now().isoformat()
                     logger.info(f"Step completed successfully: {stepDisplay}")
 
                 except Exception as e:
-                    stepRecord.status = "failed"
-                    stepRecord.error = str(e)
+                    stepRecord.status  = "failed"
+                    stepRecord.error   = str(e)
                     stepRecord.endTime = datetime.now().isoformat()
                     logger.error(f"Step failed: {stepDisplay} - {e}")
                     self.state = WorkflowState.FAILED
@@ -124,18 +142,18 @@ class WorkflowManager:
 
     def getStatus(self) -> Dict[str, Any]:
         return {
-            "state": self.state.value,
-            "projectId": self.projectId,
+            "state":       self.state.value,
+            "projectId":   self.projectId,
             "currentStep": self.currentStepIndex,
-            "totalSteps": len(self.steps),
-            "progress": f"{self.currentStepIndex + 1}/{len(self.steps)}" if self.currentStepIndex >= 0 else "0/3",
-            "history": [step.toDict() for step in self.executionHistory]
+            "totalSteps":  len(self.steps),
+            "progress":    f"{self.currentStepIndex + 1}/{len(self.steps)}" if self.currentStepIndex >= 0 else "0/3",
+            "history":     [step.toDict() for step in self.executionHistory],
         }
 
     def reset(self):
-        self.state = WorkflowState.IDLE
-        self.projectId = None
-        self.config = None
+        self.state            = WorkflowState.IDLE
+        self.projectId        = None
+        self.config           = None
         self.executionHistory = []
         self.currentStepIndex = -1
         logger.info("Workflow reset")
