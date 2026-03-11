@@ -288,7 +288,6 @@ class CuraEngineController:
         with open(filePath, 'w') as f:
             f.writelines(lines)
 
-
     def generateGcode(self, stlPath: str, outputPath: str, settings: Optional[Dict[str, str]] = None,
                       definitionFiles: Optional[List[str]] = None, autoDropToBuildPlate: bool = True,
                       autoCenterXY: bool = True, axisLimits: Optional[Dict[str, Tuple[float, float]]] = None,
@@ -322,7 +321,8 @@ class CuraEngineController:
         cmdArgs = self.buildCommandArgs(stlPath=wslStlPath, outputPath=wslOutputPath, definitionFiles=definitionFiles, settings=settings)
         self.executeSlice(cmdArgs)
         windowsOutputPath = self.wslPathToWindows(wslOutputPath)
-        if additiveConfig and additiveConfig.get("retractionEnabled", True):
+        # FIX: default changed from True to False — retraction post-processing only runs when explicitly enabled
+        if additiveConfig and additiveConfig.get("retractionEnabled", False):
             bufferLen = float(additiveConfig.get("retractionBufferLength", 3.0))
             retractDist = float(additiveConfig.get("retractionDistance", 25.0))
             reloadSpeed = float(additiveConfig.get("retractionReloadSpeed", 500.0))
@@ -331,6 +331,7 @@ class CuraEngineController:
         self.replaceExtruderAxis(windowsOutputPath)
         self.updateGcodeBoundingBox(windowsOutputPath)
         return windowsOutputPath
+
 
 def generateGcodeInterface(stlPath: str, outputPath: str, processConfig: Dict[str, Any], axisLimits: Optional[Dict[str, Tuple[float, float]]] = None) -> Dict[str, str]:
     cm = ConfigManager()

@@ -1,7 +1,6 @@
 from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 from scipy.spatial import cKDTree
-from scipy.spatial.distance import cdist
 import trimesh
 from .geometryUtils import applyRotation
 
@@ -24,90 +23,60 @@ def _buildFclMesh(mesh: trimesh.Trimesh):
     return fcl.CollisionObject(bvhModel, fcl.Transform3f())
 
 
-def _rayMeshIntersectsSegment(mesh: trimesh.Trimesh, startPt: np.ndarray, endPt: np.ndarray, eps: float = 1e-4) -> bool:
-    direction = endPt - startPt
-    segLen = float(np.linalg.norm(direction))
-    if segLen < eps:
-        return False
-    dirUnit = direction / segLen
-    locs, _, _ = mesh.ray.intersects_location(
-        ray_origins=startPt.reshape(1, 3),
-        ray_directions=dirUnit.reshape(1, 3)
-    )
-    if len(locs) > 0:
-        dists = np.linalg.norm(locs - startPt, axis=1)
-        if np.any((dists > eps) & (dists < segLen - eps)):
-            return True
-    locs2, _, _ = mesh.ray.intersects_location(
-        ray_origins=endPt.reshape(1, 3),
-        ray_directions=(-dirUnit).reshape(1, 3)
-    )
-    if len(locs2) > 0:
-        dists2 = np.linalg.norm(locs2 - endPt, axis=1)
-        if np.any((dists2 > eps) & (dists2 < segLen - eps)):
-            return True
-    return False
-
-
 class SafeEnvelope:
     def __init__(self, obstacleMesh: trimesh.Trimesh, toolRadius: float, safetyMargin: float):
         self.mesh = obstacleMesh
         self.isEmpty = obstacleMesh is None or obstacleMesh.is_empty
         self.clearance = float(toolRadius + safetyMargin)
         self.safeZ = float(-np.inf)
+        self._surfaceTree = None
+        self._surfaceSamples = None
         if not self.isEmpty:
-            self.safeZ = float(obstacleMesh.bounds[1, 2]) + self.clearance + 1.0
-        self.fclObj = _buildFclMesh(obstacleMesh) if not self.isEmpty else None
+            bounds = np.asarray(obstacleMesh.bounds, dtype=float)
+            self.safeZ = float(bounds[1, 2]) + self.clearance + float(toolRadius) + 1.0
+            try:
+                pts, _ = trimesh.sample.sample_surface(obstacleMesh, 40000)
+                self._surfaceSamples = np.asarray(pts, dtype=float)
+                self._surfaceTree = cKDTree(self._surfaceSamples)
+            except Exception:
+                pass
+
+    def _nearestSurfaceDist(self, pts: np.ndarray) -> np.ndarray:
+        if self._surfaceTree is None or len(pts) == 0:
+            return np.full(len(pts), np.inf, dtype=float)
+        dists, _ = self._surfaceTree.query(pts, k=1)
+        return np.asarray(dists, dtype=float)
 
     def isPointSafe(self, pt: np.ndarray) -> bool:
         if self.isEmpty:
             return True
         ptArr = np.asarray(pt, dtype=float).reshape(1, 3)
-        _, dists, _ = trimesh.proximity.closest_point(self.mesh, ptArr)
-        return float(dists[0]) >= self.clearance
+        d = self._nearestSurfaceDist(ptArr)[0]
+        return float(d) >= self.clearance
 
-    def isSegmentSafe(self, startPt: np.ndarray, endPt: np.ndarray) -> bool:
+    def isSegmentSafe(self, startPt: np.ndarray, endPt: np.ndarray, sampleStep: float = 0.5) -> bool:
         if self.isEmpty:
             return True
-        if _FCL_AVAILABLE and self.fclObj is not None:
-            capsuleRadius = self.clearance * 0.5
-            direction = endPt - startPt
-            segLen = float(np.linalg.norm(direction))
-            if segLen < 1e-9:
-                return self.isPointSafe(startPt)
-            capsuleGeom = fcl.Capsule(capsuleRadius, segLen)
-            midPt = (startPt + endPt) * 0.5
-            dirUnit = direction / segLen
-            zAxis = np.array([0.0, 0.0, 1.0])
-            rotAxis = np.cross(zAxis, dirUnit)
-            rotAxisNorm = float(np.linalg.norm(rotAxis))
-            if rotAxisNorm < 1e-9:
-                rotMat = np.eye(3)
-            else:
-                rotAxis /= rotAxisNorm
-                angle = float(np.arccos(np.clip(np.dot(zAxis, dirUnit), -1.0, 1.0)))
-                K = np.array([
-                    [0, -rotAxis[2], rotAxis[1]],
-                    [rotAxis[2], 0, -rotAxis[0]],
-                    [-rotAxis[1], rotAxis[0], 0]
-                ])
-                rotMat = np.eye(3) + np.sin(angle) * K + (1 - np.cos(angle)) * (K @ K)
-            capsuleObj = fcl.CollisionObject(capsuleGeom, fcl.Transform3f(rotMat, midPt))
-            req = fcl.CollisionRequest()
-            res = fcl.CollisionResult()
-            fcl.collide(capsuleObj, self.fclObj, req, res)
-            return not res.is_collision
-        return not _rayMeshIntersectsSegment(self.mesh, startPt, endPt)
+        s = np.asarray(startPt, dtype=float)
+        e = np.asarray(endPt, dtype=float)
+        segLen = float(np.linalg.norm(e - s))
+        if segLen < 1e-9:
+            return self.isPointSafe(s)
+        nSamples = max(int(np.ceil(segLen / sampleStep)) + 1, 2)
+        tVals = np.linspace(0.0, 1.0, nSamples)
+        samplePts = np.outer(1.0 - tVals, s) + np.outer(tVals, e)
+        dists = self._nearestSurfaceDist(samplePts)
+        return bool(np.all(dists >= self.clearance))
 
     def computeSafeRetractZ(self, pt: np.ndarray, extraClearance: float = 2.0) -> float:
         if self.isEmpty:
             return float(pt[2]) + extraClearance
         return float(self.safeZ) + extraClearance
 
-    def buildSafeTransit(self, fromPt: np.ndarray, toPt: np.ndarray, extraClearance: float = 2.0) -> List[np.ndarray]:
+    def buildSafeTransit(self, fromPt: np.ndarray, toPt: np.ndarray, sampleStep: float = 0.5, extraClearance: float = 2.0) -> List[np.ndarray]:
         if self.isEmpty:
             return [fromPt, toPt]
-        if self.isSegmentSafe(fromPt, toPt):
+        if self.isSegmentSafe(fromPt, toPt, sampleStep):
             return [fromPt, toPt]
         retractZ = self.computeSafeRetractZ(fromPt, extraClearance)
         retractZ = max(retractZ, float(fromPt[2]) + extraClearance, float(toPt[2]) + extraClearance)
@@ -115,19 +84,17 @@ class SafeEnvelope:
         r1[2] = retractZ
         r2 = toPt.copy()
         r2[2] = retractZ
-        path = [fromPt]
-        if not self.isSegmentSafe(fromPt, r1):
-            mid = fromPt.copy()
-            mid[2] = retractZ + self.clearance
-            path.append(mid)
-        path.append(r1)
-        path.append(r2)
-        if not self.isSegmentSafe(r2, toPt):
-            mid2 = toPt.copy()
-            mid2[2] = retractZ + self.clearance
-            path.append(mid2)
-        path.append(toPt)
-        return path
+        r1Safe = self.isSegmentSafe(fromPt, r1, sampleStep)
+        r2Safe = self.isSegmentSafe(r2, toPt, sampleStep)
+        midSafe = self.isSegmentSafe(r1, r2, sampleStep)
+        if r1Safe and midSafe and r2Safe:
+            return [fromPt, r1, r2, toPt]
+        higherZ = retractZ + self.clearance * 2.0 + extraClearance
+        h1 = fromPt.copy()
+        h1[2] = higherZ
+        h2 = toPt.copy()
+        h2[2] = higherZ
+        return [fromPt, h1, h2, toPt]
 
 
 class MeshCollisionChecker:
@@ -136,8 +103,6 @@ class MeshCollisionChecker:
         self.clearanceDist = float(toolRadius + safetyMargin)
         self.isEmpty = obstacleMesh is None or obstacleMesh.is_empty
         self._envelope = SafeEnvelope(obstacleMesh, toolRadius, safetyMargin)
-        if not self.isEmpty:
-            self.proximityQuery = trimesh.proximity.ProximityQuery(obstacleMesh)
 
     def isPointColliding(self, point: np.ndarray) -> bool:
         if self.isEmpty:
@@ -148,17 +113,8 @@ class MeshCollisionChecker:
         if self.isEmpty or len(points) == 0:
             return np.zeros(len(points), dtype=bool)
         pts = np.asarray(points, dtype=float)
-        _, distances, _ = trimesh.proximity.closest_point(self.obstacleMesh, pts)
-        distArray = np.asarray(distances, dtype=float)
-        collidingMask = np.zeros(len(pts), dtype=bool)
-        nearIndices = np.where(distArray < self.clearanceDist)[0]
-        if len(nearIndices) == 0:
-            return collidingMask
-        nearPts = pts[nearIndices]
-        insideFlags = self.obstacleMesh.contains(nearPts)
-        collidingMask[nearIndices] = insideFlags
-        tightMask = distArray[nearIndices] < self.clearanceDist * 0.2
-        collidingMask[nearIndices[tightMask]] = True
+        dists = self._envelope._nearestSurfaceDist(pts)
+        collidingMask = dists < self.clearanceDist
         return collidingMask
 
     def isSegmentColliding(self, startPoint: np.ndarray, endPoint: np.ndarray, sampleStep: float) -> bool:
@@ -166,7 +122,8 @@ class MeshCollisionChecker:
             return False
         return not self._envelope.isSegmentSafe(
             np.asarray(startPoint, dtype=float),
-            np.asarray(endPoint, dtype=float)
+            np.asarray(endPoint, dtype=float),
+            sampleStep
         )
 
 
@@ -352,6 +309,7 @@ class TrimeshToolpathEngine:
         return True
 
     def _greedyOrderPaths(self, validPaths: List[np.ndarray]) -> List[np.ndarray]:
+        from scipy.spatial.distance import cdist
         orderedPaths = []
         unvisited = list(range(len(validPaths)))
         currentPos = None
@@ -390,33 +348,29 @@ class TrimeshToolpathEngine:
         if envelope is not None:
             effectiveSafeZ = max(effectiveSafeZ, envelope.safeZ + 1.0)
 
+        sampleStep = max(float(stepOver * 0.3), toolRadius * 0.25, 0.15)
         orderedPaths = self._greedyOrderPaths(validPaths)
-        sampleStep = max(float(stepOver * 0.4), toolRadius * 0.3, 0.2)
-        directThreshXY = float(stepOver * 1.2)
-        directThreshZ = float(stepOver * 0.5)
 
         linkedPoints = list(orderedPaths[0])
         for pathIdx in range(1, len(orderedPaths)):
             nextPath = orderedPaths[pathIdx]
             lastPt = np.asarray(linkedPoints[-1], dtype=float)
             nextStart = np.asarray(nextPath[0], dtype=float)
-            xyDist = float(np.linalg.norm(lastPt[:2] - nextStart[:2]))
-            zDiff = abs(float(lastPt[2] - nextStart[2]))
-            isNearby = xyDist <= directThreshXY and zDiff <= directThreshZ
+
             directFree = False
-            if isNearby:
-                if envelope is not None:
-                    directFree = envelope.isSegmentSafe(lastPt, nextStart)
-                elif collisionChecker is not None:
-                    directFree = not collisionChecker.isSegmentColliding(lastPt, nextStart, sampleStep)
-                else:
-                    directFree = True
+            if envelope is not None:
+                directFree = envelope.isSegmentSafe(lastPt, nextStart, sampleStep)
+            elif collisionChecker is not None:
+                directFree = not collisionChecker.isSegmentColliding(lastPt, nextStart, sampleStep)
+            else:
+                directFree = True
+
             if directFree:
-                directSegs = self.sampleSegmentLocal(lastPt, nextStart, sampleStep)
-                linkedPoints.extend(directSegs[1:].tolist())
+                transitSegs = self.sampleSegmentLocal(lastPt, nextStart, sampleStep)
+                linkedPoints.extend(transitSegs[1:].tolist())
             else:
                 if envelope is not None:
-                    transitPts = envelope.buildSafeTransit(lastPt, nextStart, extraClearance=max(toolRadius, 2.0))
+                    transitPts = envelope.buildSafeTransit(lastPt, nextStart, sampleStep, max(toolRadius, 2.0))
                 else:
                     retractPt = lastPt.copy()
                     retractPt[2] = effectiveSafeZ
@@ -424,6 +378,7 @@ class TrimeshToolpathEngine:
                     approachPt[2] = effectiveSafeZ
                     transitPts = [lastPt, retractPt, approachPt, nextStart]
                 linkedPoints.extend(transitPts[1:])
+
             linkedPoints.extend(nextPath.tolist())
         return np.asarray(linkedPoints, dtype=float)
 

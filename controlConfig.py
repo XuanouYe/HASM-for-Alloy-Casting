@@ -38,8 +38,10 @@ parameterSchema = {
         "bedTemperature": {"type": int, "min": 0, "max": 150, "default": 60, "unit": "°C", "required": True},
         "nozzleTemperatureLayer0": {"type": int, "min": 180, "max": 450, "default": 210, "unit": "°C", "required": False},
         "bedTemperatureLayer0": {"type": int, "min": 0, "max": 150, "default": 60, "unit": "°C", "required": False},
+        # FIX: schema default unified to 60 mm/s, consistent with generateCuraConfig
         "printSpeed": {"type": int, "min": 10, "max": 150, "default": 60, "unit": "mm/s", "required": True},
-        "printSpeedLayer0": {"type": int, "min": 5, "max": 100, "default": 60, "unit": "mm/s", "required": False},
+        # FIX: schema default changed to 30 mm/s (was 60, inconsistent with CuraEngine layer-0 convention)
+        "printSpeedLayer0": {"type": int, "min": 5, "max": 100, "default": 30, "unit": "mm/s", "required": False},
         "travelSpeed": {"type": int, "min": 50, "max": 300, "default": 150, "unit": "mm/s", "required": False},
         "fanEnabled": {"type": bool, "default": True, "required": False},
         "coolFanSpeed": {"type": int, "min": 0, "max": 100, "default": 100, "unit": "%", "required": False},
@@ -49,6 +51,10 @@ parameterSchema = {
         "retractionSpeed": {"type": float, "min": 10.0, "max": 100.0, "default": 35.0, "unit": "mm/s", "required": False},
         "retractionBufferLength": {"type": float, "min": 0.0, "max": 20.0, "default": 2.0, "unit": "mm", "required": False},
         "retractionReloadSpeed": {"type": float, "min": 10.0, "max": 2000.0, "default": 800.0, "unit": "mm/min", "required": False},
+        # FIX: added nozzleDiameter, materialFlow, lineWidth — required for correct extrusion calculation
+        "nozzleDiameter": {"type": float, "min": 0.1, "max": 2.0, "default": 0.4, "unit": "mm", "required": False},
+        "materialFlow": {"type": int, "min": 10, "max": 200, "default": 100, "unit": "%", "required": False},
+        "lineWidth": {"type": float, "min": 0.1, "max": 2.0, "default": 0.4, "unit": "mm", "required": False},
         "supportEnabled": {"type": bool, "default": False, "required": False},
         "adhesionType": {"type": str, "default": "none", "options": ["none", "raft", "brim", "skirt"], "required": False},
         "axisLimits": {"type": dict, "default": {"X": [-100.0, 100.0], "Y": [-100.0, 100.0], "Z": [0.0, 100.0]}, "required": False},
@@ -200,6 +206,9 @@ class ConfigManager:
         return parameterSchema
 
     def generateCuraConfig(self, additiveConfig: Dict[str, Any]) -> Dict[str, str]:
+        # FIX 1: retraction_enabled now reads from additiveConfig instead of being hardcoded to "false"
+        retractionEnabled = additiveConfig.get("retractionEnabled", True)
+
         curaConfig = {
             "layer_height": str(additiveConfig.get("layerHeight", 0.3)),
             "wall_thickness": str(additiveConfig.get("wallThickness", 0.8)),
@@ -214,14 +223,21 @@ class ConfigManager:
             "bed_temperature": str(additiveConfig.get("bedTemperature", 60)),
             "print_temperature_layer_0": str(additiveConfig.get("nozzleTemperatureLayer0", 210)),
             "bed_temperature_layer_0": str(additiveConfig.get("bedTemperatureLayer0", 60)),
-            "print_speed": str(additiveConfig.get("printSpeed", 40)),
-            "print_speed_layer_0": str(additiveConfig.get("printSpeedLayer0", 20)),
-            "travel_speed": str(additiveConfig.get("travelSpeed", 150)),
+            # FIX 2: default aligned with schema (60 mm/s), was incorrectly hardcoded to 40
+            "print_speed": str(additiveConfig.get("printSpeed", 60)),
+            # FIX 3: key corrected to speed_layer_0, default aligned to 30 mm/s
+            "speed_layer_0": str(additiveConfig.get("printSpeedLayer0", 30)),
+            "speed_travel": str(additiveConfig.get("travelSpeed", 150)),
             "fan_enabled": str(additiveConfig.get("fanEnabled", True)).lower(),
             "cool_fan_speed": str(additiveConfig.get("coolFanSpeed", 100)),
             "cool_min_layer_time": str(additiveConfig.get("coolMinLayerTime", 10.0)),
-            "retraction_enabled": "false",
-            "support_enabled": str(additiveConfig.get("supportEnabled", False)).lower(),
+            # FIX 4: reads user config, no longer hardcoded to false
+            "retraction_enabled": str(retractionEnabled).lower(),
+            # FIX 5: nozzle size, line width and flow rate now correctly passed to CuraEngine
+            "machine_nozzle_size": str(additiveConfig.get("nozzleDiameter", 0.4)),
+            "line_width": str(additiveConfig.get("lineWidth", additiveConfig.get("nozzleDiameter", 0.4))),
+            "material_flow": str(additiveConfig.get("materialFlow", 100)),
+            "support_enable": str(additiveConfig.get("supportEnabled", False)).lower(),
             "adhesion_type": additiveConfig.get("adhesionType", "none"),
         }
         return curaConfig

@@ -54,6 +54,57 @@ def extractLineStrings(geomValue: Any) -> List[Any]:
     return []
 
 
+def _clusterByConnectivity(points: np.ndarray, connectRadius: float) -> List[np.ndarray]:
+    if len(points) == 0:
+        return []
+    tree = cKDTree(points)
+    visited = np.zeros(len(points), dtype=bool)
+    clusters = []
+    for startIdx in range(len(points)):
+        if visited[startIdx]:
+            continue
+        clusterIndices = []
+        queue = [startIdx]
+        visited[startIdx] = True
+        while queue:
+            currIdx = queue.pop()
+            clusterIndices.append(currIdx)
+            neighbors = tree.query_ball_point(points[currIdx], r=connectRadius)
+            for nbIdx in neighbors:
+                if not visited[nbIdx]:
+                    visited[nbIdx] = True
+                    queue.append(nbIdx)
+        clusters.append(np.array(clusterIndices, dtype=int))
+    return clusters
+
+
+def _segmentPassesThroughKeepOut(keepOutMesh: trimesh.Trimesh, startPt: np.ndarray, endPt: np.ndarray, eps: float = 1e-4) -> bool:
+    if keepOutMesh is None or keepOutMesh.is_empty:
+        return False
+    direction = endPt - startPt
+    segLen = float(np.linalg.norm(direction))
+    if segLen < eps:
+        return False
+    dirUnit = direction / segLen
+    locs, _, _ = keepOutMesh.ray.intersects_location(
+        ray_origins=startPt.reshape(1, 3),
+        ray_directions=dirUnit.reshape(1, 3)
+    )
+    if len(locs) > 0:
+        dists = np.linalg.norm(locs - startPt, axis=1)
+        if np.any((dists > eps) & (dists < segLen - eps)):
+            return True
+    locs2, _, _ = keepOutMesh.ray.intersects_location(
+        ray_origins=endPt.reshape(1, 3),
+        ray_directions=(-dirUnit).reshape(1, 3)
+    )
+    if len(locs2) > 0:
+        dists2 = np.linalg.norm(locs2 - endPt, axis=1)
+        if np.any((dists2 > eps) & (dists2 < segLen - eps)):
+            return True
+    return False
+
+
 class ZLevelRoughingStrategy(IToolpathStrategy):
     def generate(self, targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh, toolRadius: float, params: Dict[str, Any], safetyMargin: float) -> List[np.ndarray]:
         if targetMesh.is_empty:
@@ -225,11 +276,12 @@ class SurfaceProjectionFinishingStrategy(IToolpathStrategy):
             reducedPoints.append(centerPoints[-1])
         return np.asarray(reducedPoints, dtype=float)
 
-    def buildStripePaths(self, contactPoints: np.ndarray, centerPoints: np.ndarray, boundsArray: np.ndarray, scanAxis: str, stepOver: float, projectionStep: float, lineGapTolerance: float, keepOutChecker: Any, toolpathEngine: Any, hmSampleStep: float) -> List[np.ndarray]:
+    def buildStripePaths(self, contactPoints: np.ndarray, centerPoints: np.ndarray, boundsArray: np.ndarray, scanAxis: str, stepOver: float, projectionStep: float, lineGapTolerance: float, keepOutChecker: Any, toolpathEngine: Any, hmSampleStep: float, keepOutMesh: trimesh.Trimesh = None) -> List[np.ndarray]:
         if len(contactPoints) == 0 or len(centerPoints) == 0:
             return []
         fixedIndex = 1 if scanAxis == 'x' else 0
         travelIndex = 0 if scanAxis == 'x' else 1
+        connectRadius = max(stepOver * 1.8, projectionStep * 3.5)
         bandHalfWidth = max(stepOver * 0.55, projectionStep * 1.4)
         fixedValues = np.arange(boundsArray[0, fixedIndex], boundsArray[1, fixedIndex] + stepOver * 0.5, stepOver, dtype=float)
         reverseFlag = False
@@ -240,41 +292,53 @@ class SurfaceProjectionFinishingStrategy(IToolpathStrategy):
                 continue
             stripeContacts = np.asarray(contactPoints[bandMask], dtype=float)
             stripeCenters = np.asarray(centerPoints[bandMask], dtype=float)
-            order = np.argsort(stripeContacts[:, travelIndex])
-            stripeContacts = stripeContacts[order]
-            stripeCenters = stripeCenters[order]
-            subPaths = []
-            currentStripe = [stripeCenters[0]]
-            for pointIndex in range(1, len(stripeCenters)):
-                travelGap = abs(float(stripeContacts[pointIndex, travelIndex] - stripeContacts[pointIndex - 1, travelIndex]))
-                spatialGap = float(np.linalg.norm(stripeCenters[pointIndex] - stripeCenters[pointIndex - 1]))
-                if travelGap > lineGapTolerance or spatialGap > lineGapTolerance * 1.5:
-                    if len(currentStripe) >= 2:
-                        subPaths.append(np.asarray(currentStripe, dtype=float))
-                    currentStripe = [stripeCenters[pointIndex]]
-                else:
-                    currentStripe.append(stripeCenters[pointIndex])
-            if len(currentStripe) >= 2:
-                subPaths.append(np.asarray(currentStripe, dtype=float))
-            for subPath in subPaths:
-                reducedPath = self.reduceOrderedCenters(subPath, projectionStep)
-                if len(reducedPath) < 2:
+            clusterIndicesArray = _clusterByConnectivity(stripeContacts, connectRadius)
+            for clusterIdxArray in clusterIndicesArray:
+                if len(clusterIdxArray) < 2:
                     continue
-                densePath = densifyPolyline(reducedPath, projectionStep)
-                denseSubPaths = splitPolylineByGap(densePath, max(lineGapTolerance, projectionStep * 3.0))
-                for denseSubPath in denseSubPaths:
-                    if len(denseSubPath) < 2:
-                        continue
-                    finalPath = np.asarray(denseSubPath, dtype=float)
-                    if reverseFlag:
-                        finalPath = finalPath[::-1]
-                    if keepOutChecker is not None and toolpathEngine is not None and not keepOutChecker.isEmpty:
-                        clipped = toolpathEngine.clipPathsByCollisionChecker([finalPath], keepOutChecker, hmSampleStep)
-                        for cp in clipped:
-                            if len(cp) >= 2:
-                                allPaths.append(cp)
+                clusterContacts = stripeContacts[clusterIdxArray]
+                clusterCenters = stripeCenters[clusterIdxArray]
+                order = np.argsort(clusterContacts[:, travelIndex])
+                clusterContacts = clusterContacts[order]
+                clusterCenters = clusterCenters[order]
+                subPaths = []
+                currentStripe = [clusterCenters[0]]
+                currentContacts = [clusterContacts[0]]
+                for pointIndex in range(1, len(clusterCenters)):
+                    travelGap = abs(float(clusterContacts[pointIndex, travelIndex] - clusterContacts[pointIndex - 1, travelIndex]))
+                    spatialGap = float(np.linalg.norm(clusterCenters[pointIndex] - clusterCenters[pointIndex - 1]))
+                    crossesWall = False
+                    if keepOutMesh is not None and not keepOutMesh.is_empty:
+                        crossesWall = _segmentPassesThroughKeepOut(keepOutMesh, clusterCenters[pointIndex - 1], clusterCenters[pointIndex])
+                    if travelGap > lineGapTolerance or spatialGap > lineGapTolerance * 1.5 or crossesWall:
+                        if len(currentStripe) >= 2:
+                            subPaths.append((np.asarray(currentStripe, dtype=float), np.asarray(currentContacts, dtype=float)))
+                        currentStripe = [clusterCenters[pointIndex]]
+                        currentContacts = [clusterContacts[pointIndex]]
                     else:
-                        allPaths.append(finalPath)
+                        currentStripe.append(clusterCenters[pointIndex])
+                        currentContacts.append(clusterContacts[pointIndex])
+                if len(currentStripe) >= 2:
+                    subPaths.append((np.asarray(currentStripe, dtype=float), np.asarray(currentContacts, dtype=float)))
+                for subPathCenters, _ in subPaths:
+                    reducedPath = self.reduceOrderedCenters(subPathCenters, projectionStep)
+                    if len(reducedPath) < 2:
+                        continue
+                    densePath = densifyPolyline(reducedPath, projectionStep)
+                    denseSubPaths = splitPolylineByGap(densePath, max(lineGapTolerance, projectionStep * 3.0))
+                    for denseSubPath in denseSubPaths:
+                        if len(denseSubPath) < 2:
+                            continue
+                        finalPath = np.asarray(denseSubPath, dtype=float)
+                        if reverseFlag:
+                            finalPath = finalPath[::-1]
+                        if keepOutChecker is not None and toolpathEngine is not None and not keepOutChecker.isEmpty:
+                            clipped = toolpathEngine.clipPathsByCollisionChecker([finalPath], keepOutChecker, hmSampleStep)
+                            for cp in clipped:
+                                if len(cp) >= 2:
+                                    allPaths.append(cp)
+                        else:
+                            allPaths.append(finalPath)
             reverseFlag = not reverseFlag
         return allPaths
 
@@ -294,7 +358,7 @@ class SurfaceProjectionFinishingStrategy(IToolpathStrategy):
         if len(centerPoints) == 0:
             return []
         boundsArray = np.asarray(targetMesh.bounds, dtype=float)
-        return self.buildStripePaths(contactPoints, centerPoints, boundsArray, scanAxis, stepOver, projectionStep, lineGapTolerance, keepOutChecker, toolpathEngine, hmSampleStep)
+        return self.buildStripePaths(contactPoints, centerPoints, boundsArray, scanAxis, stepOver, projectionStep, lineGapTolerance, keepOutChecker, toolpathEngine, hmSampleStep, keepOutMesh)
 
 
 class ToolpathStrategyFactory:
