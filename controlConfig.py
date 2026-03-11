@@ -120,7 +120,7 @@ parameterSchema = {
         # FIX: wslEnginePath 填 Windows 格式路径，fdmExecutor 负责转换为 WSL 路径
         "wslEnginePath": {
             "type": str,
-            "default": "C:\\Users\\XuanouYe\\Desktop\\Thesis\\04-Implementation\\PC\\external\\CuraEngine\\build\\Release\\CuraEngine",
+            "default": "C:\\Users\\XuanouYe\\Desktop\\Thesis\\04-Implementation\\HASM-for-Alloy-Casting\\external\\CuraEngine\\build\\Release\\CuraEngine",
             "required": False,
             "description": "CuraEngine 路径（Windows 格式，自动转 WSL）"
         },
