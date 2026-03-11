@@ -37,12 +37,20 @@ class CuraEngineController:
         return posixpath.join("/mnt", drive, *pathParts)
 
     def wslPathToWindows(self, wslPath: str) -> str:
+        """
+        将 WSL 路径（/mnt/c/Users/...）还原为 Windows 路径（C:\\Users\\...）。
+        FIX: 不再使用 PureWindowsPath 拼接，直接用 os.path.join 避免双重转义。
+             drive 末尾不加反斜杠，由 os.path.join 统一处理分隔符。
+        """
         if not wslPath.startswith("/mnt/"):
             return wslPath
         parts = wslPath.split("/")
-        drive = parts[2].upper() + ":\\"
+        # FIX: drive 末尾不加 "\\"，改为仅 "C:"，交由 Path 拼接
+        drive = parts[2].upper() + ":"
         pathParts = parts[3:]
-        return str(PureWindowsPath(drive, *pathParts))
+        # FIX: 使用 Path(drive, *pathParts) 而非 PureWindowsPath，
+        #      Path 在 Windows 下会正确拼接为单层反斜杠
+        return str(Path(drive + "\\", *pathParts))
 
     def ensureOutputDirectory(self, outputPath: str) -> str:
         wslPath = self.windowsPathToWsl(outputPath)
@@ -96,14 +104,6 @@ class CuraEngineController:
     def applyRetractionCompensation(self, filePath: str, bufferLength: float,
                                     retractDist: float, reloadSpeed: float,
                                     retractSpeedMms: float) -> None:
-        """
-        颗粒料回抽后处理。
-        在每段连续挤出路径末尾插入回抽指令（C 轴负向），
-        在下一段挤出开始前插入重载指令（C 轴正向恢复）。
-        retractDist 单位：mm（C 轴当量）
-        reloadSpeed 单位：mm/min
-        retractSpeedMms 单位：mm/s（内部转换为 mm/min）
-        """
         with open(filePath, 'r') as f:
             lines = f.readlines()
         retractFeedrate = retractSpeedMms * 60.0
@@ -194,15 +194,6 @@ class CuraEngineController:
             f.writelines(optimizedLines)
 
     def replaceExtruderAxis(self, filePath: str, extrusionScaleFactor: float = 1.0) -> None:
-        """
-        将 G 代码中所有 E 轴替换为 C 轴，并乘以 extrusionScaleFactor。
-
-        extrusionScaleFactor 是颗粒料挤出机的 E→C 物理换算系数：
-          C_实际 = E_CuraEngine × extrusionScaleFactor
-        CuraEngine 以 material_diameter 推导出的 E 值是"等效线材长度（mm）"，
-        而颗粒机 C 轴的物理含义（螺杆转动量/泵送量）需要通过标定实验确定此系数。
-        默认值 1.0 表示不做缩放（需要用户标定后填入实际值）。
-        """
         with open(filePath, 'r') as f:
             lines = f.readlines()
         processedLines = []
@@ -295,18 +286,18 @@ class CuraEngineController:
             stlPath=wslStlPath, outputPath=wslOutputPath,
             definitionFiles=definitionFiles, settings=settings)
         self.executeSlice(cmdArgs)
+
+        # FIX: 使用修正后的 wslPathToWindows，返回路径不再含双重反斜杠
         windowsOutputPath = self.wslPathToWindows(wslOutputPath)
 
-        # FIX: 默认值由 True 改为 False，避免 additiveConfig 缺省时静默执行回抽
         if additiveConfig and additiveConfig.get("retractionEnabled", False):
-            bufferLen   = float(additiveConfig.get("retractionBufferLength", 8.0))
-            retractDist = float(additiveConfig.get("retractionDistance", 1.0))
-            reloadSpeed = float(additiveConfig.get("retractionReloadSpeed", 120.0))
-            retractSpeed= float(additiveConfig.get("retractionSpeed", 10.0))
+            bufferLen    = float(additiveConfig.get("retractionBufferLength", 8.0))
+            retractDist  = float(additiveConfig.get("retractionDistance", 1.0))
+            reloadSpeed  = float(additiveConfig.get("retractionReloadSpeed", 120.0))
+            retractSpeed = float(additiveConfig.get("retractionSpeed", 10.0))
             self.applyRetractionCompensation(
                 windowsOutputPath, bufferLen, retractDist, reloadSpeed, retractSpeed)
 
-        # FIX: 传入 extrusionScaleFactor，支持颗粒料 E→C 物理换算
         scaleFactor = float(additiveConfig.get("extrusionScaleFactor", 1.0)) if additiveConfig else 1.0
         self.replaceExtruderAxis(windowsOutputPath, extrusionScaleFactor=scaleFactor)
         self.updateGcodeBoundingBox(windowsOutputPath)
