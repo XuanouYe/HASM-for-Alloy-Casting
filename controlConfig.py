@@ -59,9 +59,6 @@ parameterSchema = {
         "retractionSpeed":      {"type": float, "min": 1.0,   "max": 100.0,  "default": 35.0,  "unit": "mm/s",  "required": False, "description": "回抽速度"},
         "retractionBufferLength":{"type": float,"min": 0.0,   "max": 50.0,   "default": 3.0,   "unit": "mm",    "required": False, "description": "回抽触发缓冲长度"},
         "retractionReloadSpeed":{"type": float, "min": 10.0,  "max": 2000.0, "default": 500.0, "unit": "mm/min","required": False, "description": "重载速度"},
-        # ── 支撑 / 粘附 ───────────────────────────────────────────────────────
-        "supportEnabled":       {"type": bool,                                "default": False,                  "required": False, "description": "启用支撑"},
-        "adhesionType":         {"type": str,   "options": ["none","raft","brim","skirt"], "default": "none",   "required": False, "description": "粘附类型"},
         # ── 轴范围 ────────────────────────────────────────────────────────────
         "axisLimits":           {"type": dict,                                "default": {"X": [-100.0, 100.0], "Y": [-100.0, 100.0], "Z": [0.0, 100.0]}, "required": False, "description": "轴限位"},
     },
