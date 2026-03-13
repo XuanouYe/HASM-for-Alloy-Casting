@@ -3,11 +3,9 @@ import posixpath
 import subprocess
 import struct
 import math
-import logging
 from pathlib import Path, PureWindowsPath
 from typing import Dict, Optional, List, Tuple, Any
 from controlConfig import ConfigManager
-logger = logging.getLogger(__name__)
 
 FDM_ENGINE_PATH = "C:\\Users\\XuanouYe\\Desktop\\Thesis\\04-Implementation\\HASM-for-Alloy-Casting\\external\\CuraEngine\\build\\Release\\CuraEngine"
 FDM_DEFINITION_FILES = [
@@ -105,12 +103,19 @@ class CuraEngineController:
         result = subprocess.run(cmdArgs, capture_output=True, text=True, encoding='utf-8', errors='replace')
         self.lastExecutionTime = time.time() - startTime
         if result.returncode != 0:
-            stderr_snippet = (result.stderr or '')[-2000:]
-            stdout_snippet = (result.stdout or '')[-500:]
-            cmd_str = ' '.join((str(c) for c in cmdArgs))
-            raise RuntimeError(f'CuraEngine 切片失败 (returncode={result.returncode})\n命令: {cmd_str}\n--- stderr (末尾) ---\n{stderr_snippet}\n--- stdout (末尾) ---\n{stdout_snippet}')
+            stderrSnippet = (result.stderr or '')[-2000:]
+            stdoutSnippet = (result.stdout or '')[-500:]
+            cmdStr = ' '.join((str(c) for c in cmdArgs))
+            raise RuntimeError(f'CuraEngine 切片失败 (returncode={result.returncode})\n命令: {cmdStr}\n--- stderr (末尾) ---\n{stderrSnippet}\n--- stdout (末尾) ---\n{stdoutSnippet}')
 
-    def applyRetractionCompensation(self, filePath: str, bufferLength: float, retractDist: float, reloadSpeed: float, retractSpeedMms: float) -> None:
+    def removeHomingCommands(self, filePath: str) -> None:
+        with open(filePath, 'r') as f:
+            lines = f.readlines()
+        filteredLines = [l for l in lines if l.strip() != 'G28']
+        with open(filePath, 'w') as f:
+            f.writelines(filteredLines)
+
+    def applyRetractionCompensation(self, filePath: str, bufferLength: float, retractDist: float, reloadSpeed: float, retractSpeedMms: float, reloadExtraRatio: float, minTravelDist: float) -> None:
         with open(filePath, 'r') as f:
             lines = f.readlines()
         retractFeedrate = retractSpeedMms * 60.0
@@ -121,7 +126,6 @@ class CuraEngineController:
         currentE = 0.0
         needsReload = False
         isFirstLayer = True
-        layerSeen = False
 
         def dist(x1, y1, x2, y2):
             return math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
@@ -163,6 +167,12 @@ class CuraEngineController:
                 optimizedLines.append(f"G1 X{final['x']:.3f} Y{final['y']:.3f} C{currentE - retractDist:.5f} F{retractFeedrate:.1f}\n")
             segmentBuffer.clear()
             needsReload = True
+
+        def flushBufferNoRetract():
+            for s in segmentBuffer:
+                optimizedLines.append(s['raw'])
+            segmentBuffer.clear()
+
         isExtruding = False
         for line in lines:
             stripped = line.strip()
@@ -170,13 +180,12 @@ class CuraEngineController:
                 layerNum = int(stripped.split(':')[1])
                 if layerNum == 0:
                     if isExtruding:
-                        flushBuffer()
+                        flushBufferNoRetract()
                     isExtruding = False
                     isFirstLayer = True
-                    layerSeen = True
                 elif layerNum >= 1 and isFirstLayer:
                     if isExtruding:
-                        flushBuffer()
+                        flushBufferNoRetract()
                     isExtruding = False
                     isFirstLayer = False
                 optimizedLines.append(line)
@@ -218,13 +227,19 @@ class CuraEngineController:
                     isTravel = True
                 if not isTravel and cmd == 'G1':
                     if not isFirstLayer and needsReload:
-                        optimizedLines.append(f'G1 C{currentE:.5f} F{reloadSpeed:.1f}\n')
+                        primeE = currentE + retractDist * reloadExtraRatio
+                        optimizedLines.append(f'G1 C{primeE:.5f} F{reloadSpeed:.1f}\n')
+                        optimizedLines.append(f'G92 C{currentE:.5f}\n')
                         needsReload = False
                     segmentBuffer.append({'raw': line, 'x': nextX, 'y': nextY, 'e': nextE, 'f': nextF, 'prevX': currentX, 'prevY': currentY, 'prevE': currentE, 'dist': moveDist})
                     isExtruding = True
                 else:
                     if isExtruding:
-                        flushBuffer()
+                        travelDist = dist(currentX, currentY, nextX, nextY) if hasXy else 0.0
+                        if not isFirstLayer and travelDist >= minTravelDist:
+                            flushBuffer()
+                        else:
+                            flushBufferNoRetract()
                     isExtruding = False
                     optimizedLines.append(line)
                 if hasXy:
@@ -234,7 +249,7 @@ class CuraEngineController:
                     currentE = nextE
             elif cmd == 'G92':
                 if isExtruding:
-                    flushBuffer()
+                    flushBufferNoRetract()
                 isExtruding = False
                 for p in parts[1:]:
                     if p.startswith('E'):
@@ -345,8 +360,17 @@ class CuraEngineController:
         windowsOutputPath = self.wslPathToWindows(wslOutputPath)
         if not Path(windowsOutputPath).exists():
             raise RuntimeError(f'CuraEngine 未生成输出文件: {windowsOutputPath}\n请检查：\n  1. WSL 引擎路径是否正确（当前: {self.wslEnginePath}）\n  2. definition 文件路径是否可被 WSL 访问\n  3. 输入 STL 文件是否有效（路径: {stlPath}）\n  4. 输出目录是否有写入权限')
+        self.removeHomingCommands(windowsOutputPath)
         if retractionConfig and retractionConfig.get('enabled', False):
-            self.applyRetractionCompensation(filePath=windowsOutputPath, bufferLength=retractionConfig['bufferLength'], retractDist=retractionConfig['distance'], reloadSpeed=retractionConfig['reloadSpeed'], retractSpeedMms=retractionConfig['speed'])
+            self.applyRetractionCompensation(
+                filePath=windowsOutputPath,
+                bufferLength=retractionConfig['bufferLength'],
+                retractDist=retractionConfig['distance'],
+                reloadSpeed=retractionConfig['reloadSpeed'],
+                retractSpeedMms=retractionConfig['speed'],
+                reloadExtraRatio=retractionConfig.get('reloadExtraRatio', 0.1),
+                minTravelDist=retractionConfig.get('minTravelDist', 5.0),
+            )
         scaleFactor = float((additiveConfig or {}).get('extrusionScaleFactor', 1.0))
         self.replaceExtruderAxis(windowsOutputPath, extrusionScaleFactor=scaleFactor)
         self.updateGcodeBoundingBox(windowsOutputPath)
