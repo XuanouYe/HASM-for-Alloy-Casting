@@ -47,7 +47,7 @@ parameterSchema = {
         "retractionDistance":           {"type": float, "min": 0.0,  "max": 50.0,   "default": 10.0,  "unit": "mm",     "required": False, "description": "回抽距离"},
         "retractionSpeed":              {"type": float, "min": 1.0,  "max": 100.0,  "default": 35.0,  "unit": "mm/s",   "required": False, "description": "回抽速度"},
         "retractionBufferLength":       {"type": float, "min": 0.0,  "max": 50.0,   "default": 3.0,   "unit": "mm",     "required": False, "description": "回抽缓冲长度"},
-        "retractionReloadSpeed":        {"type": float, "min": 10.0, "max": 2000.0, "default": 300.0, "unit": "mm/min", "required": False, "description": "重载速度"},
+        "retractionReloadSpeed":        {"type": float, "min": 10.0, "max": 2000.0, "default": 500.0, "unit": "mm/min", "required": False, "description": "重载速度"},
         "retractionReloadExtraRatio":   {"type": float, "min": 0.0,  "max": 0.5,    "default": 0.1,                     "required": False, "description": "重载超量补偿"},
         "retractionMinTravelDistance":  {"type": float, "min": 0.0,  "max": 50.0,   "default": 5.0,   "unit": "mm",     "required": False, "description": "回抽最小空行程"},
         "firstLayerLineWidthFactor":    {"type": int,   "min": 100,  "max": 200,    "default": 120,   "unit": "%",      "required": False, "description": "首层线宽倍率"},
