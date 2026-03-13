@@ -84,10 +84,12 @@ class CuraEngineController:
             minZ, maxZ = axisLimits['Z']
             settings['machine_height'] = str(maxZ - minZ)
 
-    def buildCommandArgs(self, stlPath: str, outputPath: str, definitionFiles: Optional[List[str]]=None, settings: Optional[Dict[str, str]]=None) -> list:
+    def buildCommandArgs(self, stlPath: str, outputPath: str, definitionFiles: Optional[List[str]] = None,
+                         settings: Optional[Dict[str, str]] = None) -> list:
         cmdArgs = ['wsl', self.wslEnginePath, 'slice', '-v']
         if definitionFiles and len(definitionFiles) > 0:
             cmdArgs.extend(['-j', self.windowsPathToWsl(definitionFiles[0])])
+
         objectSettings = {}
         globalSettings = {}
         if settings:
@@ -96,11 +98,14 @@ class CuraEngineController:
                     objectSettings[k] = v
                 else:
                     globalSettings[k] = v
-        for k, v in globalSettings.items():
-            cmdArgs.extend(['-s', f'{k}={v}'])
+
         cmdArgs.append('-e0')
         if definitionFiles and len(definitionFiles) > 1:
             cmdArgs.extend(['-j', self.windowsPathToWsl(definitionFiles[1])])
+
+        for k, v in globalSettings.items():
+            cmdArgs.extend(['-s', f'{k}={v}'])
+
         cmdArgs.extend(['-o', outputPath])
         cmdArgs.extend(['-l', stlPath])
         for k, v in objectSettings.items():
