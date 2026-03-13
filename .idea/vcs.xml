@@ -2,10 +2,5 @@
 <project version="4">
   <component name="VcsDirectoryMappings">
     <mapping directory="" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/external/Cura" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/external/CuraEngine" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/external/libArcus" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/external/protobuf" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/external/protobuf/build/_deps/absl-src" vcs="Git" />
   </component>
 </project>
