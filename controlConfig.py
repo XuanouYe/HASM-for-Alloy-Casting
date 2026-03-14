@@ -23,7 +23,7 @@ parameterSchema = {
         "layerHeight":                  {"type": float, "min": 0.08, "max": 0.4,    "default": 0.4,   "unit": "mm",     "required": True,  "description": "层高"},
         "wallThickness":                {"type": float, "min": 0.4,  "max": 10.0,   "default": 0.4,   "unit": "mm",     "required": True,  "description": "壁厚"},
         "wallLineCount":                {"type": int,   "min": 1,    "max": 10,     "default": 1,     "unit": "lines",  "required": True,  "description": "壁线数"},
-        "infillDensity":                {"type": int,   "min": 0,    "max": 100,    "default": 10,    "unit": "%",      "required": True,  "description": "填充密度"},
+        "infillDensity":                {"type": int,   "min": 0,    "max": 100,    "default": 5,     "unit": "%",      "required": True,  "description": "填充密度"},
         "infillPattern":                {"type": str,   "options": ["grid","honeycomb","gyroid","cubic","tetrahedral"], "default": "grid", "required": True, "description": "填充图案"},
         "topLayers":                    {"type": int,   "min": 0,    "max": 50,     "default": 4,                       "required": True,  "description": "顶层数"},
         "bottomLayers":                 {"type": int,   "min": 0,    "max": 50,     "default": 4,                       "required": True,  "description": "底层数"},
