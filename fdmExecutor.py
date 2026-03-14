@@ -12,16 +12,7 @@ FDM_DEFINITION_FILES = [
     "C:\\Users\\XuanouYe\\Desktop\\Thesis\\04-Implementation\\HASM-for-Alloy-Casting\\external\\Cura\\resources\\definitions\\fdmprinter.def.json",
     "C:\\Users\\XuanouYe\\Desktop\\Thesis\\04-Implementation\\HASM-for-Alloy-Casting\\external\\Cura\\resources\\definitions\\fdmextruder.def.json",
 ]
-FDM_AUTO_DROP      = True
-FDM_AUTO_CENTER_XY = True
-
-
-FDM_ENGINE_PATH = "C:\\Users\\XuanouYe\\Desktop\\Thesis\\04-Implementation\\HASM-for-Alloy-Casting\\external\\CuraEngine\\build\\Release\\CuraEngine"
-FDM_DEFINITION_FILES = [
-    "C:\\Users\\XuanouYe\\Desktop\\Thesis\\04-Implementation\\HASM-for-Alloy-Casting\\external\\Cura\\resources\\definitions\\fdmprinter.def.json",
-    "C:\\Users\\XuanouYe\\Desktop\\Thesis\\04-Implementation\\HASM-for-Alloy-Casting\\external\\Cura\\resources\\definitions\\fdmextruder.def.json",
-]
-FDM_AUTO_DROP      = True
+FDM_AUTO_DROP = True
 FDM_AUTO_CENTER_XY = True
 
 
@@ -122,8 +113,13 @@ class CuraEngineController:
         if result.returncode != 0:
             stderrSnippet = (result.stderr or '')[-2000:]
             stdoutSnippet = (result.stdout or '')[-500:]
-            cmdStr = ' '.join((str(c) for c in cmdArgs))
-            raise RuntimeError(f'CuraEngine 切片失败 (returncode={result.returncode})\n命令: {cmdStr}\n--- stderr (末尾) ---\n{stderrSnippet}\n--- stdout (末尾) ---\n{stdoutSnippet}')
+            cmdStr = ' '.join(str(c) for c in cmdArgs)
+            raise RuntimeError(
+                f'CuraEngine 切片失败 (returncode={result.returncode})\n'
+                f'命令: {cmdStr}\n'
+                f'--- stderr (末尾) ---\n{stderrSnippet}\n'
+                f'--- stdout (末尾) ---\n{stdoutSnippet}'
+            )
 
     def removeHomingCommands(self, filePath: str) -> None:
         with open(filePath, 'r') as f:
@@ -132,9 +128,12 @@ class CuraEngineController:
         with open(filePath, 'w') as f:
             f.writelines(filteredLines)
 
-    def applyRetractionCompensation(self, filePath: str, bufferLength: float, retractDist: float, reloadSpeed: float, retractSpeedMms: float, reloadExtraRatio: float, minTravelDist: float) -> None:
+    def applyRetractionCompensation(self, filePath: str, bufferLength: float, retractDist: float,
+                                    reloadSpeed: float, retractSpeedMms: float,
+                                    reloadExtraRatio: float, minTravelDist: float) -> None:
         with open(filePath, 'r') as f:
             lines = f.readlines()
+
         retractFeedrate = retractSpeedMms * 60.0
         optimizedLines = []
         segmentBuffer = []
@@ -144,11 +143,11 @@ class CuraEngineController:
         needsReload = False
         isFirstLayer = True
 
-        def dist(x1, y1, x2, y2):
+        def moveDist(x1, y1, x2, y2):
             return math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
 
         def flushBuffer():
-            nonlocal needsReload
+            nonlocal needsReload, currentE
             if not segmentBuffer:
                 return
             if isFirstLayer:
@@ -156,12 +155,15 @@ class CuraEngineController:
                     optimizedLines.append(s['raw'])
                 segmentBuffer.clear()
                 return
-            totalDist = sum((s['dist'] for s in segmentBuffer))
+            endE = segmentBuffer[-1]['e']
+            totalDist = sum(s['dist'] for s in segmentBuffer)
             if totalDist <= bufferLength:
                 for s in segmentBuffer[:-1]:
                     optimizedLines.append(s['raw'])
                 last = segmentBuffer[-1]
-                optimizedLines.append(f"G1 X{last['x']:.3f} Y{last['y']:.3f} C{currentE - retractDist:.5f} F{retractFeedrate:.1f}\n")
+                optimizedLines.append(
+                    f"G1 X{last['x']:.3f} Y{last['y']:.3f} E{endE - retractDist:.5f} F{retractFeedrate:.1f}\n"
+                )
             else:
                 accumulated = 0.0
                 splitIndex = -1
@@ -179,10 +181,13 @@ class CuraEngineController:
                 sy = sp['prevY'] + (sp['y'] - sp['prevY']) * ratio
                 se = sp['prevE'] + (sp['e'] - sp['prevE']) * ratio
                 sf = sp['f'] if sp['f'] else '2400'
-                optimizedLines.append(f'G1 X{sx:.3f} Y{sy:.3f} C{se:.5f} F{sf}\n')
+                optimizedLines.append(f'G1 X{sx:.3f} Y{sy:.3f} E{se:.5f} F{sf}\n')
                 final = segmentBuffer[-1]
-                optimizedLines.append(f"G1 X{final['x']:.3f} Y{final['y']:.3f} C{currentE - retractDist:.5f} F{retractFeedrate:.1f}\n")
+                optimizedLines.append(
+                    f"G1 X{final['x']:.3f} Y{final['y']:.3f} E{endE - retractDist:.5f} F{retractFeedrate:.1f}\n"
+                )
             segmentBuffer.clear()
+            currentE = endE - retractDist
             needsReload = True
 
         def flushBufferNoRetract():
@@ -207,10 +212,12 @@ class CuraEngineController:
                     isFirstLayer = False
                 optimizedLines.append(line)
                 continue
+
             parts = stripped.split()
             if not parts:
                 optimizedLines.append(line)
                 continue
+
             cmd = parts[0]
             if cmd in ['G0', 'G1']:
                 nextX = currentX
@@ -234,36 +241,48 @@ class CuraEngineController:
                         hasE = True
                     elif p.startswith('F'):
                         nextF = p[1:]
-                moveDist = dist(currentX, currentY, nextX, nextY) if hasXy else 0.0
+
+                segMoveDist = moveDist(currentX, currentY, nextX, nextY) if hasXy else 0.0
+
                 isTravel = False
                 if cmd == 'G0':
                     isTravel = True
                 elif hasZ:
                     isTravel = True
-                elif cmd == 'G1' and hasXy and (not hasE or nextE <= currentE) and (moveDist > 0.05):
+                elif cmd == 'G1' and hasXy and (not hasE or nextE <= currentE) and segMoveDist > 0.05:
                     isTravel = True
+
                 if not isTravel and cmd == 'G1':
                     if not isFirstLayer and needsReload:
-                        primeE = currentE + retractDist * reloadExtraRatio
-                        optimizedLines.append(f'G1 C{primeE:.5f} F{reloadSpeed:.1f}\n')
-                        optimizedLines.append(f'G92 C{currentE:.5f}\n')
+                        if reloadExtraRatio > 0:
+                            primeE = currentE + retractDist * reloadExtraRatio
+                            optimizedLines.append(f'G1 E{primeE:.5f} F{reloadSpeed:.1f}\n')
+                            optimizedLines.append(f'G92 E{currentE:.5f}\n')
                         needsReload = False
-                    segmentBuffer.append({'raw': line, 'x': nextX, 'y': nextY, 'e': nextE, 'f': nextF, 'prevX': currentX, 'prevY': currentY, 'prevE': currentE, 'dist': moveDist})
+                    segmentBuffer.append({
+                        'raw': line,
+                        'x': nextX, 'y': nextY, 'e': nextE,
+                        'f': nextF,
+                        'prevX': currentX, 'prevY': currentY, 'prevE': currentE,
+                        'dist': segMoveDist,
+                    })
                     isExtruding = True
                 else:
                     if isExtruding:
-                        travelDist = dist(currentX, currentY, nextX, nextY) if hasXy else 0.0
+                        travelDist = moveDist(currentX, currentY, nextX, nextY) if hasXy else 0.0
                         if not isFirstLayer and travelDist >= minTravelDist:
                             flushBuffer()
                         else:
                             flushBufferNoRetract()
                     isExtruding = False
                     optimizedLines.append(line)
+
                 if hasXy:
                     currentX = nextX
                     currentY = nextY
                 if hasE:
                     currentE = nextE
+
             elif cmd == 'G92':
                 if isExtruding:
                     flushBufferNoRetract()
@@ -274,12 +293,14 @@ class CuraEngineController:
                 optimizedLines.append(line)
             else:
                 optimizedLines.append(line)
+
         if segmentBuffer:
             flushBuffer()
+
         with open(filePath, 'w') as f:
             f.writelines(optimizedLines)
 
-    def replaceExtruderAxis(self, filePath: str, extrusionScaleFactor: float=1.0) -> None:
+    def replaceExtruderAxis(self, filePath: str, extrusionScaleFactor: float = 1.0) -> None:
         with open(filePath, 'r') as f:
             lines = f.readlines()
         processedLines = []
@@ -348,7 +369,12 @@ class CuraEngineController:
         with open(filePath, 'w') as f:
             f.writelines(lines)
 
-    def generateGcode(self, stlPath: str, outputPath: str, settings: Optional[Dict[str, str]]=None, definitionFiles: Optional[List[str]]=None, autoDropToBuildPlate: bool=True, autoCenterXY: bool=True, axisLimits: Optional[Dict[str, Tuple[float, float]]]=None, additiveConfig: Optional[Dict[str, Any]]=None, retractionConfig: Optional[Dict[str, Any]]=None) -> str:
+    def generateGcode(self, stlPath: str, outputPath: str, settings: Optional[Dict[str, str]] = None,
+                      definitionFiles: Optional[List[str]] = None,
+                      autoDropToBuildPlate: bool = True, autoCenterXY: bool = True,
+                      axisLimits: Optional[Dict[str, Tuple[float, float]]] = None,
+                      additiveConfig: Optional[Dict[str, Any]] = None,
+                      retractionConfig: Optional[Dict[str, Any]] = None) -> str:
         wslStlPath = self.windowsPathToWsl(stlPath)
         wslOutputPath = self.ensureOutputDirectory(outputPath)
         if settings is None:
@@ -371,11 +397,21 @@ class CuraEngineController:
                     targetY = depth / 2.0
                 settings['mesh_position_x'] = str(targetX - (minX + maxX) / 2.0)
                 settings['mesh_position_y'] = str(targetY - (minY + maxY) / 2.0)
-        cmdArgs = self.buildCommandArgs(stlPath=wslStlPath, outputPath=wslOutputPath, definitionFiles=definitionFiles, settings=settings)
+        cmdArgs = self.buildCommandArgs(
+            stlPath=wslStlPath, outputPath=wslOutputPath,
+            definitionFiles=definitionFiles, settings=settings
+        )
         self.executeSlice(cmdArgs)
         windowsOutputPath = self.wslPathToWindows(wslOutputPath)
         if not Path(windowsOutputPath).exists():
-            raise RuntimeError(f'CuraEngine 未生成输出文件: {windowsOutputPath}\n请检查：\n  1. WSL 引擎路径是否正确（当前: {self.wslEnginePath}）\n  2. definition 文件路径是否可被 WSL 访问\n  3. 输入 STL 文件是否有效（路径: {stlPath}）\n  4. 输出目录是否有写入权限')
+            raise RuntimeError(
+                f'CuraEngine 未生成输出文件: {windowsOutputPath}\n'
+                f'请检查：\n'
+                f'  1. WSL 引擎路径是否正确（当前: {self.wslEnginePath}）\n'
+                f'  2. definition 文件路径是否可被 WSL 访问\n'
+                f'  3. 输入 STL 文件是否有效（路径: {stlPath}）\n'
+                f'  4. 输出目录是否有写入权限'
+            )
         self.removeHomingCommands(windowsOutputPath)
         if retractionConfig and retractionConfig.get('enabled', False):
             self.applyRetractionCompensation(
@@ -384,7 +420,7 @@ class CuraEngineController:
                 retractDist=retractionConfig['distance'],
                 reloadSpeed=retractionConfig['reloadSpeed'],
                 retractSpeedMms=retractionConfig['speed'],
-                reloadExtraRatio=retractionConfig.get('reloadExtraRatio', 0.1),
+                reloadExtraRatio=retractionConfig.get('reloadExtraRatio', 0.0),
                 minTravelDist=retractionConfig.get('minTravelDist', 5.0),
             )
         scaleFactor = float((additiveConfig or {}).get('extrusionScaleFactor', 1.0))
@@ -393,7 +429,8 @@ class CuraEngineController:
         return windowsOutputPath
 
 
-def generateGcodeInterface(stlPath: str, outputPath: str, processConfig: Dict[str, Any], axisLimits: Optional[Dict[str, Tuple[float, float]]]=None) -> Dict[str, str]:
+def generateGcodeInterface(stlPath: str, outputPath: str, processConfig: Dict[str, Any],
+                           axisLimits: Optional[Dict[str, Tuple[float, float]]] = None) -> Dict[str, str]:
     cm = ConfigManager()
     defaultConfig = cm.getDefaultConfig()
     if 'additive' in processConfig:
@@ -408,5 +445,10 @@ def generateGcodeInterface(stlPath: str, outputPath: str, processConfig: Dict[st
         axisLimits = {axis: tuple(v) if isinstance(v, list) else v for axis, v in rawLimits.items()}
     retractionConfig = cm.getRetractionConfig(additiveConfig)
     controller = CuraEngineController(enginePath)
-    resultPath = controller.generateGcode(stlPath=stlPath, outputPath=outputPath, settings=settings, definitionFiles=FDM_DEFINITION_FILES, autoDropToBuildPlate=FDM_AUTO_DROP, autoCenterXY=FDM_AUTO_CENTER_XY, axisLimits=axisLimits, additiveConfig=additiveConfig, retractionConfig=retractionConfig)
+    resultPath = controller.generateGcode(
+        stlPath=stlPath, outputPath=outputPath, settings=settings,
+        definitionFiles=FDM_DEFINITION_FILES,
+        autoDropToBuildPlate=FDM_AUTO_DROP, autoCenterXY=FDM_AUTO_CENTER_XY,
+        axisLimits=axisLimits, additiveConfig=additiveConfig, retractionConfig=retractionConfig
+    )
     return {'gcodePath': resultPath, 'status': 'success'}
