@@ -6,7 +6,7 @@
   <component name="ChangeListManager">
     <list default="true" id="6833bebc-2e84-41ea-8662-ab2b3d13e641" name="更改" comment="Merge remote-tracking branch 'origin/main'">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/fdmExecutor.py" beforeDir="false" afterPath="$PROJECT_DIR$/fdmExecutor.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/controlConfig.py" beforeDir="false" afterPath="$PROJECT_DIR$/controlConfig.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -112,14 +112,6 @@
       <option name="number" value="Default" />
       <option name="presentableId" value="Default" />
       <updated>1772095032548</updated>
-    </task>
-    <task id="LOCAL-00018" summary="Merge remote-tracking branch 'origin/main'">
-      <option name="closed" value="true" />
-      <created>1772433986080</created>
-      <option name="number" value="00018" />
-      <option name="presentableId" value="LOCAL-00018" />
-      <option name="project" value="LOCAL" />
-      <updated>1772433986080</updated>
     </task>
     <task id="LOCAL-00019" summary="Merge remote-tracking branch 'origin/main'">
       <option name="closed" value="true" />
@@ -505,7 +497,15 @@
       <option name="project" value="LOCAL" />
       <updated>1773457835259</updated>
     </task>
-    <option name="localTasksCounter" value="67" />
+    <task id="LOCAL-00067" summary="Merge remote-tracking branch 'origin/main'">
+      <option name="closed" value="true" />
+      <created>1773464079350</created>
+      <option name="number" value="00067" />
+      <option name="presentableId" value="LOCAL-00067" />
+      <option name="project" value="LOCAL" />
+      <updated>1773464079350</updated>
+    </task>
+    <option name="localTasksCounter" value="68" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
