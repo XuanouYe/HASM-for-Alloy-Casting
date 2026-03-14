@@ -355,20 +355,19 @@ class CuraEngineController:
         isCenterZero = settings.get('machine_center_is_zero', 'false').lower() == 'true'
         if autoDropToBuildPlate or autoCenterXY:
             minX, maxX, minY, maxY, minZ, maxZ = self.getStlBoundingBox(stlPath)
-            if autoDropToBuildPlate and 'mesh_position_z' not in settings:
+            if autoDropToBuildPlate:
                 settings['mesh_position_z'] = str(-minZ)
             if autoCenterXY:
                 if isCenterZero:
-                    targetX = targetY = 0.0
+                    targetX = 0.0
+                    targetY = 0.0
                 else:
                     width = float(settings.get('machine_width', '200.0'))
                     depth = float(settings.get('machine_depth', '200.0'))
                     targetX = width / 2.0
                     targetY = depth / 2.0
-                if 'mesh_position_x' not in settings:
-                    settings['mesh_position_x'] = str(targetX - (minX + maxX) / 2.0)
-                if 'mesh_position_y' not in settings:
-                    settings['mesh_position_y'] = str(targetY - (minY + maxY) / 2.0)
+                settings['mesh_position_x'] = str(targetX - (minX + maxX) / 2.0)
+                settings['mesh_position_y'] = str(targetY - (minY + maxY) / 2.0)
         cmdArgs = self.buildCommandArgs(stlPath=wslStlPath, outputPath=wslOutputPath, definitionFiles=definitionFiles, settings=settings)
         self.executeSlice(cmdArgs)
         windowsOutputPath = self.wslPathToWindows(wslOutputPath)
