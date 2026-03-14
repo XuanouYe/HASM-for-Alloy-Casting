@@ -128,7 +128,7 @@ class CuraEngineController:
     def removeHomingCommands(self, filePath: str) -> None:
         with open(filePath, 'r') as f:
             lines = f.readlines()
-        filteredLines = [l for l in lines if l.strip() != 'G28']
+        filteredLines = [l for l in lines if not l.strip().startswith('G28')]
         with open(filePath, 'w') as f:
             f.writelines(filteredLines)
 
