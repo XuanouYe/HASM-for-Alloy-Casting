@@ -1,9 +1,11 @@
 import numpy as np
 import trimesh
+import pyvista as pv
 from typing import Optional, List
 from shapely.geometry import Polygon, MultiPolygon
 from shapely.geometry.base import BaseGeometry
 from supportRegionDetector import SupportRegionDetector
+from geometryAdapters import loadMeshFromFile
 
 
 class InnerSurfaceOffset:
@@ -19,7 +21,12 @@ class InnerSurfaceOffset:
         self.offsetDistance = float(self.config.get("offsetDistance", defaultOffset))
 
     def removeInnerSurfaceOverhangs(self, mesh: trimesh.Trimesh) -> trimesh.Trimesh:
-        currentMesh = mesh
+        currentMesh = mesh.copy()
+        currentMesh.merge_vertices()
+        currentMesh.fix_normals()
+        if not currentMesh.is_watertight:
+            trimesh.repair.fill_holes(currentMesh)
+
         iterationCount = 0
         while iterationCount < self.maxIterations:
             sliceHeights = self.detector._generateSliceHeights(currentMesh)
@@ -44,33 +51,57 @@ class InnerSurfaceOffset:
                 curGeom = layerGeoms[layerIdx]
                 if curGeom is None or curGeom.is_empty:
                     continue
-                overhangGeom = supportGeom.intersection(curGeom)
+
+                try:
+                    overhangGeom = supportGeom.intersection(curGeom)
+                except Exception:
+                    continue
+
                 if overhangGeom.is_empty or overhangGeom.area < self.areaEps:
                     continue
                 zBottom = zMin + (layerIdx * self.layerHeight)
                 transitionVolume = self._createTransitionVolume(overhangGeom, zBottom, self.layerHeight)
-                if transitionVolume is not None:
+                if transitionVolume is not None and transitionVolume.is_volume:
                     removalVolumes.append(transitionVolume)
 
             if not removalVolumes:
                 break
 
-            mergedRemoval = trimesh.util.concatenate(removalVolumes)
-            resultMesh = currentMesh.difference(mergedRemoval)
+            resultMesh = currentMesh
+            for vol in removalVolumes:
+                if not resultMesh.is_volume:
+                    resultMesh.merge_vertices()
+                    resultMesh.fix_normals()
+                    if not resultMesh.is_watertight:
+                        trimesh.repair.fill_holes(resultMesh)
+
+                if resultMesh.is_volume and vol.is_volume:
+                    try:
+                        resultMesh = resultMesh.difference(vol)
+                    except Exception:
+                        continue
+
             if not isinstance(resultMesh, trimesh.Trimesh):
                 break
+
             vertexChange = abs(resultMesh.vertices.shape[0] - currentMesh.vertices.shape[0])
             if vertexChange < 3:
                 break
+
             currentMesh = resultMesh
             iterationCount += 1
 
         return currentMesh
 
-    def _createTransitionVolume(self, overhangPolygon: BaseGeometry, zBottom: float, height: float) -> Optional[trimesh.Trimesh]:
+    def _createTransitionVolume(self, overhangPolygon: BaseGeometry, zBottom: float, height: float) -> Optional[
+        trimesh.Trimesh]:
         if overhangPolygon is None or overhangPolygon.is_empty or overhangPolygon.area < self.areaEps:
             return None
-        poly = overhangPolygon.buffer(float(self.offsetDistance))
+        try:
+            poly = overhangPolygon.buffer(float(self.offsetDistance)).buffer(0)
+        except Exception:
+            return None
+
         if poly.is_empty or poly.area < self.areaEps:
             return None
         return self._shapelyToTrimesh(poly, zBottom, height)
@@ -78,22 +109,48 @@ class InnerSurfaceOffset:
     def _shapelyToTrimesh(self, polygon: BaseGeometry, zBottom: float, height: float) -> Optional[trimesh.Trimesh]:
         if polygon is None or polygon.is_empty:
             return None
+        try:
+            polygon = polygon.buffer(0)
+        except Exception:
+            pass
+
         if isinstance(polygon, Polygon):
             polys = [polygon]
         elif isinstance(polygon, MultiPolygon):
             polys = list(polygon.geoms)
         else:
             return None
+
         meshes = []
         for poly in polys:
             if (not poly.is_valid) or poly.area < self.areaEps:
                 continue
-            m = trimesh.creation.extrude_polygon(poly, height=float(height))
-            m.apply_translation([0.0, 0.0, float(zBottom)])
-            meshes.append(m)
+            try:
+                m = trimesh.creation.extrude_polygon(poly, height=float(height))
+                m.apply_translation([0.0, 0.0, float(zBottom)])
+                m.merge_vertices()
+                m.fix_normals()
+                if not m.is_watertight:
+                    trimesh.repair.fill_holes(m)
+                if m.is_volume:
+                    meshes.append(m)
+            except Exception:
+                continue
+
         if not meshes:
             return None
-        return meshes[0] if len(meshes) == 1 else trimesh.util.concatenate(meshes)
+
+        if len(meshes) == 1:
+            return meshes[0]
+        else:
+            res = meshes[0]
+            for m in meshes[1:]:
+                if res.is_volume and m.is_volume:
+                    try:
+                        res = res.union(m)
+                    except Exception:
+                        pass
+            return res
 
 
 def removeInnerSurfaceOverhangs(mesh: trimesh.Trimesh, config: dict) -> trimesh.Trimesh:
@@ -101,19 +158,32 @@ def removeInnerSurfaceOverhangs(mesh: trimesh.Trimesh, config: dict) -> trimesh.
     return processor.removeInnerSurfaceOverhangs(mesh)
 
 
+def visualizeInnerSurfaceOffset(meshPath, configDict):
+    originalMesh = loadMeshFromFile(meshPath)
+    processedMesh = removeInnerSurfaceOverhangs(originalMesh, configDict)
+
+    originalPvMesh = pv.wrap(originalMesh)
+    processedPvMesh = pv.wrap(processedMesh)
+
+    visualizationPlotter = pv.Plotter(shape=(1, 2))
+
+    visualizationPlotter.subplot(0, 0)
+    visualizationPlotter.add_mesh(originalPvMesh, color="lightblue", show_edges=True, opacity=0.5)
+
+    visualizationPlotter.subplot(0, 1)
+    visualizationPlotter.add_mesh(processedPvMesh, color="lightgreen", show_edges=True, opacity=0.5)
+
+    visualizationPlotter.link_views()
+    visualizationPlotter.show()
+
+
 if __name__ == "__main__":
-    from geometryAdapters import loadMeshFromFile, exportMeshToStl
-    config = {
+    offsetConfig = {
         "supportAngle": 45.0,
         "layerHeight": 0.2,
         "smoothHeight": 0.4,
         "areaEps": 1e-4,
         "maxIterations": 20
     }
-    stlPath = "testModels/hollow.cylinder.left.stl"
-    mesh = loadMeshFromFile(stlPath)
-    print(f"Loaded mesh: {mesh.vertices.shape[0]} vertices, {mesh.faces.shape[0]} faces")
-    processedMesh = removeInnerSurfaceOverhangs(mesh, config)
-    outputPath = stlPath.replace(".stl", ".offset.stl")
-    exportMeshToStl(processedMesh, outputPath)
-    print(f"Saved to: {outputPath}")
+    testFilePath = "../testModels/cylinder.mold.stl"
+    visualizeInnerSurfaceOffset(testFilePath, offsetConfig)

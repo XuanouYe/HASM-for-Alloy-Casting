@@ -127,8 +127,8 @@ def executeMoldWorkflow(
 
 
 if __name__ == '__main__':
-    testInputPath = "testModels\\cylinder.left.stl"
-    testOutputPath = "testModels\\cylinder.mold.stl"
+    testInputPath = "../testModels/cylinder.left.stl"
+    testOutputPath = "../testModels/cylinder.mold.stl"
     testConfig = {
         "targetFillTime": 3.0,
         "sprueInletOffset": 5.0,
