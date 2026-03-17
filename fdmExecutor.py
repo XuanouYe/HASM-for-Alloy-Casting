@@ -326,6 +326,49 @@ class CuraEngineController:
         with open(filePath, 'w') as f:
             f.writelines(processedLines)
 
+    def removeUnsafeEndCommands(self, filePath: str) -> None:
+        with open(filePath, 'r') as f:
+            lines = f.readlines()
+
+        processedLines = []
+        insideEndSection = False
+        dangerousCommands = {'M18', 'M84', 'M81', 'G28'}
+        motionCommands = {'G0', 'G1', 'G2', 'G3'}
+        dangerousAxes = {'X', 'Y', 'Z', 'A', 'B', 'U', 'V', 'W'}
+
+        for line in lines:
+            lineStripped = line.strip()
+
+            if lineStripped.startswith(';End of Gcode'):
+                insideEndSection = True
+                processedLines.append(line)
+                continue
+
+            commandPart = line.split(';')[0].strip()
+            if not commandPart:
+                processedLines.append(line)
+                continue
+
+            commandTokens = commandPart.split()
+            commandName = commandTokens[0]
+
+            if commandName in dangerousCommands:
+                continue
+
+            if insideEndSection and commandName in motionCommands:
+                hasDangerousAxis = False
+                for token in commandTokens[1:]:
+                    if token and token[0] in dangerousAxes:
+                        hasDangerousAxis = True
+                        break
+                if hasDangerousAxis:
+                    continue
+
+            processedLines.append(line)
+
+        with open(filePath, 'w') as f:
+            f.writelines(processedLines)
+
     def updateGcodeBoundingBox(self, filePath: str) -> None:
         minX = minY = minZ = float('inf')
         maxX = maxY = maxZ = float('-inf')
@@ -425,6 +468,7 @@ class CuraEngineController:
             )
         scaleFactor = float((additiveConfig or {}).get('extrusionScaleFactor', 1.0))
         self.replaceExtruderAxis(windowsOutputPath, extrusionScaleFactor=scaleFactor)
+        self.removeUnsafeEndCommands(windowsOutputPath)
         self.updateGcodeBoundingBox(windowsOutputPath)
         return windowsOutputPath
 
