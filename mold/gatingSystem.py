@@ -38,7 +38,7 @@ class AutoGatingSystem:
         if isinstance(mesh, trimesh.Scene):
             mesh = mesh.dump(concatenate=True)
         self._originalMesh = mesh
-        self.minRadius = 2.0
+        self.minRadius = 3.0
         self.velocityLimit = 500.0
         self.bufferDistance = 5.0
         config = config or {}
