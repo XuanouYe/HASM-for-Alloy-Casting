@@ -2,54 +2,9 @@ import json
 from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import trimesh
-from scipy.spatial import cKDTree
 from .geometryUtils import applyRotation, buildRotationFromTo, concatenateMeshes, normalizeVector, sampleMeshPointsWithNormals
-from .toolpathEngine import TrimeshToolpathEngine, PointCloudIPW, MeshCollisionChecker
+from .toolpathEngine import TrimeshToolpathEngine, PointCloudIPW, MeshCollisionChecker, SolidKeepOutClipper, SafeEnvelope
 from .toolpathStrategies import ToolpathStrategyFactory
-
-
-class PointCloudIpw:
-    def __init__(self, mesh: trimesh.Trimesh, sampleCount: int = 50000):
-        self.points, _ = sampleMeshPointsWithNormals(mesh, sampleCount)
-        self.activeMask = np.ones(len(self.points), dtype=bool)
-
-    def getActivePointsWcs(self) -> np.ndarray:
-        return self.points[self.activeMask]
-
-    def filterPathsLocal(self, pathsLocal: List[np.ndarray], rotToToolFrame: np.ndarray, toolRadius: float, stepOver: float) -> List[np.ndarray]:
-        if not pathsLocal or not np.any(self.activeMask):
-            return pathsLocal
-        activePointsWcs = self.getActivePointsWcs()
-        if len(activePointsWcs) == 0:
-            return []
-        activePointsLocal = applyRotation(activePointsWcs, rotToToolFrame)
-        searchTree = cKDTree(activePointsLocal)
-        searchRadius = toolRadius + stepOver * 1.5
-        validPaths = []
-        for pathLocal in pathsLocal:
-            dists, _ = searchTree.query(pathLocal, k=1, distance_upper_bound=searchRadius)
-            if np.any(dists != np.inf):
-                validPaths.append(pathLocal)
-        return validPaths
-
-    def updateIpwLocal(self, pathsLocal: List[np.ndarray], rotToToolFrame: np.ndarray, toolRadius: float) -> None:
-        if not pathsLocal or not np.any(self.activeMask):
-            return
-        activePointsWcs = self.getActivePointsWcs()
-        activeIndices = np.where(self.activeMask)[0]
-        activePointsLocal = applyRotation(activePointsWcs, rotToToolFrame)
-        searchTree = cKDTree(activePointsLocal)
-        removeLocalIndices = set()
-        for pathLocal in pathsLocal:
-            pointHits = searchTree.query_ball_point(pathLocal, r=toolRadius)
-            for pathIndex, hitList in enumerate(pointHits):
-                pathZ = pathLocal[pathIndex, 2]
-                for localIndex in hitList:
-                    if activePointsLocal[localIndex, 2] <= pathZ - toolRadius * 0.5:
-                        removeLocalIndices.add(localIndex)
-        if removeLocalIndices:
-            removeGlobalIndices = activeIndices[list(removeLocalIndices)]
-            self.activeMask[removeGlobalIndices] = False
 
 
 class FiveAxisCncPathGenerator:
@@ -141,14 +96,38 @@ class FiveAxisCncPathGenerator:
             selectedAxes = [normalizeVector(np.asarray(candidateAxes[0], dtype=float))]
         return selectedAxes
 
-    def _computeLocalSafeZ(self, rotatedObstacleMesh: trimesh.Trimesh, toolAxis: np.ndarray, safeHeight: float, toolRadius: float) -> float:
+    def _computeLocalSafeZ(self, rotatedObstacleMesh: trimesh.Trimesh, toolRadius: float, safeHeight: float) -> float:
         if rotatedObstacleMesh is None or rotatedObstacleMesh.is_empty:
             return safeHeight + toolRadius
-        obstacleBounds = np.asarray(rotatedObstacleMesh.bounds, dtype=float)
-        localZMax = float(obstacleBounds[1, 2])
-        return localZMax + float(safeHeight) + float(toolRadius)
+        bounds = np.asarray(rotatedObstacleMesh.bounds, dtype=float)
+        center = (bounds[0] + bounds[1]) * 0.5
+        radius = float(np.linalg.norm(bounds[1] - bounds[0])) * 0.5
+        return float(center[2]) + radius + float(toolRadius) + float(safeHeight)
 
-    def generateStepWithAxes(self, stepId: int, stepType: str, targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh, avoidanceMesh: trimesh.Trimesh, toolParams: Dict[str, Any], stepParam: Dict[str, Any], candidateAxes: List[np.ndarray], globalMinZ: float, safetyMargin: float) -> Dict[str, Any]:
+    def _emitSegments(self, localPaths: List[np.ndarray], axisUnit: np.ndarray, feedrate: float, rotBack: np.ndarray, outputSegmentId: int, pointId: int, axisIndex: int, solidClipperLocal: Optional[SolidKeepOutClipper], hmSampleStep: float) -> Tuple[List[Dict], List[Dict], int, int]:
+        segments = []
+        allClPoints = []
+        for pathLocal in localPaths:
+            pathsToOutput = [pathLocal]
+            if solidClipperLocal is not None:
+                pathsToOutput = solidClipperLocal.clipPath(pathLocal, hmSampleStep)
+            for subPath in pathsToOutput:
+                if len(subPath) < 2:
+                    continue
+                finalWcsPath = applyRotation(subPath, rotBack)
+                clPointsWcs = self.buildClPointDicts(finalWcsPath, axisUnit, feedrate, outputSegmentId, pointId)
+                pointId += len(clPointsWcs)
+                segments.append({
+                    'segmentId': int(outputSegmentId),
+                    'axisIndex': int(axisIndex),
+                    'toolAxis': [float(axisUnit[0]), float(axisUnit[1]), float(axisUnit[2])],
+                    'pointCount': int(len(clPointsWcs))
+                })
+                allClPoints.extend(clPointsWcs)
+                outputSegmentId += 1
+        return segments, allClPoints, outputSegmentId, pointId
+
+    def generateStepWithAxes(self, stepId: int, stepType: str, targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh, avoidanceMesh: Optional[trimesh.Trimesh], toolParams: Dict[str, Any], stepParam: Dict[str, Any], candidateAxes: List[np.ndarray], globalMinZ: float, safetyMargin: float, solidClipMesh: Optional[trimesh.Trimesh] = None) -> Dict[str, Any]:
         modeValue = str(stepParam.get('mode', 'dropRaster'))
         feedrate = float(stepParam.get('feedrate', 500.0))
         toolRadius = float(toolParams.get('diameter', 6.0)) * 0.5
@@ -158,29 +137,52 @@ class FiveAxisCncPathGenerator:
         isFinishing = modeValue.lower() in {'surfacefinishing', 'spf'}
         strategy = ToolpathStrategyFactory.getStrategy(modeValue)
         useIpw = modeValue.lower() in {'zlevelroughing', 'zlr', 'dropraster'}
-        ipwData = PointCloudIpw(targetMesh, int(stepParam.get('ipwSampleCount', 50000))) if useIpw else None
+        ipwData = PointCloudIPW(targetMesh, int(stepParam.get('ipwSampleCount', 50000))) if useIpw else None
+        hmGridStep = float(stepParam.get('hmGridStep', max(stepOver * 0.6, toolRadius * 0.5)))
         hmSampleStep = float(stepParam.get('hmSampleStep', max(stepOver * 0.4, toolRadius * 0.35)))
         safeHeightParam = float(stepParam.get('safeHeight', 5.0))
+        clearance = float(toolRadius + safetyMargin)
+
         segments = []
         allClPoints = []
         pointId = 0
         outputSegmentId = 0
+
         for axisIndex, toolAxis in enumerate(candidateAxes):
             axisUnit = normalizeVector(np.asarray(toolAxis, dtype=float))
             rotToToolFrame = buildRotationFromTo(axisUnit, np.array([0.0, 0.0, 1.0], dtype=float))
             rotBack = rotToToolFrame.T
+
             rotatedTarget = self.rotateMesh(targetMesh, rotToToolFrame)
             rotatedKeepOut = self.rotateMesh(keepOutMesh, rotToToolFrame)
             rotatedAvoidance = self.rotateMesh(avoidanceMesh, rotToToolFrame) if avoidanceMesh is not None and not avoidanceMesh.is_empty else None
-            localSafeZ = self._computeLocalSafeZ(rotatedAvoidance if rotatedAvoidance is not None else rotatedTarget, axisUnit, safeHeightParam, toolRadius)
+            rotatedSolidClip = self.rotateMesh(solidClipMesh, rotToToolFrame) if solidClipMesh is not None and not solidClipMesh.is_empty else None
+
+            avoidMeshForZ = rotatedAvoidance if rotatedAvoidance is not None else rotatedKeepOut
+            localSafeZ = self._computeLocalSafeZ(avoidMeshForZ, toolRadius, safeHeightParam)
+
             keepOutChecker = MeshCollisionChecker(rotatedKeepOut, toolRadius, safetyMargin)
-            avoidanceChecker = MeshCollisionChecker(rotatedAvoidance, toolRadius, safetyMargin) if rotatedAvoidance is not None else keepOutChecker
-            enrichedParam = dict(stepParam)
-            enrichedParam['_keepOutChecker'] = keepOutChecker
-            enrichedParam['_toolpathEngine'] = self.toolpathEngine
-            enrichedParam['_hmSampleStep'] = hmSampleStep
-            rawPathsLocal = strategy.generate(rotatedTarget, rotatedKeepOut, toolRadius, enrichedParam, safetyMargin)
+            avoidanceEnvelope = SafeEnvelope(rotatedAvoidance, toolRadius, safetyMargin) if rotatedAvoidance is not None else keepOutChecker.envelope
+
+            hmObstacleMesh = rotatedAvoidance if rotatedAvoidance is not None else rotatedKeepOut
+            heightMapLocal = self.toolpathEngine.buildObstacleHeightMapLocal(hmObstacleMesh, hmGridStep, toolRadius, safetyMargin)
+
+            solidClipperLocal = SolidKeepOutClipper(rotatedSolidClip) if rotatedSolidClip is not None else None
+
+            strategyCtx = dict(stepParam)
+            strategyCtx['_keepOutChecker'] = keepOutChecker
+            strategyCtx['_toolpathEngine'] = self.toolpathEngine
+            strategyCtx['_hmSampleStep'] = hmSampleStep
+
+            rawPathsLocal = strategy.generate(rotatedTarget, rotatedKeepOut, toolRadius, strategyCtx, safetyMargin)
             rawPathsLocal = self.toolpathEngine.clipPathsByCollisionChecker(rawPathsLocal, keepOutChecker, hmSampleStep)
+
+            if heightMapLocal is not None:
+                rawPathsLocal = self.toolpathEngine.clipPathsByObstacleLocal(rawPathsLocal, heightMapLocal, hmSampleStep, clearance)
+
+            if solidClipperLocal is not None:
+                rawPathsLocal = solidClipperLocal.clipPaths(rawPathsLocal, hmSampleStep)
+
             validPathsLocal = []
             for pathLocal in rawPathsLocal:
                 if len(pathLocal) < 2:
@@ -189,36 +191,40 @@ class FiveAxisCncPathGenerator:
                     validPathsLocal.append(pathLocal)
                 else:
                     validPathsLocal.extend(self.toolpathEngine.slicePathByPlatformZ(pathLocal, rotBack, platformSafeZ))
+
             if ipwData is not None and validPathsLocal:
                 validPathsLocal = ipwData.filterPathsLocal(validPathsLocal, rotToToolFrame, toolRadius, stepOver)
                 ipwData.updateIpwLocal(validPathsLocal, rotToToolFrame, toolRadius)
+
             if not validPathsLocal:
                 continue
+
             if enablePathLinking:
-                avoidMeshForLinking = rotatedAvoidance if rotatedAvoidance is not None else rotatedKeepOut
                 optimizedLocalPath = self.toolpathEngine.optimizePathLinking(
-                    validPathsLocal, localSafeZ, stepOver,
-                    obstacleMeshLocal=avoidMeshForLinking,
+                    validPathsLocal,
+                    localSafeZ,
+                    stepOver,
+                    envelope=avoidanceEnvelope,
+                    heightMapLocal=heightMapLocal,
+                    solidClipper=solidClipperLocal,
                     toolRadius=toolRadius,
-                    safetyMargin=safetyMargin,
-                    collisionChecker=avoidanceChecker
+                    safetyMargin=safetyMargin
                 )
                 if len(optimizedLocalPath) == 0:
                     continue
-                finalWcsPath = applyRotation(optimizedLocalPath, rotBack)
-                clPointsWcs = self.buildClPointDicts(finalWcsPath, axisUnit, feedrate, outputSegmentId, pointId)
-                pointId += len(clPointsWcs)
-                segments.append({'segmentId': int(outputSegmentId), 'axisIndex': int(axisIndex), 'toolAxis': [float(axisUnit[0]), float(axisUnit[1]), float(axisUnit[2])], 'pointCount': int(len(clPointsWcs))})
-                allClPoints.extend(clPointsWcs)
-                outputSegmentId += 1
+                stepSegs, stepPts, outputSegmentId, pointId = self._emitSegments(
+                    [optimizedLocalPath], axisUnit, feedrate, rotBack,
+                    outputSegmentId, pointId, axisIndex, solidClipperLocal, hmSampleStep
+                )
             else:
-                for pathLocal in validPathsLocal:
-                    finalWcsPath = applyRotation(pathLocal, rotBack)
-                    clPointsWcs = self.buildClPointDicts(finalWcsPath, axisUnit, feedrate, outputSegmentId, pointId)
-                    pointId += len(clPointsWcs)
-                    segments.append({'segmentId': int(outputSegmentId), 'axisIndex': int(axisIndex), 'toolAxis': [float(axisUnit[0]), float(axisUnit[1]), float(axisUnit[2])], 'pointCount': int(len(clPointsWcs))})
-                    allClPoints.extend(clPointsWcs)
-                    outputSegmentId += 1
+                stepSegs, stepPts, outputSegmentId, pointId = self._emitSegments(
+                    validPathsLocal, axisUnit, feedrate, rotBack,
+                    outputSegmentId, pointId, axisIndex, solidClipperLocal, hmSampleStep
+                )
+
+            segments.extend(stepSegs)
+            allClPoints.extend(stepPts)
+
         return {'stepId': int(stepId), 'stepType': str(stepType), 'toolParams': toolParams, 'segments': segments, 'clPoints': allClPoints}
 
     def generateJob(self, partStl: str, moldStl: str, gateStl: str, riserStl: str, toolParams: Dict[str, Any], stepParams: List[Dict[str, Any]], axisStrategyParams: Dict[str, Any], wcsId: str = 'WCS_MAIN', jobId: Optional[str] = None) -> Dict[str, Any]:
@@ -233,23 +239,39 @@ class FiveAxisCncPathGenerator:
         safetyMargin = float(toolParams.get('safetyMargin', 0.5))
 
         keepOutMeshStep1 = concatenateMeshes([partMesh, gateMesh, riserMesh])
-        step1 = self.generateStepWithAxes(1, 'shellRemoval', moldMesh, keepOutMeshStep1, keepOutMeshStep1, toolParams, stepParams[0], candidateAxes, globalMinZ, safetyMargin)
+        step1 = self.generateStepWithAxes(
+            1, 'shellRemoval',
+            moldMesh, keepOutMeshStep1, keepOutMeshStep1,
+            toolParams, stepParams[0], candidateAxes, globalMinZ, safetyMargin,
+            solidClipMesh=keepOutMeshStep1
+        )
 
-        riserAxes = [np.array([0.0, 0.0, 1.0], dtype=float)]
         keepOutMeshStep2 = concatenateMeshes([partMesh, gateMesh])
-        step2 = self.generateStepWithAxes(2, 'riserRemoval', riserMesh, keepOutMeshStep2, keepOutMeshStep2, toolParams, stepParams[1], riserAxes, globalMinZ, safetyMargin)
+        step2 = self.generateStepWithAxes(
+            2, 'riserRemoval',
+            riserMesh, keepOutMeshStep2, keepOutMeshStep2,
+            toolParams, stepParams[1], [np.array([0.0, 0.0, 1.0], dtype=float)], globalMinZ, safetyMargin,
+            solidClipMesh=keepOutMeshStep2
+        )
 
         step3Axes = self.selectAxesGreedyCoverage(partMesh, candidateAxes, axisStrategyParams)
-        keepOutMeshStep3Machining = gateMesh
-        avoidanceMeshStep3 = partMesh
-
         step3ConfigX = stepParams[2].copy()
         step3ConfigX['scanAxis'] = 'x'
-        step3X = self.generateStepWithAxes(3, 'partFinishing', partMesh, keepOutMeshStep3Machining, avoidanceMeshStep3, toolParams, step3ConfigX, step3Axes, globalMinZ, safetyMargin)
+        step3X = self.generateStepWithAxes(
+            3, 'partFinishing',
+            partMesh, gateMesh, partMesh,
+            toolParams, step3ConfigX, step3Axes, globalMinZ, safetyMargin,
+            solidClipMesh=None
+        )
 
         step3ConfigY = stepParams[2].copy()
         step3ConfigY['scanAxis'] = 'y'
-        step3Y = self.generateStepWithAxes(3, 'partFinishing', partMesh, keepOutMeshStep3Machining, avoidanceMeshStep3, toolParams, step3ConfigY, step3Axes, globalMinZ, safetyMargin)
+        step3Y = self.generateStepWithAxes(
+            3, 'partFinishing',
+            partMesh, gateMesh, partMesh,
+            toolParams, step3ConfigY, step3Axes, globalMinZ, safetyMargin,
+            solidClipMesh=None
+        )
 
         step3 = {
             'stepId': 3,
@@ -259,7 +281,12 @@ class FiveAxisCncPathGenerator:
             'clPoints': step3X['clPoints'] + step3Y['clPoints']
         }
 
-        step4 = self.generateStepWithAxes(4, 'gateRemoval', gateMesh, partMesh, partMesh, toolParams, stepParams[3], [np.array([0.0, 0.0, 1.0], dtype=float)], globalMinZ, safetyMargin)
+        step4 = self.generateStepWithAxes(
+            4, 'gateRemoval',
+            gateMesh, partMesh, partMesh,
+            toolParams, stepParams[3], [np.array([0.0, 0.0, 1.0], dtype=float)], globalMinZ, safetyMargin,
+            solidClipMesh=partMesh
+        )
 
         outputData = {'version': self.version, 'wcsId': str(wcsId), 'steps': [step1, step2, step3, step4]}
         if jobId is not None:

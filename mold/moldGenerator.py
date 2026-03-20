@@ -75,7 +75,7 @@ class MoldGenerator:
 def executeMoldWorkflow(
         inputStlPath: str,
         outputStlPath: str,
-        tempCncDir: str = "tempCncFiles",
+        tempCncDir: str = "../tempCncFiles",
         adjustOrientation: bool = False,
         addGating: bool = True,
         surfaceOffset: bool = False,
@@ -127,7 +127,7 @@ def executeMoldWorkflow(
 
 
 if __name__ == '__main__':
-    testInputPath = "../testModels/cylinder.left.stl"
+    testInputPath = "../testModels/cylinder.lay.without.hollow.stl"
     testOutputPath = "../testModels/cylinder.mold.stl"
     testConfig = {
         "targetFillTime": 3.0,

@@ -23,19 +23,74 @@ def _buildFclMesh(mesh: trimesh.Trimesh):
     return fcl.CollisionObject(bvhModel, fcl.Transform3f())
 
 
+class SolidKeepOutClipper:
+    def __init__(self, solidMesh: trimesh.Trimesh):
+        self.mesh = solidMesh
+        self.isEmpty = solidMesh is None or solidMesh.is_empty
+
+    def _densify(self, path: np.ndarray, sampleStep: float) -> np.ndarray:
+        denseList = [path[0]]
+        for i in range(1, len(path)):
+            seg = path[i] - path[i - 1]
+            segLen = float(np.linalg.norm(seg))
+            if segLen <= sampleStep:
+                denseList.append(path[i])
+                continue
+            nSamples = int(np.ceil(segLen / sampleStep))
+            tVals = np.linspace(0.0, 1.0, nSamples + 1)
+            segPts = np.outer(1.0 - tVals, path[i - 1]) + np.outer(tVals, path[i])
+            denseList.extend(segPts[1:].tolist())
+        return np.asarray(denseList, dtype=float)
+
+    def segmentIsSafe(self, ptsArr: np.ndarray) -> bool:
+        if self.isEmpty:
+            return True
+        return not bool(np.any(self.mesh.contains(ptsArr)))
+
+    def clipPath(self, path: np.ndarray, sampleStep: float) -> List[np.ndarray]:
+        if self.isEmpty or len(path) < 2:
+            return [np.asarray(path, dtype=float)] if len(path) >= 2 else []
+        denseArr = self._densify(np.asarray(path, dtype=float), sampleStep)
+        insideMask = self.mesh.contains(denseArr)
+        subPaths = []
+        current = []
+        for i in range(len(denseArr)):
+            if not insideMask[i]:
+                current.append(denseArr[i])
+            else:
+                if len(current) >= 2:
+                    subPaths.append(np.asarray(current, dtype=float))
+                current = []
+        if len(current) >= 2:
+            subPaths.append(np.asarray(current, dtype=float))
+        return subPaths
+
+    def clipPaths(self, paths: List[np.ndarray], sampleStep: float) -> List[np.ndarray]:
+        if self.isEmpty:
+            return [np.asarray(p, dtype=float) for p in paths if len(p) >= 2]
+        result = []
+        for p in paths:
+            result.extend(self.clipPath(np.asarray(p, dtype=float), sampleStep))
+        return result
+
+
 class SafeEnvelope:
     def __init__(self, obstacleMesh: trimesh.Trimesh, toolRadius: float, safetyMargin: float):
         self.mesh = obstacleMesh
         self.isEmpty = obstacleMesh is None or obstacleMesh.is_empty
         self.clearance = float(toolRadius + safetyMargin)
         self.safeZ = float(-np.inf)
+        self.meshCenter = None
+        self.meshRadius = float(0.0)
         self._surfaceTree = None
         self._surfaceSamples = None
         if not self.isEmpty:
             bounds = np.asarray(obstacleMesh.bounds, dtype=float)
-            self.safeZ = float(bounds[1, 2]) + self.clearance + float(toolRadius) + 1.0
+            self.meshCenter = (bounds[0] + bounds[1]) * 0.5
+            self.meshRadius = float(np.linalg.norm(bounds[1] - bounds[0])) * 0.5
+            self.safeZ = float(self.meshCenter[2]) + self.meshRadius + self.clearance
             try:
-                pts, _ = trimesh.sample.sample_surface(obstacleMesh, 40000)
+                pts, _ = trimesh.sample.sample_surface(obstacleMesh, 80000)
                 self._surfaceSamples = np.asarray(pts, dtype=float)
                 self._surfaceTree = cKDTree(self._surfaceSamples)
             except Exception:
@@ -47,12 +102,20 @@ class SafeEnvelope:
         dists, _ = self._surfaceTree.query(pts, k=1)
         return np.asarray(dists, dtype=float)
 
+    def _signedClearance(self, pts: np.ndarray) -> np.ndarray:
+        if self.isEmpty:
+            return np.full(len(pts), np.inf, dtype=float)
+        dists = self._nearestSurfaceDist(pts)
+        insideMask = self.mesh.contains(pts)
+        signedVals = dists.copy()
+        signedVals[insideMask] *= -1.0
+        return signedVals
+
     def isPointSafe(self, pt: np.ndarray) -> bool:
         if self.isEmpty:
             return True
         ptArr = np.asarray(pt, dtype=float).reshape(1, 3)
-        d = self._nearestSurfaceDist(ptArr)[0]
-        return float(d) >= self.clearance
+        return float(self._signedClearance(ptArr)[0]) >= self.clearance
 
     def isSegmentSafe(self, startPt: np.ndarray, endPt: np.ndarray, sampleStep: float = 0.5) -> bool:
         if self.isEmpty:
@@ -62,39 +125,16 @@ class SafeEnvelope:
         segLen = float(np.linalg.norm(e - s))
         if segLen < 1e-9:
             return self.isPointSafe(s)
-        nSamples = max(int(np.ceil(segLen / sampleStep)) + 1, 2)
+        stepVal = max(min(sampleStep, self.clearance * 0.4), 0.05)
+        nSamples = max(int(np.ceil(segLen / stepVal)) + 1, 2)
         tVals = np.linspace(0.0, 1.0, nSamples)
         samplePts = np.outer(1.0 - tVals, s) + np.outer(tVals, e)
-        dists = self._nearestSurfaceDist(samplePts)
-        return bool(np.all(dists >= self.clearance))
+        return bool(np.all(self._signedClearance(samplePts) >= self.clearance))
 
-    def computeSafeRetractZ(self, pt: np.ndarray, extraClearance: float = 2.0) -> float:
+    def computeSafeRetractZ(self, extraClearance: float = 2.0) -> float:
         if self.isEmpty:
-            return float(pt[2]) + extraClearance
-        return float(self.safeZ) + extraClearance
-
-    def buildSafeTransit(self, fromPt: np.ndarray, toPt: np.ndarray, sampleStep: float = 0.5, extraClearance: float = 2.0) -> List[np.ndarray]:
-        if self.isEmpty:
-            return [fromPt, toPt]
-        if self.isSegmentSafe(fromPt, toPt, sampleStep):
-            return [fromPt, toPt]
-        retractZ = self.computeSafeRetractZ(fromPt, extraClearance)
-        retractZ = max(retractZ, float(fromPt[2]) + extraClearance, float(toPt[2]) + extraClearance)
-        r1 = fromPt.copy()
-        r1[2] = retractZ
-        r2 = toPt.copy()
-        r2[2] = retractZ
-        r1Safe = self.isSegmentSafe(fromPt, r1, sampleStep)
-        r2Safe = self.isSegmentSafe(r2, toPt, sampleStep)
-        midSafe = self.isSegmentSafe(r1, r2, sampleStep)
-        if r1Safe and midSafe and r2Safe:
-            return [fromPt, r1, r2, toPt]
-        higherZ = retractZ + self.clearance * 2.0 + extraClearance
-        h1 = fromPt.copy()
-        h1[2] = higherZ
-        h2 = toPt.copy()
-        h2[2] = higherZ
-        return [fromPt, h1, h2, toPt]
+            return extraClearance
+        return float(self.meshCenter[2]) + self.meshRadius + self.clearance + extraClearance
 
 
 class MeshCollisionChecker:
@@ -102,25 +142,23 @@ class MeshCollisionChecker:
         self.obstacleMesh = obstacleMesh
         self.clearanceDist = float(toolRadius + safetyMargin)
         self.isEmpty = obstacleMesh is None or obstacleMesh.is_empty
-        self._envelope = SafeEnvelope(obstacleMesh, toolRadius, safetyMargin)
+        self.envelope = SafeEnvelope(obstacleMesh, toolRadius, safetyMargin)
 
     def isPointColliding(self, point: np.ndarray) -> bool:
         if self.isEmpty:
             return False
-        return not self._envelope.isPointSafe(np.asarray(point, dtype=float))
+        return not self.envelope.isPointSafe(np.asarray(point, dtype=float))
 
     def batchPointsColliding(self, points: np.ndarray) -> np.ndarray:
         if self.isEmpty or len(points) == 0:
             return np.zeros(len(points), dtype=bool)
         pts = np.asarray(points, dtype=float)
-        dists = self._envelope._nearestSurfaceDist(pts)
-        collidingMask = dists < self.clearanceDist
-        return collidingMask
+        return self.envelope._signedClearance(pts) < self.clearanceDist
 
     def isSegmentColliding(self, startPoint: np.ndarray, endPoint: np.ndarray, sampleStep: float) -> bool:
         if self.isEmpty:
             return False
-        return not self._envelope.isSegmentSafe(
+        return not self.envelope.isSegmentSafe(
             np.asarray(startPoint, dtype=float),
             np.asarray(endPoint, dtype=float),
             sampleStep
@@ -180,6 +218,9 @@ class TrimeshToolpathEngine:
 
     def buildSafeEnvelope(self, obstacleMesh: trimesh.Trimesh, toolRadius: float, safetyMargin: float) -> SafeEnvelope:
         return SafeEnvelope(obstacleMesh, toolRadius, safetyMargin)
+
+    def buildSolidClipper(self, solidMesh: trimesh.Trimesh) -> SolidKeepOutClipper:
+        return SolidKeepOutClipper(solidMesh)
 
     def buildObstacleHeightMapLocal(self, obstacleMesh: trimesh.Trimesh, gridStep: float, toolRadius: float, safetyMargin: float) -> Optional[Dict[str, Any]]:
         if obstacleMesh is None or obstacleMesh.is_empty:
@@ -298,15 +339,48 @@ class TrimeshToolpathEngine:
                 clippedPaths.append(np.asarray(currentPath, dtype=float))
         return clippedPaths
 
-    def isSegmentCollisionFreeLocal(self, startPoint: np.ndarray, endPoint: np.ndarray, heightMapLocal: Optional[Dict[str, Any]], sampleStep: float, clearance: float) -> bool:
-        if heightMapLocal is None:
-            return True
-        segs = self.sampleSegmentLocal(startPoint, endPoint, sampleStep)
-        for pt in segs:
-            hLimit = self.queryHeightLimitLocal(heightMapLocal, float(pt[0]), float(pt[1]))
-            if float(pt[2]) < float(hLimit + clearance):
+    def _isTransitSafe(self, pts: List[np.ndarray], envelope: Optional[SafeEnvelope], heightMapLocal: Optional[Dict[str, Any]], solidClipper: Optional[SolidKeepOutClipper], sampleStep: float, clearance: float) -> bool:
+        ptsArr = np.asarray(pts, dtype=float)
+        for i in range(len(ptsArr) - 1):
+            if envelope is not None and not envelope.isSegmentSafe(ptsArr[i], ptsArr[i + 1], sampleStep):
+                return False
+            if heightMapLocal is not None:
+                segs = self.sampleSegmentLocal(ptsArr[i], ptsArr[i + 1], sampleStep)
+                for pt in segs:
+                    hLimit = self.queryHeightLimitLocal(heightMapLocal, float(pt[0]), float(pt[1]))
+                    if float(pt[2]) < hLimit + clearance:
+                        return False
+        if solidClipper is not None and not solidClipper.isEmpty:
+            allPts = ptsArr
+            if not solidClipper.segmentIsSafe(allPts):
                 return False
         return True
+
+    def _buildSafeTransitLocal(self, fromPtLocal: np.ndarray, toPtLocal: np.ndarray, envelope: Optional[SafeEnvelope], heightMapLocal: Optional[Dict[str, Any]], solidClipper: Optional[SolidKeepOutClipper], localSafeZ: float, clearance: float, sampleStep: float, extraClearance: float) -> List[np.ndarray]:
+        if self._isTransitSafe([fromPtLocal, toPtLocal], envelope, heightMapLocal, solidClipper, sampleStep, clearance):
+            return [fromPtLocal, toPtLocal]
+
+        retractZ = localSafeZ
+        if envelope is not None:
+            retractZ = max(retractZ, envelope.computeSafeRetractZ(extraClearance))
+        retractZ = max(retractZ, float(fromPtLocal[2]) + extraClearance, float(toPtLocal[2]) + extraClearance)
+
+        for zOffset in [0.0, clearance * 2.0, clearance * 4.0 + extraClearance * 2.0]:
+            z = retractZ + zOffset
+            r1 = fromPtLocal.copy()
+            r1[2] = z
+            r2 = toPtLocal.copy()
+            r2[2] = z
+            candidate = [fromPtLocal, r1, r2, toPtLocal]
+            if self._isTransitSafe(candidate, envelope, heightMapLocal, solidClipper, sampleStep, clearance):
+                return candidate
+
+        ultraZ = retractZ + clearance * 8.0 + extraClearance * 4.0
+        u1 = fromPtLocal.copy()
+        u1[2] = ultraZ
+        u2 = toPtLocal.copy()
+        u2[2] = ultraZ
+        return [fromPtLocal, u1, u2, toPtLocal]
 
     def _greedyOrderPaths(self, validPaths: List[np.ndarray]) -> List[np.ndarray]:
         from scipy.spatial.distance import cdist
@@ -336,19 +410,22 @@ class TrimeshToolpathEngine:
             currentPos = pathArray[-1]
         return orderedPaths
 
-    def optimizePathLinking(self, pathsLocal: List[np.ndarray], safeZ: float, stepOver: float, obstacleMeshLocal: Optional[trimesh.Trimesh] = None, toolRadius: float = 3.0, safetyMargin: float = 0.5, collisionChecker: Optional[MeshCollisionChecker] = None) -> np.ndarray:
+    def optimizePathLinking(self, pathsLocal: List[np.ndarray], localSafeZ: float, stepOver: float, envelope: Optional[SafeEnvelope] = None, heightMapLocal: Optional[Dict[str, Any]] = None, solidClipper: Optional[SolidKeepOutClipper] = None, toolRadius: float = 3.0, safetyMargin: float = 0.5) -> np.ndarray:
         if not pathsLocal:
             return np.zeros((0, 3), dtype=float)
         validPaths = [np.asarray(p, dtype=float) for p in pathsLocal if len(p) >= 2]
         if not validPaths:
             return np.zeros((0, 3), dtype=float)
 
-        envelope = SafeEnvelope(obstacleMeshLocal, toolRadius, safetyMargin) if obstacleMeshLocal is not None and not obstacleMeshLocal.is_empty else None
-        effectiveSafeZ = float(safeZ)
+        clearance = float(toolRadius + safetyMargin)
+        effectiveLocalSafeZ = float(localSafeZ)
         if envelope is not None:
-            effectiveSafeZ = max(effectiveSafeZ, envelope.safeZ + 1.0)
+            effectiveLocalSafeZ = max(effectiveLocalSafeZ, envelope.safeZ + 1.0)
+        if heightMapLocal is not None and np.isfinite(heightMapLocal.get('maxLimit', -np.inf)):
+            effectiveLocalSafeZ = max(effectiveLocalSafeZ, float(heightMapLocal['maxLimit']) + clearance + 2.0)
 
         sampleStep = max(float(stepOver * 0.3), toolRadius * 0.25, 0.15)
+        extraClearance = max(float(toolRadius), 2.0)
         orderedPaths = self._greedyOrderPaths(validPaths)
 
         linkedPoints = list(orderedPaths[0])
@@ -356,30 +433,14 @@ class TrimeshToolpathEngine:
             nextPath = orderedPaths[pathIdx]
             lastPt = np.asarray(linkedPoints[-1], dtype=float)
             nextStart = np.asarray(nextPath[0], dtype=float)
-
-            directFree = False
-            if envelope is not None:
-                directFree = envelope.isSegmentSafe(lastPt, nextStart, sampleStep)
-            elif collisionChecker is not None:
-                directFree = not collisionChecker.isSegmentColliding(lastPt, nextStart, sampleStep)
-            else:
-                directFree = True
-
-            if directFree:
-                transitSegs = self.sampleSegmentLocal(lastPt, nextStart, sampleStep)
-                linkedPoints.extend(transitSegs[1:].tolist())
-            else:
-                if envelope is not None:
-                    transitPts = envelope.buildSafeTransit(lastPt, nextStart, sampleStep, max(toolRadius, 2.0))
-                else:
-                    retractPt = lastPt.copy()
-                    retractPt[2] = effectiveSafeZ
-                    approachPt = nextStart.copy()
-                    approachPt[2] = effectiveSafeZ
-                    transitPts = [lastPt, retractPt, approachPt, nextStart]
-                linkedPoints.extend(transitPts[1:])
-
+            transitPts = self._buildSafeTransitLocal(
+                lastPt, nextStart,
+                envelope, heightMapLocal, solidClipper,
+                effectiveLocalSafeZ, clearance, sampleStep, extraClearance
+            )
+            linkedPoints.extend(np.asarray(transitPts, dtype=float)[1:].tolist())
             linkedPoints.extend(nextPath.tolist())
+
         return np.asarray(linkedPoints, dtype=float)
 
     def slicePathByPlatformZ(self, pathLocal: np.ndarray, rotBack: np.ndarray, platformSafeZ: float) -> List[np.ndarray]:
