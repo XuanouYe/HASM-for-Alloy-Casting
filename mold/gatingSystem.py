@@ -5,14 +5,12 @@ import trimesh
 from pathlib import Path
 from dataModel import GatingComponents
 
-
 @dataclass
 class MoldConfig:
     cavityVolume: float
     boundingBox: Tuple[np.ndarray, np.ndarray]
     centroid: np.ndarray
     lowestZ: float
-
 
 @dataclass
 class RheologyParams:
@@ -22,7 +20,6 @@ class RheologyParams:
     heatTransferCoeff: float = 500.0
     meltOverheat: float = 30.0
 
-
 @dataclass
 class GateCandidate:
     surfacePoint: np.ndarray
@@ -31,7 +28,6 @@ class GateCandidate:
     xWidth: float
     yWidth: float
     zHeight: float
-
 
 class AutoGatingSystem:
     def __init__(self, mesh: trimesh.Trimesh, config: Optional[Dict] = None):
@@ -156,7 +152,7 @@ class AutoGatingSystem:
 
     def _scoreCandidateThickness(self, xWidth: float, yWidth: float, zHeight: float, diagMin: float,
                                  runnerRadius: float, minThicknessFactor: float = 1.0, diagFactor: float = 1.0) -> \
-    Tuple[bool, float]:
+            Tuple[bool, float]:
         if xWidth < 0 or yWidth < 0 or zHeight < 0:
             return False, 0.0
         minDim = min(xWidth, yWidth, zHeight)
@@ -251,8 +247,8 @@ class AutoGatingSystem:
         effectiveViscosity = rp.meltViscosity * rp.solidificationFactor
         numerator = 8.0 * effectiveViscosity * runnerLengthM * flowRate
         denominator = np.pi * rp.maxPressureDrop
-        rheologyRadiusMm = ((
-                                        numerator / denominator) ** 0.25) * 1000.0 if denominator > 0 and numerator > 0 else self.minRadius
+        rheologyRadiusMm = (
+            (numerator / denominator) ** 0.25) * 1000.0 if denominator > 0 and numerator > 0 else self.minRadius
         thermalFactor = 1.0 + 0.1 * (rp.heatTransferCoeff / 500.0)
         rheologyRadiusMm *= thermalFactor
         velocityRadius = self._calculateRunnerRadius()
@@ -298,7 +294,7 @@ class AutoGatingSystem:
             meshes.append(sph)
         if not meshes:
             return trimesh.Trimesh()
-        combined = trimesh.util.concatenate(meshes)
+        combined = trimesh.boolean.union(meshes)
         combined.fix_normals()
         return combined
 
@@ -355,7 +351,7 @@ class AutoGatingSystem:
                                                  segment=[(x, y, neckStartZ), (x, y, neckEndZ)], sections=32)
         riserCylinder = trimesh.creation.cylinder(radius=riserDiameter / 2.0,
                                                   segment=[(x, y, neckEndZ), (x, y, riserTopZ)], sections=32)
-        combined = trimesh.util.concatenate([neckCylinder, riserCylinder])
+        combined = trimesh.boolean.union([neckCylinder, riserCylinder])
         combined.fix_normals()
         return combined
 
@@ -377,11 +373,11 @@ class AutoGatingSystem:
         runnerPath = self._generateRunnerPath(gateSurface, gateNormal, runnerZ, runnerRadius,
                                               sprueInletZ=dims['riserTopZ'])
         gateMesh = self._createGatingMesh(runnerPath, runnerRadius)
-        systemMesh = trimesh.util.concatenate([riserMesh, gateMesh])
+        systemMesh = trimesh.boolean.union([riserMesh, gateMesh])
         systemMesh.fix_normals()
-        castingWithRiserMesh = trimesh.util.concatenate([self._originalMesh, riserMesh])
+        castingWithRiserMesh = trimesh.boolean.union([self._originalMesh, riserMesh])
         castingWithRiserMesh.fix_normals()
-        castingWithSystemMesh = trimesh.util.concatenate([self._originalMesh, systemMesh])
+        castingWithSystemMesh = trimesh.boolean.union([self._originalMesh, systemMesh])
         castingWithSystemMesh.fix_normals()
         return GatingComponents(
             gateMesh=gateMesh,
@@ -392,7 +388,6 @@ class AutoGatingSystem:
             runnerPath=runnerPath,
             runnerRadius=runnerRadius
         )
-
 
 def createGatingSystem(
         castingMesh: trimesh.Trimesh,
