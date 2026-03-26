@@ -117,6 +117,22 @@ def generateCncJobInterface(partStl: str, moldStl: str, gateStl: str, riserStl: 
     generator = FiveAxisCncPathGenerator(version='3.2')
     clData = generator.generateJob(partStl, moldStl, gateStl, riserStl, toolParams, stepParams, axisStrategyParams,
                                    'WCS_MAIN', jobId)
+    linkerConfig = {
+        'safeHeight': safeHeight,
+        'maxRetractOffset': maxRetractOffset,
+        'directLinkThreshold': float(subtractiveConfig.get('directLinkThreshold', 2.0)),
+        'rotationChangeThreshold': float(subtractiveConfig.get('rotationChangeThreshold', 5.0)),
+        'rotationRetractAngle': float(subtractiveConfig.get('rotationRetractAngle', 30.0)),
+        'rotationSafeZ': float(subtractiveConfig.get('rotationSafeZ', 30.0)),
+        'linkFeedRate': float(subtractiveConfig.get('linkFeedRate', 2000.0)),
+        'stepLinkingEnabled': {
+            'shellRemoval': True,
+            'riserRemoval': True,
+            'partFinishing': False,
+            'gateRemoval': True
+        }
+    }
+    clData['linkerConfig'] = linkerConfig
     generator.exportClJson(clData, outputJsonPath)
 
     if visualize:

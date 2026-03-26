@@ -1,6 +1,4 @@
 import json
-import math
-import re
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -11,85 +9,43 @@ if str(rootDir) not in sys.path:
 
 from controlConfig import parameterSchema
 from cnc.__main__ import generateCncJobInterface
+from cnc.machineKinematics import XyzacTrtKinematics
+from cnc.pathLinker import ClPathLinker
+
 
 def loadClJson(inputJsonPath: str) -> Dict[str, Any]:
-    with open(inputJsonPath, "r", encoding="utf-8") as f:
-        return json.load(f)
+    with open(inputJsonPath, "r", encoding="utf-8") as fileHandle:
+        return json.load(fileHandle)
+
 
 def loadPostConfig(rawConfig: Dict[str, Any]) -> Dict[str, Any]:
     cfg: Dict[str, Any] = {}
     subtractiveSchema = parameterSchema.get("subtractive", {})
-    for k, v in subtractiveSchema.items():
-        if "default" in v:
-            cfg[k] = dict(v["default"]) if isinstance(v["default"], dict) else v["default"]
+    for keyVal, valueVal in subtractiveSchema.items():
+        if "default" in valueVal:
+            cfg[keyVal] = dict(valueVal["default"]) if isinstance(valueVal["default"], dict) else valueVal["default"]
     subtractiveRaw = rawConfig.get("subtractive", {})
-    for k, v in subtractiveRaw.items():
-        if isinstance(v, dict) and k in cfg and isinstance(cfg[k], dict):
-            cfg[k].update(v)
+    for keyVal, valueVal in subtractiveRaw.items():
+        if isinstance(valueVal, dict) and keyVal in cfg and isinstance(cfg[keyVal], dict):
+            cfg[keyVal].update(valueVal)
         else:
-            cfg[k] = v
+            cfg[keyVal] = valueVal
     return cfg
 
-def computeRotaryAngles(toolAxisVec: List[float], kinematics: Dict[str, Any]) -> Tuple[float, float]:
-    dx = float(toolAxisVec[0])
-    dy = float(toolAxisVec[1])
-    dz = float(toolAxisVec[2])
-    length = math.sqrt(dx * dx + dy * dy + dz * dz)
-    if length > 0.0:
-        dx, dy, dz = dx / length, dy / length, dz / length
 
-    rotOrder = str(kinematics.get("rotationOrder", "XZ")).upper()
-    aSign = float(kinematics.get("aSign", 1.0))
-    bSign = float(kinematics.get("bSign", 1.0))
-    aLim = kinematics.get("aAxisLimit", [-120.0, 120.0])
-    bLim = kinematics.get("bAxisLimit", [-360.0, 360.0])
+def loadKinematics(postCfg: Dict[str, Any]) -> XyzacTrtKinematics:
+    kinematicsCfg = postCfg.get("kinematics", {})
+    machineType = str(kinematicsCfg.get("machineType", "xyzac-trt")).lower()
+    if machineType == "xyzac-trt":
+        return XyzacTrtKinematics(kinematicsCfg)
+    return XyzacTrtKinematics(kinematicsCfg)
 
-    if rotOrder == "XZ":
-        dzCl = max(-1.0, min(1.0, dz))
-        aRad = math.acos(dzCl)
-        sinA = math.sin(aRad)
-        bRad = math.atan2(dx, -dy) if sinA >= 1e-9 else 0.0
-    elif rotOrder == "YZ":
-        dzCl = max(-1.0, min(1.0, dz))
-        aRad = math.acos(dzCl)
-        sinA = math.sin(aRad)
-        bRad = math.atan2(dy, dx) if sinA >= 1e-9 else 0.0
-    elif rotOrder == "XY":
-        aRad = math.atan2(-dy, dz)
-        bRad = math.asin(max(-1.0, min(1.0, dx)))
-    else:
-        dzCl = max(-1.0, min(1.0, dz))
-        aRad = math.acos(dzCl)
-        sinA = math.sin(aRad)
-        bRad = math.atan2(dx, -dy) if sinA >= 1e-9 else 0.0
 
-    aDeg = math.degrees(aRad) * aSign
-    bDeg = math.degrees(bRad) * bSign
-    aDeg = max(float(aLim[0]), min(float(aLim[1]), aDeg))
-    bDeg = max(float(bLim[0]), min(float(bLim[1]), bDeg))
-    return aDeg, bDeg
+def formatValue(valueVal: float, decimals: int) -> str:
+    return f"{valueVal:.{decimals}f}"
 
-def formatBlock(template: str, **kwargs) -> str:
-    filled: Dict[str, str] = {}
-    for k, v in kwargs.items():
-        if v is None:
-            filled[k] = ""
-        elif isinstance(v, float):
-            filled[k] = f"{v:.3f}"
-        elif isinstance(v, int):
-            filled[k] = str(v)
-        else:
-            filled[k] = str(v)
-    result = template
-    for k, v in filled.items():
-        result = result.replace("{" + k + "}", v)
-    result = re.sub(r"[ \t]+", " ", result).strip()
-    return result
 
-def _fv(val: float, decimals: int) -> str:
-    return f"{val:.{decimals}f}"
-
-def _buildProgramHeader(clData: Dict[str, Any], postCfg: Dict[str, Any]) -> List[str]:
+def buildProgramHeader(clData: Dict[str, Any], postCfg: Dict[str, Any]) -> List[str]:
     jobId = str(clData.get("jobId", "PROGRAM"))
     wcsId = str(clData.get("wcsId", "WCS0"))
     unitCode = "G21" if str(postCfg.get("unit", "mm")).lower() == "mm" else "G20"
@@ -100,153 +56,131 @@ def _buildProgramHeader(clData: Dict[str, Any], postCfg: Dict[str, Any]) -> List
     coolantEnabled = bool(postCfg.get("coolantEnabled", True))
     coolantCode = str(postCfg.get("coolantCode", "M8"))
     machineModel = str(postCfg.get("machineModel", "Default_5Axis_CNC"))
-
-    blocks = [
+    headerBlocks = [
         "%",
         f"(PROGRAM: {jobId})",
         f"(MACHINE: {machineModel})",
         f"(WCS: {wcsId})",
         "(POST: gcodeProcessor.py)",
-        formatBlock("{u} {a} G17 G40 G49 G80", u=unitCode, a=absCode),
+        f"{unitCode} {absCode} G17 G40 G49 G80",
         wcsCode,
         f"{spindleDir} S{spindleSpeed}",
     ]
     if coolantEnabled:
-        blocks.append(coolantCode)
-    return blocks
+        headerBlocks.append(coolantCode)
+    return headerBlocks
 
-def _buildProgramFooter(postCfg: Dict[str, Any], clearanceZ: float, coordDec: int) -> List[str]:
+
+def buildProgramFooter(postCfg: Dict[str, Any], coordDec: int) -> List[str]:
     coolantEnabled = bool(postCfg.get("coolantEnabled", True))
-    blocks: List[str] = []
+    footerBlocks: List[str] = []
     if coolantEnabled:
-        blocks.append("M9")
-    blocks.extend(["M5", f"G90 G0 Z{_fv(clearanceZ, coordDec)}", "M30", "%"])
-    return blocks
+        footerBlocks.append("M9")
+    footerBlocks.extend(["M5", f"G90 G0 Z{formatValue(0.0, coordDec)}", "M30", "%"])
+    return footerBlocks
+
 
 def generateGcode(clData: Dict[str, Any], postCfg: Dict[str, Any]) -> List[str]:
-    outFmt = postCfg.get("outputFormat", {})
-    coordDec = int(outFmt.get("coordDecimals", 3))
-    angleDec = int(outFmt.get("angleDecimals", 3))
-    feedDec = int(outFmt.get("feedDecimals", 1))
-    useLineNums = bool(outFmt.get("lineNumbers", False))
-    lineNumInc = int(outFmt.get("lineNumberIncrement", 10))
-    mergeF = bool(postCfg.get("feedrateMergeStrategy", True))
-    kinematics = postCfg.get("kinematics", {})
-    aName = str(kinematics.get("aAxisName", "A"))
-    bName = str(kinematics.get("bAxisName", "B"))
+    outputFmt = postCfg.get("outputFormat", {})
+    coordDec = int(outputFmt.get("coordDecimals", 3))
+    angleDec = int(outputFmt.get("angleDecimals", 3))
+    feedDec = int(outputFmt.get("feedDecimals", 1))
+    useLineNums = bool(outputFmt.get("lineNumbers", False))
+    lineNumInc = int(outputFmt.get("lineNumberIncrement", 10))
+    mergeFeed = bool(postCfg.get("feedrateMergeStrategy", True))
+    kinematicsCfg = postCfg.get("kinematics", {})
+    aAxisName = str(kinematicsCfg.get("aAxisName", "A"))
+    cAxisName = str(kinematicsCfg.get("cAxisName", "C"))
     defaultFeed = float(postCfg.get("feedRate", 500.0))
-    safeHeight = float(postCfg.get("safeHeight", 5.0))
+    axisEps = float(postCfg.get("axisOutputEps", 1e-4))
 
-    maxZ = -999999.0
-    steps = sorted(clData.get("steps", []), key=lambda s: int(s.get("stepId", 0)))
-    for step in steps:
-        for pt in step.get("clPoints", []):
-            z = float(pt.get("position", [0.0, 0.0, 0.0])[2])
-            if z > maxZ:
-                maxZ = z
-    clearanceZ = (maxZ + safeHeight * 2.0) if maxZ != -999999.0 else (safeHeight * 2.0)
-
+    kinematicsSolver = loadKinematics(postCfg)
     allLines: List[str] = []
-    nCounter = [lineNumInc]
+    lineCounter = [lineNumInc]
 
-    def emit(block: str) -> None:
+    def emit(blockVal: str) -> None:
         if useLineNums:
-            allLines.append(f"N{nCounter[0]} {block}")
-            nCounter[0] += lineNumInc
+            allLines.append(f"N{lineCounter[0]} {blockVal}")
+            lineCounter[0] += lineNumInc
         else:
-            allLines.append(block)
+            allLines.append(blockVal)
 
-    for hLine in _buildProgramHeader(clData, postCfg):
-        emit(hLine)
+    for headerLine in buildProgramHeader(clData, postCfg):
+        emit(headerLine)
 
-    for step in steps:
-        stepId = int(step.get("stepId", 0))
-        stepType = str(step.get("stepType", "unknown"))
+    prevFeed: Optional[float] = None
+    prevAxes: Dict[str, Optional[float]] = {"X": None, "Y": None, "Z": None, aAxisName: None, cAxisName: None}
+    stepsList = sorted(clData.get("steps", []), key=lambda stepItem: int(stepItem.get("stepId", 0)))
+
+    for stepItem in stepsList:
+        stepId = int(stepItem.get("stepId", 0))
+        stepType = str(stepItem.get("stepType", "unknown"))
         emit(f"(STEP {stepId}: {stepType})")
+        pointsList = sorted(stepItem.get("clPoints", []), key=lambda pointItem: int(pointItem.get("pointId", 0)))
+        for pointItem in pointsList:
+            pointPos = pointItem.get("position", [0.0, 0.0, 0.0])
+            pointAxis = pointItem.get("toolAxis", [0.0, 0.0, 1.0])
+            motionType = str(pointItem.get("motionType", "cut")).lower()
+            feedrate = float(pointItem.get("feedrate", defaultFeed))
+            px, py, pz, aDeg, cDeg = kinematicsSolver.convertPoint(pointPos, pointAxis)
+            currAxes = {"X": px, "Y": py, "Z": pz, aAxisName: aDeg, cAxisName: cDeg}
 
-        segMap: Dict[int, Dict[str, Any]] = {
-            int(sg["segmentId"]): sg for sg in step.get("segments", [])
-        }
+            if motionType in {"rapid", "retract", "approach"}:
+                blockParts = ["G0"]
+            else:
+                blockParts = ["G1"]
 
-        ptsBySegment: Dict[int, List[Dict[str, Any]]] = {}
-        for pt in sorted(step.get("clPoints", []), key=lambda p: int(p.get("pointId", 0))):
-            sid = int(pt.get("segmentId", 0))
-            ptsBySegment.setdefault(sid, []).append(pt)
+            if motionType == "retract":
+                if prevAxes["Z"] is None or abs(currAxes["Z"] - prevAxes["Z"]) > axisEps:
+                    blockParts.append(f"Z{formatValue(currAxes['Z'], coordDec)}")
+                    prevAxes["Z"] = currAxes["Z"]
+            else:
+                for axisName, axisVal in currAxes.items():
+                    if prevAxes[axisName] is None or abs(axisVal - float(prevAxes[axisName])) > axisEps:
+                        decimals = angleDec if axisName in {aAxisName, cAxisName} else coordDec
+                        blockParts.append(f"{axisName}{formatValue(axisVal, decimals)}")
+                        prevAxes[axisName] = axisVal
 
-        for sid in sorted(ptsBySegment.keys()):
-            segAxis = segMap.get(sid, {}).get("toolAxis", [0.0, 0.0, 1.0])
-            emit(f"(SEGMENT {sid})")
-
-            if not ptsBySegment[sid]:
+            if blockParts == ["G0"]:
                 continue
 
-            firstPt = ptsBySegment[sid][0]
-            firstPos = firstPt.get("position", [0.0, 0.0, 0.0])
-            firstAxis = firstPt.get("toolAxis") or segAxis
-            aDegFirst, bDegFirst = computeRotaryAngles(firstAxis, kinematics)
+            if motionType == "cut":
+                if (not mergeFeed) or prevFeed is None or abs(feedrate - prevFeed) > axisEps:
+                    blockParts.append(f"F{formatValue(feedrate, feedDec)}")
+                    prevFeed = feedrate
+            emit(" ".join(blockParts))
 
-            emit(f"G90 G0 Z{_fv(clearanceZ, coordDec)}")
-            emit(f"G0 {aName}{_fv(aDegFirst, angleDec)} {bName}{_fv(bDegFirst, angleDec)}")
-            emit(f"G0 X{_fv(float(firstPos[0]), coordDec)} Y{_fv(float(firstPos[1]), coordDec)}")
-            emit(f"G0 Z{_fv(float(firstPos[2]) + safeHeight, coordDec)}")
-
-            prevF: Optional[float] = None
-            prevA: Optional[float] = aDegFirst
-            prevB: Optional[float] = bDegFirst
-
-            for pt in ptsBySegment[sid]:
-                pos = pt.get("position", [0.0, 0.0, 0.0])
-                ptAxis: List[float] = pt.get("toolAxis") or segAxis
-                feedrate = float(pt.get("feedrate", defaultFeed))
-
-                x = float(pos[0])
-                y = float(pos[1])
-                z = float(pos[2])
-                aDeg, bDeg = computeRotaryAngles(ptAxis, kinematics)
-
-                parts = ["G1"]
-                parts.append(f"X{_fv(x, coordDec)}")
-                parts.append(f"Y{_fv(y, coordDec)}")
-                parts.append(f"Z{_fv(z, coordDec)}")
-
-                if abs(aDeg - prevA) > 1e-4:
-                    parts.append(f"{aName}{_fv(aDeg, angleDec)}")
-                    prevA = aDeg
-                if abs(bDeg - prevB) > 1e-4:
-                    parts.append(f"{bName}{_fv(bDeg, angleDec)}")
-                    prevB = bDeg
-
-                if not mergeF or prevF is None or abs(feedrate - prevF) > 1e-4:
-                    parts.append(f"F{_fv(feedrate, feedDec)}")
-                    prevF = feedrate
-
-                emit(" ".join(parts))
-
-    for fLine in _buildProgramFooter(postCfg, clearanceZ, coordDec):
-        emit(fLine)
-
+    for footerLine in buildProgramFooter(postCfg, coordDec):
+        emit(footerLine)
     return allLines
+
 
 def writeGcodeFile(gcodeLines: List[str], outputPath: str) -> None:
     Path(outputPath).parent.mkdir(parents=True, exist_ok=True)
-    with open(outputPath, "w", encoding="utf-8") as f:
-        f.write("\n".join(gcodeLines))
+    with open(outputPath, "w", encoding="utf-8") as fileHandle:
+        fileHandle.write("\n".join(gcodeLines))
         if gcodeLines:
-            f.write("\n")
+            fileHandle.write("\n")
+
 
 def generateGcodeFromClJson(inputJsonPath: str, processConfig: Dict[str, Any], outputGcodePath: str) -> None:
     clData = loadClJson(inputJsonPath)
     postCfg = loadPostConfig(processConfig)
-    gcodeLines = generateGcode(clData, postCfg)
+    linkerCfg = clData.get("linkerConfig", {})
+    linkedData = ClPathLinker(linkerCfg).processClData(clData)
+    gcodeLines = generateGcode(linkedData, postCfg)
     writeGcodeFile(gcodeLines, outputGcodePath)
 
+
 def generateCncGcodeInterface(partStl: str, moldStl: str, gateStl: str, riserStl: str, outputGcodePath: str, processConfig: Dict[str, Any], visualize: bool = False) -> Dict[str, Any]:
-    import os
-    import tempfile
-    tempJsonPath = os.path.join(tempfile.gettempdir(), "tempCncCl.json")
-    clData = generateCncJobInterface(partStl, moldStl, gateStl, riserStl, tempJsonPath, processConfig, visualize=visualize)
-    generateGcodeFromClJson(tempJsonPath, processConfig, outputGcodePath)
-    return clData
+    clData = generateCncJobInterface(partStl, moldStl, gateStl, riserStl, outputGcodePath + ".json", processConfig, visualize=visualize)
+    postCfg = loadPostConfig(processConfig)
+    linkerCfg = clData.get("linkerConfig", {})
+    linkedData = ClPathLinker(linkerCfg).processClData(clData)
+    gcodeLines = generateGcode(linkedData, postCfg)
+    writeGcodeFile(gcodeLines, outputGcodePath)
+    return linkedData
+
 
 if __name__ == '__main__':
     tempCncDir = Path(__file__).resolve().parent.parent / "tempCncFiles"
@@ -264,9 +198,9 @@ if __name__ == '__main__':
             "safeHeight": 5.0,
             "waterlineStepDown": 0.5,
             "axisMode": "hemisphere",
-            "axisCount": 9,
-            "angleThreshold": 1.047
+            "axisCount": 18,
+            "angleThreshold": 1.047,
         }
     }
     if Path(inputJson).exists():
-        generateGcodeFromClJson(inputJsonPath=inputJson, processConfig=testConfig, outputGcodePath=outputGcode)
+        generateGcodeFromClJson(inputJson, testConfig, outputGcode)

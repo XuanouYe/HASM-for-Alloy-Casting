@@ -75,6 +75,12 @@ parameterSchema = {
         "axisMode":              {"type": str,   "options": ["hemisphere","custom"], "default": "hemisphere",    "required": True,  "description": "轴模式"},
         "axisCount":             {"type": int,   "min": 1,    "max": 100,    "default": 9,                       "required": True,  "description": "候选轴数"},
         "angleThreshold":        {"type": float, "min": 0.1,  "max": 3.14,   "default": 1.047, "unit": "rad",    "required": True,  "description": "角度阈值"},
+        "directLinkThreshold":   {"type": float, "min": 0.0,  "max": 1000.0, "default": 2.0,                    "required": False, "description": "直连阈值"},
+        "maxRetractOffset":      {"type": float, "min": 0.0,  "max": 5000.0, "default": 100.0,                  "required": False, "description": "抬刀偏置"},
+        "rotationChangeThreshold":{"type": float, "min": 0.0,  "max": 180.0,  "default": 5.0,                    "required": False, "description": "姿态变化阈值"},
+        "rotationRetractAngle":  {"type": float, "min": 0.0,  "max": 180.0,  "default": 30.0,                   "required": False, "description": "旋转抬刀角度"},
+        "rotationSafeZ":         {"type": float, "min": -1000.0, "max": 5000.0, "default": 30.0,                "required": False, "description": "旋转安全高度"},
+        "linkFeedRate":          {"type": float, "min": 0.0,  "max": 50000.0, "default": 2000.0,                "required": False, "description": "联接进给"},
         "candidateAxes":         {"type": list,                                "default": [[0.0, 0.0, 1.0]],      "required": False, "description": "候选轴列表"},
         "unit":                  {"type": str,   "options": ["mm","inch"],    "default": "mm",                   "required": False, "description": "单位"},
         "absoluteMode":          {"type": bool,                                "default": True,                   "required": False, "description": "绝对坐标"},
@@ -86,11 +92,20 @@ parameterSchema = {
         "kinematics": {
             "type": dict,
             "default": {
-                "topology": "tiltRotate", "rotationOrder": "XZ",
-                "rotationCenter": [0.0, 0.0, 0.0],
-                "aAxisLimit": [-120.0, 120.0], "bAxisLimit": [-360.0, 360.0],
-                "aAxisName": "A", "bAxisName": "B",
-                "aSign": 1.0, "bSign": 1.0
+                "machineType": "xyzac-trt",
+                "aAxisName": "A",
+                "cAxisName": "C",
+                "aSign": 1.0,
+                "cSign": 1.0,
+                "aAxisLimit": [-120.0, 120.0],
+                "cAxisLimit": [-360.0, 360.0],
+                "pivotOffsetY": 0.0,
+                "pivotOffsetZ": 0.0,
+                "workOffsetX": 0.0,
+                "workOffsetY": 0.0,
+                "workOffsetZ": 0.0,
+                "singularityEps": 0.01,
+                "rtcpEnabled": False
             },
             "required": False, "description": "运动学配置"
         },
