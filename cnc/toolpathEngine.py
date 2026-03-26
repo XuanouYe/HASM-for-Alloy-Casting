@@ -10,7 +10,6 @@ try:
 except ImportError:
     _FCL_AVAILABLE = False
 
-
 def _buildFclMesh(mesh: trimesh.Trimesh):
     if not _FCL_AVAILABLE or mesh is None or mesh.is_empty:
         return None
@@ -21,7 +20,6 @@ def _buildFclMesh(mesh: trimesh.Trimesh):
     bvhModel.addSubModel(verts, faces)
     bvhModel.endModel()
     return fcl.CollisionObject(bvhModel, fcl.Transform3f())
-
 
 class SolidKeepOutClipper:
     def __init__(self, solidMesh: trimesh.Trimesh):
@@ -72,7 +70,6 @@ class SolidKeepOutClipper:
         for p in paths:
             result.extend(self.clipPath(np.asarray(p, dtype=float), sampleStep))
         return result
-
 
 class SafeEnvelope:
     def __init__(self, obstacleMesh: trimesh.Trimesh, toolRadius: float, safetyMargin: float):
@@ -131,12 +128,6 @@ class SafeEnvelope:
         samplePts = np.outer(1.0 - tVals, s) + np.outer(tVals, e)
         return bool(np.all(self._signedClearance(samplePts) >= self.clearance))
 
-    def computeSafeRetractZ(self, extraClearance: float = 2.0) -> float:
-        if self.isEmpty:
-            return extraClearance
-        return float(self.meshCenter[2]) + self.meshRadius + self.clearance + extraClearance
-
-
 class MeshCollisionChecker:
     def __init__(self, obstacleMesh: trimesh.Trimesh, toolRadius: float, safetyMargin: float):
         self.obstacleMesh = obstacleMesh
@@ -163,7 +154,6 @@ class MeshCollisionChecker:
             np.asarray(endPoint, dtype=float),
             sampleStep
         )
-
 
 class PointCloudIPW:
     def __init__(self, mesh: trimesh.Trimesh, sampleCount: int = 50000):
@@ -210,7 +200,6 @@ class PointCloudIPW:
         if removeLocalIndices:
             globalIndices = activeIndices[list(removeLocalIndices)]
             self.activeMask[globalIndices] = False
-
 
 class TrimeshToolpathEngine:
     def buildCollisionChecker(self, obstacleMesh: trimesh.Trimesh, toolRadius: float, safetyMargin: float) -> MeshCollisionChecker:
@@ -329,7 +318,7 @@ class TrimeshToolpathEngine:
             currentPath = []
             for pointLocal in denseArray:
                 hLimit = self.queryHeightLimitLocal(heightMapLocal, float(pointLocal[0]), float(pointLocal[1]))
-                if float(pointLocal[2]) >= float(hLimit + clearance):
+                if float(pointLocal[2]) >= float(hLimit) - 1e-4:
                     currentPath.append(pointLocal)
                 else:
                     if len(currentPath) >= 2:
@@ -338,110 +327,6 @@ class TrimeshToolpathEngine:
             if len(currentPath) >= 2:
                 clippedPaths.append(np.asarray(currentPath, dtype=float))
         return clippedPaths
-
-    def _isTransitSafe(self, pts: List[np.ndarray], envelope: Optional[SafeEnvelope], heightMapLocal: Optional[Dict[str, Any]], solidClipper: Optional[SolidKeepOutClipper], sampleStep: float, clearance: float) -> bool:
-        ptsArr = np.asarray(pts, dtype=float)
-        for i in range(len(ptsArr) - 1):
-            if envelope is not None and not envelope.isSegmentSafe(ptsArr[i], ptsArr[i + 1], sampleStep):
-                return False
-            if heightMapLocal is not None:
-                segs = self.sampleSegmentLocal(ptsArr[i], ptsArr[i + 1], sampleStep)
-                for pt in segs:
-                    hLimit = self.queryHeightLimitLocal(heightMapLocal, float(pt[0]), float(pt[1]))
-                    if float(pt[2]) < hLimit + clearance:
-                        return False
-        if solidClipper is not None and not solidClipper.isEmpty:
-            allPts = ptsArr
-            if not solidClipper.segmentIsSafe(allPts):
-                return False
-        return True
-
-    def _buildSafeTransitLocal(self, fromPtLocal: np.ndarray, toPtLocal: np.ndarray, envelope: Optional[SafeEnvelope], heightMapLocal: Optional[Dict[str, Any]], solidClipper: Optional[SolidKeepOutClipper], localSafeZ: float, clearance: float, sampleStep: float, extraClearance: float) -> List[np.ndarray]:
-        if self._isTransitSafe([fromPtLocal, toPtLocal], envelope, heightMapLocal, solidClipper, sampleStep, clearance):
-            return [fromPtLocal, toPtLocal]
-
-        retractZ = localSafeZ
-        if envelope is not None:
-            retractZ = max(retractZ, envelope.computeSafeRetractZ(extraClearance))
-        retractZ = max(retractZ, float(fromPtLocal[2]) + extraClearance, float(toPtLocal[2]) + extraClearance)
-
-        for zOffset in [0.0, clearance * 2.0, clearance * 4.0 + extraClearance * 2.0]:
-            z = retractZ + zOffset
-            r1 = fromPtLocal.copy()
-            r1[2] = z
-            r2 = toPtLocal.copy()
-            r2[2] = z
-            candidate = [fromPtLocal, r1, r2, toPtLocal]
-            if self._isTransitSafe(candidate, envelope, heightMapLocal, solidClipper, sampleStep, clearance):
-                return candidate
-
-        ultraZ = retractZ + clearance * 8.0 + extraClearance * 4.0
-        u1 = fromPtLocal.copy()
-        u1[2] = ultraZ
-        u2 = toPtLocal.copy()
-        u2[2] = ultraZ
-        return [fromPtLocal, u1, u2, toPtLocal]
-
-    def _greedyOrderPaths(self, validPaths: List[np.ndarray]) -> List[np.ndarray]:
-        from scipy.spatial.distance import cdist
-        orderedPaths = []
-        unvisited = list(range(len(validPaths)))
-        currentPos = None
-        while unvisited:
-            if currentPos is None:
-                chosenListIndex = 0
-                reverseFlag = False
-            else:
-                startPoints = np.asarray([validPaths[i][0] for i in unvisited], dtype=float)
-                endPoints = np.asarray([validPaths[i][-1] for i in unvisited], dtype=float)
-                startDists = cdist([currentPos], startPoints)[0]
-                endDists = cdist([currentPos], endPoints)[0]
-                bestStartIdx = int(np.argmin(startDists))
-                bestEndIdx = int(np.argmin(endDists))
-                if startDists[bestStartIdx] <= endDists[bestEndIdx]:
-                    chosenListIndex = bestStartIdx
-                    reverseFlag = False
-                else:
-                    chosenListIndex = bestEndIdx
-                    reverseFlag = True
-            chosenPathIndex = unvisited.pop(chosenListIndex)
-            pathArray = validPaths[chosenPathIndex] if not reverseFlag else validPaths[chosenPathIndex][::-1]
-            orderedPaths.append(pathArray)
-            currentPos = pathArray[-1]
-        return orderedPaths
-
-    def optimizePathLinking(self, pathsLocal: List[np.ndarray], localSafeZ: float, stepOver: float, envelope: Optional[SafeEnvelope] = None, heightMapLocal: Optional[Dict[str, Any]] = None, solidClipper: Optional[SolidKeepOutClipper] = None, toolRadius: float = 3.0, safetyMargin: float = 0.5) -> np.ndarray:
-        if not pathsLocal:
-            return np.zeros((0, 3), dtype=float)
-        validPaths = [np.asarray(p, dtype=float) for p in pathsLocal if len(p) >= 2]
-        if not validPaths:
-            return np.zeros((0, 3), dtype=float)
-
-        clearance = float(toolRadius + safetyMargin)
-        effectiveLocalSafeZ = float(localSafeZ)
-        if envelope is not None:
-            effectiveLocalSafeZ = max(effectiveLocalSafeZ, envelope.safeZ + 1.0)
-        if heightMapLocal is not None and np.isfinite(heightMapLocal.get('maxLimit', -np.inf)):
-            effectiveLocalSafeZ = max(effectiveLocalSafeZ, float(heightMapLocal['maxLimit']) + clearance + 2.0)
-
-        sampleStep = max(float(stepOver * 0.3), toolRadius * 0.25, 0.15)
-        extraClearance = max(float(toolRadius), 2.0)
-        orderedPaths = self._greedyOrderPaths(validPaths)
-
-        linkedPoints = list(orderedPaths[0])
-        for pathIdx in range(1, len(orderedPaths)):
-            nextPath = orderedPaths[pathIdx]
-            lastPt = np.asarray(linkedPoints[-1], dtype=float)
-            nextStart = np.asarray(nextPath[0], dtype=float)
-            transitPts = self._buildSafeTransitLocal(
-                lastPt, nextStart,
-                envelope, heightMapLocal, solidClipper,
-                effectiveLocalSafeZ, clearance, sampleStep, extraClearance
-            )
-            linkedPoints.extend(np.asarray(transitPts, dtype=float)[1:].tolist())
-            linkedPoints.extend(nextPath.tolist())
-
-        return np.asarray(linkedPoints, dtype=float)
 
     def slicePathByPlatformZ(self, pathLocal: np.ndarray, rotBack: np.ndarray, platformSafeZ: float) -> List[np.ndarray]:
         if len(pathLocal) == 0:

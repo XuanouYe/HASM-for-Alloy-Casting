@@ -5,9 +5,14 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="6833bebc-2e84-41ea-8662-ab2b3d13e641" name="更改" comment="Merge remote-tracking branch 'origin/main'">
+      <change afterPath="$PROJECT_DIR$/cnc/Readme.md" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/cnc/五轴cnc刀具路径规划.md" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/mold/gatingSystem.py" beforeDir="false" afterPath="$PROJECT_DIR$/mold/gatingSystem.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/cnc/geometryUtils.py" beforeDir="false" afterPath="$PROJECT_DIR$/cnc/geometryUtils.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/cnc/interface.py" beforeDir="false" afterPath="$PROJECT_DIR$/cnc/interface.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/cnc/pathGenerator.py" beforeDir="false" afterPath="$PROJECT_DIR$/cnc/pathGenerator.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/cnc/toolpathEngine.py" beforeDir="false" afterPath="$PROJECT_DIR$/cnc/toolpathEngine.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/cnc/toolpathStrategies.py" beforeDir="false" afterPath="$PROJECT_DIR$/cnc/toolpathStrategies.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/cnc/visualization.py" beforeDir="false" afterPath="$PROJECT_DIR$/cnc/visualization.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -61,39 +66,39 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent"><![CDATA[{
-  "keyToString": {
-    "ASKED_SHARE_PROJECT_CONFIGURATION_FILES": "true",
-    "ModuleVcsDetector.initialDetectionPerformed": "true",
-    "Python.20032026.executor": "Run",
-    "Python.2602.executor": "Run",
-    "Python.__main__.executor": "Run",
-    "Python.cncPathDesigner.executor": "Run",
-    "Python.controlConfig.executor": "Run",
-    "Python.fdmExecutor.executor": "Run",
-    "Python.gcodeProcessor.executor": "Run",
-    "Python.guiMainWindow.executor": "Run",
-    "Python.innerSurfaceOffset.executor": "Run",
-    "Python.interface.executor": "Run",
-    "Python.main.executor": "Run",
-    "Python.mainController.executor": "Run",
-    "Python.mainWindow.executor": "Run",
-    "Python.moldGatingSystem.executor": "Run",
-    "Python.moldGenerator.executor": "Run",
-    "Python.parameterPanel.executor": "Run",
-    "Python.pathDesigner.executor": "Run",
-    "Python.toolpathStrategies.executor": "Run",
-    "Python.x.executor": "Run",
-    "Python.xx.executor": "Run",
-    "RunOnceActivity.ShowReadmeOnStart": "true",
-    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
-    "RunOnceActivity.git.unshallow": "true",
-    "SHARE_PROJECT_CONFIGURATION_FILES": "true",
-    "git-widget-placeholder": "main",
-    "ignore.virus.scanning.warn.message": "true",
-    "settings.editor.selected.configurable": "com.jetbrains.python.configuration.PyActiveSdkModuleConfigurable"
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;ASKED_SHARE_PROJECT_CONFIGURATION_FILES&quot;: &quot;true&quot;,
+    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
+    &quot;Python.20032026.executor&quot;: &quot;Run&quot;,
+    &quot;Python.2602.executor&quot;: &quot;Run&quot;,
+    &quot;Python.__main__.executor&quot;: &quot;Run&quot;,
+    &quot;Python.cncPathDesigner.executor&quot;: &quot;Run&quot;,
+    &quot;Python.controlConfig.executor&quot;: &quot;Run&quot;,
+    &quot;Python.fdmExecutor.executor&quot;: &quot;Run&quot;,
+    &quot;Python.gcodeProcessor.executor&quot;: &quot;Run&quot;,
+    &quot;Python.guiMainWindow.executor&quot;: &quot;Run&quot;,
+    &quot;Python.innerSurfaceOffset.executor&quot;: &quot;Run&quot;,
+    &quot;Python.interface.executor&quot;: &quot;Run&quot;,
+    &quot;Python.main.executor&quot;: &quot;Run&quot;,
+    &quot;Python.mainController.executor&quot;: &quot;Run&quot;,
+    &quot;Python.mainWindow.executor&quot;: &quot;Run&quot;,
+    &quot;Python.moldGatingSystem.executor&quot;: &quot;Run&quot;,
+    &quot;Python.moldGenerator.executor&quot;: &quot;Run&quot;,
+    &quot;Python.parameterPanel.executor&quot;: &quot;Run&quot;,
+    &quot;Python.pathDesigner.executor&quot;: &quot;Run&quot;,
+    &quot;Python.toolpathStrategies.executor&quot;: &quot;Run&quot;,
+    &quot;Python.x.executor&quot;: &quot;Run&quot;,
+    &quot;Python.xx.executor&quot;: &quot;Run&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;SHARE_PROJECT_CONFIGURATION_FILES&quot;: &quot;true&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;main&quot;,
+    &quot;ignore.virus.scanning.warn.message&quot;: &quot;true&quot;,
+    &quot;settings.editor.selected.configurable&quot;: &quot;com.jetbrains.python.configuration.PyActiveSdkModuleConfigurable&quot;
   }
-}]]></component>
+}</component>
   <component name="RecentsManager">
     <key name="MoveFile.RECENT_KEYS">
       <recent name="$PROJECT_DIR$/cnc" />
@@ -115,14 +120,6 @@
       <option name="number" value="Default" />
       <option name="presentableId" value="Default" />
       <updated>1772095032548</updated>
-    </task>
-    <task id="LOCAL-00023" summary="Merge remote-tracking branch 'origin/main'">
-      <option name="closed" value="true" />
-      <created>1772444777502</created>
-      <option name="number" value="00023" />
-      <option name="presentableId" value="LOCAL-00023" />
-      <option name="project" value="LOCAL" />
-      <updated>1772444777502</updated>
     </task>
     <task id="LOCAL-00024" summary="Merge remote-tracking branch 'origin/main'">
       <option name="closed" value="true" />
@@ -508,7 +505,15 @@
       <option name="project" value="LOCAL" />
       <updated>1773998540825</updated>
     </task>
-    <option name="localTasksCounter" value="72" />
+    <task id="LOCAL-00072" summary="Merge remote-tracking branch 'origin/main'">
+      <option name="closed" value="true" />
+      <created>1774417934947</created>
+      <option name="number" value="00072" />
+      <option name="presentableId" value="LOCAL-00072" />
+      <option name="project" value="LOCAL" />
+      <updated>1774417934947</updated>
+    </task>
+    <option name="localTasksCounter" value="73" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
