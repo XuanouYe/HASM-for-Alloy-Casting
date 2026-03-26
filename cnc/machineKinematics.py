@@ -99,6 +99,8 @@ class XyzacTrtKinematics:
         pivotMat = buildTranslation(0.0, self.pivotOffsetY, self.pivotOffsetZ)
         rotAMat = buildRotationA(aRad)
         rotCMat = buildRotationC(cRad)
+        # Column-vector convention: right-most matrix is applied first.
+        # Geometric order (tip->machine): A rotation -> pivot offset -> C rotation -> work offset.
         return multiplyHomogeneous(workMat, multiplyHomogeneous(rotCMat, multiplyHomogeneous(pivotMat, rotAMat)))
 
     def solveLinearAxes(self, tipPositionWcs: List[float], aDeg: float, cDeg: float) -> Tuple[float, float, float]:
@@ -111,22 +113,42 @@ class XyzacTrtKinematics:
     def minimizeAngularJump(self, prevA: Optional[float], prevC: Optional[float], newA: float, newC: float) -> Tuple[float, float]:
         if prevA is None or prevC is None:
             return newA, newC
+        targetAxis = self.axisFromAngles(newA, newC)
         cCandidates = [newC + shiftVal for shiftVal in (-720.0, -360.0, 0.0, 360.0, 720.0)]
         pairedCandidates: List[Tuple[float, float]] = []
         for cCandidate in cCandidates:
             pairedCandidates.append((newA, cCandidate))
             pairedCandidates.append((-newA, cCandidate + 180.0))
-        bestA, bestC = pairedCandidates[0]
-        bestCost = abs(bestA - prevA) + abs(bestC - prevC)
-        for aCandidate, cCandidate in pairedCandidates[1:]:
-            costVal = abs(aCandidate - prevA) + abs(cCandidate - prevC)
+        bestA = self.limitAngle(pairedCandidates[0][0], self.aAxisLimit)
+        bestC = self.limitAngle(pairedCandidates[0][1], self.cAxisLimit)
+        bestCost = self.computeCandidateCost(prevA, prevC, bestA, bestC, targetAxis)
+        for aCandidateRaw, cCandidateRaw in pairedCandidates[1:]:
+            aCandidate = self.limitAngle(aCandidateRaw, self.aAxisLimit)
+            cCandidate = self.limitAngle(cCandidateRaw, self.cAxisLimit)
+            costVal = self.computeCandidateCost(prevA, prevC, aCandidate, cCandidate, targetAxis)
             if costVal < bestCost:
                 bestCost = costVal
                 bestA = aCandidate
                 bestC = cCandidate
-        bestA = self.limitAngle(bestA, self.aAxisLimit)
-        bestC = self.limitAngle(bestC, self.cAxisLimit)
         return bestA, bestC
+
+    @staticmethod
+    def axisFromAngles(aDeg: float, cDeg: float) -> List[float]:
+        aRad = math.radians(aDeg)
+        cRad = math.radians(cDeg)
+        sinA = math.sin(aRad)
+        return [
+            sinA * math.sin(cRad),
+            -sinA * math.cos(cRad),
+            math.cos(aRad),
+        ]
+
+    def computeCandidateCost(self, prevA: float, prevC: float, candidateA: float, candidateC: float, targetAxis: List[float]) -> float:
+        candidateAxis = self.axisFromAngles(candidateA, candidateC)
+        axisDot = max(-1.0, min(1.0, sum(candidateAxis[idx] * targetAxis[idx] for idx in range(3))))
+        axisErrDeg = math.degrees(math.acos(axisDot))
+        jumpCost = abs(candidateA - prevA) + abs(candidateC - prevC)
+        return jumpCost + axisErrDeg * 1000.0
 
     def convertPoint(self, tipPositionWcs: List[float], toolAxisVec: List[float]) -> Tuple[float, float, float, float, float]:
         newA, newC = self.solveRotaryAngles(toolAxisVec)

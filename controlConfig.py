@@ -100,7 +100,7 @@ parameterSchema = {
                 "aAxisLimit": [-120.0, 120.0],
                 "cAxisLimit": [-360.0, 360.0],
                 "pivotOffsetY": 0.0,
-                "pivotOffsetZ": 0.0,
+                "pivotOffsetZ": 150.0,
                 "workOffsetX": 0.0,
                 "workOffsetY": 0.0,
                 "workOffsetZ": 0.0,

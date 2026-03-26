@@ -41,6 +41,35 @@ def loadKinematics(postCfg: Dict[str, Any]) -> XyzacTrtKinematics:
     return XyzacTrtKinematics(kinematicsCfg)
 
 
+def loadLinkerConfig(processConfig: Dict[str, Any], clData: Dict[str, Any]) -> Dict[str, Any]:
+    subtractiveSchema = parameterSchema.get("subtractive", {})
+    subtractiveCfg = processConfig.get("subtractive", {})
+    clLinkerCfg = clData.get("linkerConfig", {})
+    defaultStepEnable = {
+        "shellRemoval": True,
+        "riserRemoval": True,
+        "partFinishing": False,
+        "gateRemoval": True
+    }
+    linkerCfg = {
+        "safeHeight": float(subtractiveCfg.get("safeHeight", subtractiveSchema.get("safeHeight", {}).get("default", 5.0))),
+        "maxRetractOffset": float(subtractiveCfg.get("maxRetractOffset", subtractiveSchema.get("maxRetractOffset", {}).get("default", 100.0))),
+        "directLinkThreshold": float(subtractiveCfg.get("directLinkThreshold", subtractiveSchema.get("directLinkThreshold", {}).get("default", 2.0))),
+        "rotationChangeThreshold": float(subtractiveCfg.get("rotationChangeThreshold", subtractiveSchema.get("rotationChangeThreshold", {}).get("default", 5.0))),
+        "rotationRetractAngle": float(subtractiveCfg.get("rotationRetractAngle", subtractiveSchema.get("rotationRetractAngle", {}).get("default", 30.0))),
+        "rotationSafeZ": float(subtractiveCfg.get("rotationSafeZ", subtractiveSchema.get("rotationSafeZ", {}).get("default", 30.0))),
+        "linkFeedRate": float(subtractiveCfg.get("linkFeedRate", subtractiveSchema.get("linkFeedRate", {}).get("default", 2000.0))),
+        "stepLinkingEnabled": dict(defaultStepEnable),
+    }
+    linkerCfg["stepLinkingEnabled"].update(clLinkerCfg.get("stepLinkingEnabled", {}))
+    if isinstance(subtractiveCfg.get("stepLinkingEnabled"), dict):
+        linkerCfg["stepLinkingEnabled"].update(subtractiveCfg["stepLinkingEnabled"])
+    for keyVal in ("safeHeight", "maxRetractOffset", "directLinkThreshold", "rotationChangeThreshold", "rotationRetractAngle", "rotationSafeZ", "linkFeedRate"):
+        if keyVal in clLinkerCfg and keyVal not in subtractiveCfg:
+            linkerCfg[keyVal] = float(clLinkerCfg[keyVal])
+    return linkerCfg
+
+
 def formatValue(valueVal: float, decimals: int) -> str:
     return f"{valueVal:.{decimals}f}"
 
@@ -166,7 +195,7 @@ def writeGcodeFile(gcodeLines: List[str], outputPath: str) -> None:
 def generateGcodeFromClJson(inputJsonPath: str, processConfig: Dict[str, Any], outputGcodePath: str) -> None:
     clData = loadClJson(inputJsonPath)
     postCfg = loadPostConfig(processConfig)
-    linkerCfg = clData.get("linkerConfig", {})
+    linkerCfg = loadLinkerConfig(processConfig, clData)
     linkedData = ClPathLinker(linkerCfg).processClData(clData)
     gcodeLines = generateGcode(linkedData, postCfg)
     writeGcodeFile(gcodeLines, outputGcodePath)
@@ -175,7 +204,7 @@ def generateGcodeFromClJson(inputJsonPath: str, processConfig: Dict[str, Any], o
 def generateCncGcodeInterface(partStl: str, moldStl: str, gateStl: str, riserStl: str, outputGcodePath: str, processConfig: Dict[str, Any], visualize: bool = False) -> Dict[str, Any]:
     clData = generateCncJobInterface(partStl, moldStl, gateStl, riserStl, outputGcodePath + ".json", processConfig, visualize=visualize)
     postCfg = loadPostConfig(processConfig)
-    linkerCfg = clData.get("linkerConfig", {})
+    linkerCfg = loadLinkerConfig(processConfig, clData)
     linkedData = ClPathLinker(linkerCfg).processClData(clData)
     gcodeLines = generateGcode(linkedData, postCfg)
     writeGcodeFile(gcodeLines, outputGcodePath)

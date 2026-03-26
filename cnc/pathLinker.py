@@ -50,13 +50,13 @@ class ClPathLinker:
             self.makePoint([startPos[0], startPos[1], startPos[2]], toolAxis, "approach"),
         ]
 
-    def buildLevel2Link(self, endPt: Dict[str, Any], startPt: Dict[str, Any], endAxis: List[float], clearanceZ: float) -> List[Dict[str, Any]]:
+    def buildLevel2Link(self, endPt: Dict[str, Any], startPt: Dict[str, Any], endAxis: List[float], startAxis: List[float], clearanceZ: float) -> List[Dict[str, Any]]:
         endPos = endPt.get("position", [0.0, 0.0, 0.0])
         startPos = startPt.get("position", [0.0, 0.0, 0.0])
         return [
             self.makePoint([endPos[0], endPos[1], clearanceZ], endAxis, "retract"),
             self.makePoint([startPos[0], startPos[1], clearanceZ], endAxis, "rapid"),
-            self.makePoint([startPos[0], startPos[1], startPos[2]], endAxis, "approach"),
+            self.makePoint([startPos[0], startPos[1], startPos[2]], startAxis, "approach"),
         ]
 
     def buildLevel3Link(self, endPt: Dict[str, Any], startPt: Dict[str, Any], endAxis: List[float], startAxis: List[float], rotationSafeZ: float, clearanceZ: float) -> List[Dict[str, Any]]:
@@ -92,14 +92,20 @@ class ClPathLinker:
                 segmentEndPoint = pointCopy
                 segmentEndAxis = pointCopy.get("toolAxis", [0.0, 0.0, 1.0])
                 continue
-            if segmentId != lastSegmentId and segmentEndPoint is not None:
+            if segmentEndPoint is not None and segmentEndAxis is not None:
                 startAxis = pointCopy.get("toolAxis", segmentEndAxis)
-                linkLevel = self.classifyLink(segmentEndPoint, pointCopy, segmentEndAxis, startAxis, allowDirect)
+                moveDist = self.computeDistance(segmentEndPoint.get("position", [0.0, 0.0, 0.0]), pointCopy.get("position", [0.0, 0.0, 0.0]))
+                axisChange = self.computeAxisAngle(segmentEndAxis, startAxis)
+                shouldLink = segmentId != lastSegmentId or moveDist > self.directLinkThreshold or axisChange > self.rotationChangeThreshold
+                if shouldLink:
+                    linkLevel = self.classifyLink(segmentEndPoint, pointCopy, segmentEndAxis, startAxis, allowDirect)
+                else:
+                    linkLevel = 0
                 if linkLevel == 1:
                     localSafeZ = self.computeLocalSafeZ(segmentEndPoint, pointCopy, self.safeHeight)
                     mergedPoints.extend(self.buildLevel1Link(segmentEndPoint, pointCopy, segmentEndAxis, localSafeZ))
                 elif linkLevel == 2:
-                    mergedPoints.extend(self.buildLevel2Link(segmentEndPoint, pointCopy, segmentEndAxis, clearanceZ))
+                    mergedPoints.extend(self.buildLevel2Link(segmentEndPoint, pointCopy, segmentEndAxis, startAxis, clearanceZ))
                 elif linkLevel == 3:
                     mergedPoints.extend(self.buildLevel3Link(segmentEndPoint, pointCopy, segmentEndAxis, startAxis, self.rotationSafeZ, clearanceZ))
             mergedPoints.append(pointCopy)
@@ -109,7 +115,8 @@ class ClPathLinker:
 
         for idx, pointItem in enumerate(mergedPoints, start=1):
             pointItem["pointId"] = idx
-            pointItem.setdefault("feedrate", self.linkFeedRate if pointItem.get("motionType") != "cut" else float(pointItem.get("feedrate", self.linkFeedRate)))
+            if pointItem.get("motionType") != "cut":
+                pointItem["feedrate"] = float(pointItem.get("feedrate", self.linkFeedRate))
         step["clPoints"] = mergedPoints
 
     def makePoint(self, position: List[float], toolAxis: List[float], motionType: str) -> Dict[str, Any]:
