@@ -5,14 +5,8 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="6833bebc-2e84-41ea-8662-ab2b3d13e641" name="更改" comment="Merge remote-tracking branch 'origin/main'">
-      <change afterPath="$PROJECT_DIR$/cnc/Readme.md" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/cnc/geometryUtils.py" beforeDir="false" afterPath="$PROJECT_DIR$/cnc/geometryUtils.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/cnc/interface.py" beforeDir="false" afterPath="$PROJECT_DIR$/cnc/interface.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/cnc/pathGenerator.py" beforeDir="false" afterPath="$PROJECT_DIR$/cnc/pathGenerator.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/cnc/toolpathEngine.py" beforeDir="false" afterPath="$PROJECT_DIR$/cnc/toolpathEngine.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/cnc/toolpathStrategies.py" beforeDir="false" afterPath="$PROJECT_DIR$/cnc/toolpathStrategies.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/cnc/visualization.py" beforeDir="false" afterPath="$PROJECT_DIR$/cnc/visualization.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/cnc/Readme.md" beforeDir="false" afterPath="$PROJECT_DIR$/cnc/Readme.md" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -120,14 +114,6 @@
       <option name="number" value="Default" />
       <option name="presentableId" value="Default" />
       <updated>1772095032548</updated>
-    </task>
-    <task id="LOCAL-00024" summary="Merge remote-tracking branch 'origin/main'">
-      <option name="closed" value="true" />
-      <created>1772448893345</created>
-      <option name="number" value="00024" />
-      <option name="presentableId" value="LOCAL-00024" />
-      <option name="project" value="LOCAL" />
-      <updated>1772448893345</updated>
     </task>
     <task id="LOCAL-00025" summary="Merge remote-tracking branch 'origin/main'">
       <option name="closed" value="true" />
@@ -513,7 +499,15 @@
       <option name="project" value="LOCAL" />
       <updated>1774417934947</updated>
     </task>
-    <option name="localTasksCounter" value="73" />
+    <task id="LOCAL-00073" summary="Merge remote-tracking branch 'origin/main'">
+      <option name="closed" value="true" />
+      <created>1774509716378</created>
+      <option name="number" value="00073" />
+      <option name="presentableId" value="LOCAL-00073" />
+      <option name="project" value="LOCAL" />
+      <updated>1774509716378</updated>
+    </task>
+    <option name="localTasksCounter" value="74" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
