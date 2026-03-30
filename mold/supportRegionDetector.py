@@ -100,7 +100,7 @@ if __name__ == "__main__":
         "smoothHeight": 1.0,
         "areaEps": 1e-4
     }
-    stlPath = "testModels/hollow.cylinder.down.stl"
+    stlPath = "../testModels/cylinder.down.stl"
     mesh = trimesh.load_mesh(stlPath)
     result = calculateSupportRegions(mesh, config)
     validLayers = sum(1 for g in result.layerGeoms if g is not None)
