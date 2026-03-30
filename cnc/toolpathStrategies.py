@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import scipy.ndimage as nd
 import trimesh
@@ -8,11 +8,18 @@ from shapely.ops import unary_union
 from shapely.validation import make_valid
 
 
-class IToolpathStrategy(ABC):
-    @abstractmethod
-    def generate(self, targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh, toolRadius: float,
-                 params: Dict[str, Any], safetyMargin: float) -> List[np.ndarray]:
-        pass
+def repairMesh(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
+    if mesh is None or mesh.is_empty:
+        return mesh
+    m = mesh.copy()
+    trimesh.repair.fix_winding(m)
+    trimesh.repair.fix_normals(m)
+    trimesh.repair.fill_holes(m)
+    m.remove_degenerate_faces()
+    m.remove_duplicate_faces()
+    m.remove_infinite_values()
+    m.remove_unreferenced_vertices()
+    return m
 
 
 def cleanPolygon(polys: List[Any]) -> Any:
@@ -29,16 +36,23 @@ def cleanPolygon(polys: List[Any]) -> Any:
     return unary_union(cleanPolys)
 
 
-def robustSection(mesh: trimesh.Trimesh, zValue: float, tolerance: float = 0.05) -> Any:
-    sectionResult = mesh.section(plane_origin=[0.0, 0.0, zValue], plane_normal=[0.0, 0.0, 1.0])
-    if sectionResult is None:
-        sectionResult = mesh.section(plane_origin=[0.0, 0.0, zValue - tolerance], plane_normal=[0.0, 0.0, 1.0])
-    if sectionResult is None:
-        sectionResult = mesh.section(plane_origin=[0.0, 0.0, zValue + tolerance], plane_normal=[0.0, 0.0, 1.0])
-    if sectionResult is None:
-        return None
-    slice2d, _ = sectionResult.to_2D()
-    return slice2d.polygons_full
+def robustSection(mesh: trimesh.Trimesh, zValue: float, tolerance: float = 0.05) -> Optional[Tuple[Any, Any]]:
+    offsets = [0.0, -tolerance, tolerance, -tolerance * 2, tolerance * 2]
+    for offset in offsets:
+        try:
+            sectionResult = mesh.section(
+                plane_origin=[0.0, 0.0, zValue + offset],
+                plane_normal=[0.0, 0.0, 1.0]
+            )
+            if sectionResult is None:
+                continue
+            slice2d, to3dMat = sectionResult.to_2D()
+            polys = slice2d.polygons_full
+            if polys:
+                return polys, to3dMat
+        except Exception:
+            continue
+    return None
 
 
 def extractLineStrings(geomValue: Any) -> List[Any]:
@@ -54,35 +68,42 @@ def extractLineStrings(geomValue: Any) -> List[Any]:
     return []
 
 
+class IToolpathStrategy(ABC):
+    @abstractmethod
+    def generate(self, targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh, toolRadius: float,
+                 params: Dict[str, Any], safetyMargin: float) -> List[np.ndarray]:
+        pass
+
+
 class ZLevelRoughingStrategy(IToolpathStrategy):
     def generate(self, targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh, toolRadius: float,
                  params: Dict[str, Any], safetyMargin: float) -> List[np.ndarray]:
-        if targetMesh.is_empty:
+        if targetMesh is None or targetMesh.is_empty:
             return []
+        repairedTarget = repairMesh(targetMesh)
+        repairedKeepOut = repairMesh(keepOutMesh) if keepOutMesh is not None and not keepOutMesh.is_empty else keepOutMesh
         stepOver = float(params.get('stepOver', 1.0))
         layerStep = float(params.get('layerStep', 1.0))
         roughStock = float(params.get('roughStock', 0.0))
-        boundsArray = np.asarray(targetMesh.bounds, dtype=float)
+        boundsArray = np.asarray(repairedTarget.bounds, dtype=float)
         zMin = float(boundsArray[0, 2])
         zMax = float(boundsArray[1, 2])
         zLevels = np.arange(zMax - layerStep, zMin, -layerStep, dtype=float)
         allPaths = []
         for zValue in zLevels:
-            targetPolys = robustSection(targetMesh, zValue)
-            if not targetPolys:
+            sectionData = robustSection(repairedTarget, zValue)
+            if sectionData is None:
                 continue
-            targetSlice = targetMesh.section(plane_origin=[0.0, 0.0, zValue], plane_normal=[0.0, 0.0, 1.0])
-            if targetSlice is None:
-                continue
-            _, to3dMat = targetSlice.to_2D()
+            targetPolys, to3dMat = sectionData
             machinablePoly = cleanPolygon(targetPolys).buffer(-(toolRadius + roughStock))
-            keepOutPoly = MultiPolygon()
-            if keepOutMesh is not None and not keepOutMesh.is_empty:
-                keepOutPolys = robustSection(keepOutMesh, zValue)
-                if keepOutPolys:
-                    keepOutPoly = cleanPolygon(keepOutPolys).buffer(toolRadius + safetyMargin + roughStock)
             if machinablePoly.is_empty:
                 continue
+            keepOutPoly = MultiPolygon()
+            if repairedKeepOut is not None and not repairedKeepOut.is_empty:
+                keepOutData = robustSection(repairedKeepOut, zValue)
+                if keepOutData is not None:
+                    keepOutPolys, _ = keepOutData
+                    keepOutPoly = cleanPolygon(keepOutPolys).buffer(toolRadius + safetyMargin + roughStock)
             safePoly = machinablePoly.difference(keepOutPoly.buffer(0))
             if safePoly.is_empty:
                 continue
@@ -141,7 +162,10 @@ def generateDropCutterPaths(targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Tr
             return zMap
         area = float(mesh.area)
         cnt = min(int(area / (gridRes * 0.5) ** 2), 2000000)
-        pts, _ = trimesh.sample.sample_surface(mesh, cnt)
+        try:
+            pts, _ = trimesh.sample.sample_surface(mesh, cnt)
+        except Exception:
+            pts = np.asarray(mesh.vertices, dtype=float)
         pts = np.vstack([mesh.vertices, pts])
         ix = np.clip(((pts[:, 0] - xMin) / gridRes).astype(int), 0, nx - 1)
         iy = np.clip(((pts[:, 1] - yMin) / gridRes).astype(int), 0, ny - 1)
@@ -228,11 +252,13 @@ class SurfaceProjectionFinishingStrategy(IToolpathStrategy):
 
 class ToolpathStrategyFactory:
     strategies = {
-        'zlevelroughing': ZLevelRoughingStrategy,
-        'zlr': ZLevelRoughingStrategy,
-        'dropraster': DropRasterStrategy,
-        'surfacefinishing': SurfaceProjectionFinishingStrategy,
-        'spf': SurfaceProjectionFinishingStrategy
+        'zlevelroughing':          ZLevelRoughingStrategy,
+        'zlr':                     ZLevelRoughingStrategy,
+        'dropraster':              DropRasterStrategy,
+        'surfacefinishing':        SurfaceProjectionFinishingStrategy,
+        'spf':                     SurfaceProjectionFinishingStrategy,
+        'isoplanarpatchfinishing': SurfaceProjectionFinishingStrategy,
+        'ipf':                     SurfaceProjectionFinishingStrategy,
     }
 
     @classmethod
