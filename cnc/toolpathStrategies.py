@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import scipy.ndimage as nd
 import trimesh
-from shapely.geometry import LineString, MultiPolygon
+from shapely.geometry import LinearRing, LineString, MultiPolygon, Polygon
 from shapely.ops import unary_union
 from shapely.validation import make_valid
 
@@ -36,23 +36,40 @@ def cleanPolygon(polys: List[Any]) -> Any:
     return unary_union(cleanPolys)
 
 
-def robustSection(mesh: trimesh.Trimesh, zValue: float, tolerance: float = 0.05) -> Optional[Tuple[Any, Any]]:
-    offsets = [0.0, -tolerance, tolerance, -tolerance * 2, tolerance * 2]
-    for offset in offsets:
+def _closedPathsToPolygons(closedPaths: List[Any]) -> List[Any]:
+    polys = []
+    for pathItem in closedPaths:
         try:
-            sectionResult = mesh.section(
-                plane_origin=[0.0, 0.0, zValue + offset],
-                plane_normal=[0.0, 0.0, 1.0]
-            )
-            if sectionResult is None:
+            coords = np.asarray(pathItem.vertices if hasattr(pathItem, 'vertices') else pathItem, dtype=float)
+            if len(coords) < 3:
                 continue
-            slice2d, to3dMat = sectionResult.to_2D()
-            polys = slice2d.polygons_full
-            if polys:
-                return polys, to3dMat
+            ring = LinearRing(coords[:, :2])
+            poly = Polygon(ring)
+            if not poly.is_valid:
+                poly = make_valid(poly)
+            poly = poly.buffer(0)
+            if not poly.is_empty:
+                polys.append(poly)
         except Exception:
             continue
-    return None
+    return polys
+
+
+def robustSection(mesh: trimesh.Trimesh, zValue: float, tolerance: float = 0.05) -> Any:
+    for zOff in (0.0, -tolerance, tolerance):
+        sectionResult = mesh.section(plane_origin=[0.0, 0.0, zValue + zOff], plane_normal=[0.0, 0.0, 1.0])
+        if sectionResult is not None:
+            break
+    if sectionResult is None:
+        return None
+    slice2d, _ = sectionResult.to_2D()
+    closedPaths = slice2d.polygons_closed
+    if closedPaths is None or len(closedPaths) == 0:
+        return None
+    polys = _closedPathsToPolygons(closedPaths)
+    if not polys:
+        return None
+    return polys
 
 
 def extractLineStrings(geomValue: Any) -> List[Any]:
