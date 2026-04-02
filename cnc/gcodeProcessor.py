@@ -93,6 +93,7 @@ def buildProgramHeader(clData: Dict[str, Any], postCfg: Dict[str, Any]) -> List[
         "(POST: gcodeProcessor.py)",
         f"{unitCode} {absCode} G17 G40 G49 G80",
         wcsCode,
+        "M06 T01",
         f"{spindleDir} S{spindleSpeed}",
     ]
     if coolantEnabled:
