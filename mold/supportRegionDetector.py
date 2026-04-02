@@ -75,7 +75,7 @@ class SupportRegionDetector:
     def _getMergedGeomsBelow(self, layerGeoms: List[Optional[BaseGeometry]],
                              currentLayerIdx: int, layersBelow: int,
                              offsetDist: float) -> Optional[BaseGeometry]:
-        merged = None
+  testModels/hollow.cylinder.down.stl      merged = None
         for offset in range(1, min(layersBelow + 1, currentLayerIdx + 1)):
             g = layerGeoms[currentLayerIdx - offset]
             if g is None or g.is_empty:
@@ -100,7 +100,7 @@ if __name__ == "__main__":
         "smoothHeight": 1.0,
         "areaEps": 1e-4
     }
-    stlPath = "../testModels/cylinder.down.stl"
+    stlPath = "testModels/hollow.cylinder.down.stl"
     mesh = trimesh.load_mesh(stlPath)
     result = calculateSupportRegions(mesh, config)
     validLayers = sum(1 for g in result.layerGeoms if g is not None)
