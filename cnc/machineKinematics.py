@@ -67,11 +67,6 @@ class XyzacTrtKinematics:
         self.cAxisLimit = kinematicsCfg.get("cAxisLimit", [-360.0, 360.0])
         self.pivotOffsetY = float(kinematicsCfg.get("pivotOffsetY", 0.0))
         self.pivotOffsetZ = float(kinematicsCfg.get("pivotOffsetZ", 0.0))
-        # workOffset 描述 STL 模型原点相对于工件坐标系零点的偏移
-        # 用于在逆解前将 CL 点从模型坐标系平移到工件坐标系
-        self.workOffsetX = float(kinematicsCfg.get("workOffsetX", 0.0))
-        self.workOffsetY = float(kinematicsCfg.get("workOffsetY", 0.0))
-        self.workOffsetZ = float(kinematicsCfg.get("workOffsetZ", 0.0))
         self.singularityEps = float(kinematicsCfg.get("singularityEps", 0.01))
         self.prevA: Optional[float] = None
         self.prevC: Optional[float] = None
@@ -103,12 +98,9 @@ class XyzacTrtKinematics:
         return multiplyHomogeneous(rotCMat, multiplyHomogeneous(pivotMat, rotAMat))
 
     def solveLinearAxes(self, tipPositionWcs: List[float], aDeg: float, cDeg: float) -> Tuple[float, float, float]:
-        pwx = float(tipPositionWcs[0]) - self.workOffsetX
-        pwy = float(tipPositionWcs[1]) - self.workOffsetY
-        pwz = float(tipPositionWcs[2]) - self.workOffsetZ
         chainMat = self.buildPivotRotationTransform(aDeg, cDeg)
         invMat = inverseHomogeneous(chainMat)
-        qVec = [pwx, pwy, pwz, 1.0]
+        qVec = [float(tipPositionWcs[0]), float(tipPositionWcs[1]), float(tipPositionWcs[2]), 1.0]
         pVec = applyHomogeneous(invMat, qVec)
         return pVec[0], pVec[1], pVec[2]
 
