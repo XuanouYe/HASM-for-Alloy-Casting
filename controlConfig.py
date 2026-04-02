@@ -117,8 +117,11 @@ parameterSchema = {
                 "cSign": 1.0,
                 "aAxisLimit": [-120.0, 120.0],
                 "cAxisLimit": [-360.0, 360.0],
-                "pivotOffsetY": 0.0,
-                "pivotOffsetZ": 90.0383,
+                "workOffsetX": 0.0,
+                "workOffsetY": 0.0,
+                "workOffsetZ": 0.0,
+                "aAxisOffsetY": 0.0,
+                "aAxisOffsetZ": 90.0383,
                 "singularityEps": 0.01
             },
             "required": False, "description": "运动学配置"
