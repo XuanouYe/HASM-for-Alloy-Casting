@@ -119,11 +119,7 @@ parameterSchema = {
                 "cAxisLimit": [-360.0, 360.0],
                 "pivotOffsetY": 0.0,
                 "pivotOffsetZ": 90.0383,
-                "workOffsetX": 0.0,
-                "workOffsetY": 0.0,
-                "workOffsetZ": 0.0,
-                "singularityEps": 0.01,
-                "rtcpEnabled": False
+                "singularityEps": 0.01
             },
             "required": False, "description": "运动学配置"
         },
