@@ -65,11 +65,22 @@ class XyzacTrtKinematics:
         self.cSign = float(kinematicsCfg.get("cSign", 1.0))
         self.aAxisLimit = kinematicsCfg.get("aAxisLimit", [-120.0, 120.0])
         self.cAxisLimit = kinematicsCfg.get("cAxisLimit", [-360.0, 360.0])
-        self.pivotOffsetY = float(kinematicsCfg.get("pivotOffsetY", 0.0))
-        self.pivotOffsetZ = float(kinematicsCfg.get("pivotOffsetZ", 0.0))
         self.singularityEps = float(kinematicsCfg.get("singularityEps", 0.01))
+        self.workOffset = (
+            float(kinematicsCfg.get("workOffsetX", 0.0)),
+            float(kinematicsCfg.get("workOffsetY", 0.0)),
+            float(kinematicsCfg.get("workOffsetZ", 0.0)),
+        )
+        self.aAxisOffset = (
+            0.0,
+            float(kinematicsCfg.get("aAxisOffsetY", 0.0)),
+            float(kinematicsCfg.get("aAxisOffsetZ", 0.0)),
+        )
         self.prevA: Optional[float] = None
         self.prevC: Optional[float] = None
+
+    def buildTranslationFromVec(self, vec: Tuple[float, float, float]) -> List[List[float]]:
+        return buildTranslation(vec[0], vec[1], vec[2])
 
     def solveRotaryAngles(self, toolAxisVec: List[float]) -> Tuple[float, float]:
         dx = float(toolAxisVec[0])
@@ -92,10 +103,18 @@ class XyzacTrtKinematics:
     def buildPivotRotationTransform(self, aDeg: float, cDeg: float) -> List[List[float]]:
         aPhysRad = math.radians(aDeg / self.aSign if self.aSign != 0.0 else aDeg)
         cPhysRad = math.radians(cDeg / self.cSign if self.cSign != 0.0 else cDeg)
-        pivotMat = buildTranslation(0.0, self.pivotOffsetY, self.pivotOffsetZ)
-        rotAMat = buildRotationA(aPhysRad)
-        rotCMat = buildRotationC(cPhysRad)
-        return multiplyHomogeneous(rotCMat, multiplyHomogeneous(pivotMat, rotAMat))
+        pivotVec = (
+            self.workOffset[0] + self.aAxisOffset[0],
+            self.workOffset[1] + self.aAxisOffset[1],
+            self.workOffset[2] + self.aAxisOffset[2],
+        )
+        matToPivot = self.buildTranslationFromVec(pivotVec)
+        matFromPivot = buildTranslation(-pivotVec[0], -pivotVec[1], -pivotVec[2])
+        rotA = buildRotationA(aPhysRad)
+        rotC = buildRotationC(cPhysRad)
+        tempMat = multiplyHomogeneous(rotC, rotA)
+        tempMat2 = multiplyHomogeneous(tempMat, matFromPivot)
+        return multiplyHomogeneous(matToPivot, tempMat2)
 
     def solveLinearAxes(self, tipPositionWcs: List[float], aDeg: float, cDeg: float) -> Tuple[float, float, float]:
         chainMat = self.buildPivotRotationTransform(aDeg, cDeg)
