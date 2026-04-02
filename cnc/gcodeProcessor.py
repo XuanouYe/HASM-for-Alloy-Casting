@@ -85,7 +85,6 @@ def buildProgramHeader(clData: Dict[str, Any], postCfg: Dict[str, Any]) -> List[
     coolantEnabled = bool(postCfg.get("coolantEnabled", True))
     coolantCode = str(postCfg.get("coolantCode", "M8"))
     machineModel = str(postCfg.get("machineModel", "Default_5Axis_CNC"))
-    toolChangeCode = str(postCfg.get("toolChangeCode", "M06 T01 ( - R8)"))
     headerBlocks = [
         "%",
         f"(PROGRAM: {jobId})",
@@ -94,7 +93,6 @@ def buildProgramHeader(clData: Dict[str, Any], postCfg: Dict[str, Any]) -> List[
         "(POST: gcodeProcessor.py)",
         f"{unitCode} {absCode} G17 G40 G49 G80",
         wcsCode,
-        toolChangeCode,
         f"{spindleDir} S{spindleSpeed}",
     ]
     if coolantEnabled:
