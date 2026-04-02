@@ -99,6 +99,6 @@ def analyzeMoldAccessibility(
 
 if __name__ == "__main__":
     from geometryAdapters import loadMeshFromFile
-    stlFilePath = "../testModels/cylinder.down.stl"
+    stlFilePath = "testModels/hollow.cylinder.down.stl"
     mesh = loadMeshFromFile(stlFilePath)
     result = analyzeMoldAccessibility(mesh=mesh, numSamples=5000, raysPerPoint=90, exportCsv=False)
