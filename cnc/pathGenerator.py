@@ -121,7 +121,7 @@ class FiveAxisCncPathGenerator:
         toolRadius = float(toolParams.get('diameter', 6.0)) * 0.5
         platformSafeZ = float(globalMinZ + toolRadius + safetyMargin)
         stepOver = float(stepParam.get('stepOver', 1.0))
-        isFinishing = modeValue.lower() in {'surfacefinishing', 'spf'}
+        isFinishing = modeValue.lower() in {'surfacefinishing', 'spf', 'isoplanarpatchfinishing', 'ippf'}
         strategy = ToolpathStrategyFactory.getStrategy(modeValue)
         useIpw = modeValue.lower() in {'zlevelroughing', 'zlr', 'dropraster'}
         ipwData = PointCloudIPW(targetMesh, int(stepParam.get('ipwSampleCount', 50000))) if useIpw else None
@@ -135,56 +135,60 @@ class FiveAxisCncPathGenerator:
         outputSegmentId = 0
 
         for axisIndex, toolAxis in enumerate(candidateAxes):
-            axisUnit = normalizeVector(np.asarray(toolAxis, dtype=float))
-            rotToToolFrame = buildRotationFromTo(axisUnit, np.array([0.0, 0.0, 1.0], dtype=float))
-            rotBack = rotToToolFrame.T
+            try:
+                axisUnit = normalizeVector(np.asarray(toolAxis, dtype=float))
+                rotToToolFrame = buildRotationFromTo(axisUnit, np.array([0.0, 0.0, 1.0], dtype=float))
+                rotBack = rotToToolFrame.T
 
-            rotatedTarget = self.rotateMesh(targetMesh, rotToToolFrame)
-            rotatedKeepOut = self.rotateMesh(keepOutMesh, rotToToolFrame)
-            rotatedAvoidance = self.rotateMesh(avoidanceMesh, rotToToolFrame) if avoidanceMesh is not None and not avoidanceMesh.is_empty else None
-            rotatedSolidClip = self.rotateMesh(solidClipMesh, rotToToolFrame) if solidClipMesh is not None and not solidClipMesh.is_empty else None
+                rotatedTarget = self.rotateMesh(targetMesh, rotToToolFrame)
+                rotatedKeepOut = self.rotateMesh(keepOutMesh, rotToToolFrame)
+                rotatedAvoidance = self.rotateMesh(avoidanceMesh, rotToToolFrame) if avoidanceMesh is not None and not avoidanceMesh.is_empty else None
+                rotatedSolidClip = self.rotateMesh(solidClipMesh, rotToToolFrame) if solidClipMesh is not None and not solidClipMesh.is_empty else None
 
-            keepOutChecker = MeshCollisionChecker(rotatedKeepOut, toolRadius, safetyMargin)
-            hmObstacleMesh = rotatedAvoidance if rotatedAvoidance is not None else rotatedKeepOut
-            heightMapLocal = self.toolpathEngine.buildObstacleHeightMapLocal(hmObstacleMesh, hmGridStep, toolRadius, safetyMargin)
-            solidClipperLocal = SolidKeepOutClipper(rotatedSolidClip) if rotatedSolidClip is not None else None
+                keepOutChecker = MeshCollisionChecker(rotatedKeepOut, toolRadius, safetyMargin)
+                hmObstacleMesh = rotatedAvoidance if rotatedAvoidance is not None else rotatedKeepOut
+                heightMapLocal = self.toolpathEngine.buildObstacleHeightMapLocal(hmObstacleMesh, hmGridStep, toolRadius, safetyMargin)
+                solidClipperLocal = SolidKeepOutClipper(rotatedSolidClip) if rotatedSolidClip is not None else None
 
-            strategyCtx = dict(stepParam)
-            strategyCtx['_keepOutChecker'] = keepOutChecker
-            strategyCtx['_toolpathEngine'] = self.toolpathEngine
-            strategyCtx['_hmSampleStep'] = hmSampleStep
+                strategyCtx = dict(stepParam)
+                strategyCtx['_keepOutChecker'] = keepOutChecker
+                strategyCtx['_toolpathEngine'] = self.toolpathEngine
+                strategyCtx['_hmSampleStep'] = hmSampleStep
 
-            rawPathsLocal = strategy.generate(rotatedTarget, rotatedKeepOut, toolRadius, strategyCtx, safetyMargin)
-            rawPathsLocal = self.toolpathEngine.clipPathsByCollisionChecker(rawPathsLocal, keepOutChecker, hmSampleStep)
+                rawPathsLocal = strategy.generate(rotatedTarget, rotatedKeepOut, toolRadius, strategyCtx, safetyMargin)
+                rawPathsLocal = self.toolpathEngine.clipPathsByCollisionChecker(rawPathsLocal, keepOutChecker, hmSampleStep)
 
-            if heightMapLocal is not None:
-                rawPathsLocal = self.toolpathEngine.clipPathsByObstacleLocal(rawPathsLocal, heightMapLocal, hmSampleStep, clearance)
+                if heightMapLocal is not None:
+                    rawPathsLocal = self.toolpathEngine.clipPathsByObstacleLocal(rawPathsLocal, heightMapLocal, hmSampleStep, clearance)
 
-            if solidClipperLocal is not None:
-                rawPathsLocal = solidClipperLocal.clipPaths(rawPathsLocal, hmSampleStep)
+                if solidClipperLocal is not None:
+                    rawPathsLocal = solidClipperLocal.clipPaths(rawPathsLocal, hmSampleStep)
 
-            validPathsLocal = []
-            for pathLocal in rawPathsLocal:
-                if len(pathLocal) < 2:
+                validPathsLocal = []
+                for pathLocal in rawPathsLocal:
+                    if len(pathLocal) < 2:
+                        continue
+                    if isFinishing:
+                        validPathsLocal.append(np.asarray(pathLocal, dtype=float))
+                    else:
+                        validPathsLocal.extend(self.toolpathEngine.slicePathByPlatformZ(pathLocal, rotBack, platformSafeZ))
+
+                if ipwData is not None and validPathsLocal:
+                    validPathsLocal = ipwData.filterPathsLocal(validPathsLocal, rotToToolFrame, toolRadius, stepOver)
+                    ipwData.updateIpwLocal(validPathsLocal, rotToToolFrame, toolRadius)
+
+                if not validPathsLocal:
                     continue
-                if isFinishing:
-                    validPathsLocal.append(np.asarray(pathLocal, dtype=float))
-                else:
-                    validPathsLocal.extend(self.toolpathEngine.slicePathByPlatformZ(pathLocal, rotBack, platformSafeZ))
 
-            if ipwData is not None and validPathsLocal:
-                validPathsLocal = ipwData.filterPathsLocal(validPathsLocal, rotToToolFrame, toolRadius, stepOver)
-                ipwData.updateIpwLocal(validPathsLocal, rotToToolFrame, toolRadius)
+                stepSegs, stepPts, outputSegmentId, pointId = self._emitSegments(
+                    validPathsLocal, axisUnit, feedrate, rotBack, outputSegmentId, pointId, axisIndex
+                )
 
-            if not validPathsLocal:
+                segments.extend(stepSegs)
+                allClPoints.extend(stepPts)
+
+            except Exception:
                 continue
-
-            stepSegs, stepPts, outputSegmentId, pointId = self._emitSegments(
-                validPathsLocal, axisUnit, feedrate, rotBack, outputSegmentId, pointId, axisIndex
-            )
-
-            segments.extend(stepSegs)
-            allClPoints.extend(stepPts)
 
         return {
             'stepId': int(stepId),

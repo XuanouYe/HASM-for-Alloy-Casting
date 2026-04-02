@@ -1,8 +1,8 @@
 from pathlib import Path
 from typing import Any, Dict
-from .geometryUtils import concatenateMeshes
-from .pathGenerator import FiveAxisCncPathGenerator
-from .visualization import PathVisualizer
+from cnc.geometryUtils import concatenateMeshes
+from cnc.pathGenerator import FiveAxisCncPathGenerator
+from cnc.visualization import PathVisualizer
 import numpy as np
 
 

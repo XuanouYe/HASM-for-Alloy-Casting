@@ -231,7 +231,7 @@ class MainController(QObject):
 
         if getattr(self, '_currentVisualizeFlag', False):
             try:
-                from cnc.__main__ import FiveAxisCncPathGenerator
+                from cnc.pathGenerator import FiveAxisCncPathGenerator
                 from gui.pathVisualizerDialog import PathVisualizationDialog
                 generator = FiveAxisCncPathGenerator()
                 mesh = generator.loadMesh(self._currentPartStlPath)

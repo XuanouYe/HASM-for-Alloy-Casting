@@ -30,15 +30,25 @@ def cleanPolygon(polys: List[Any]) -> Any:
 
 
 def robustSection(mesh: trimesh.Trimesh, zValue: float, tolerance: float = 0.05) -> Any:
-    sectionResult = mesh.section(plane_origin=[0.0, 0.0, zValue], plane_normal=[0.0, 0.0, 1.0])
-    if sectionResult is None:
-        sectionResult = mesh.section(plane_origin=[0.0, 0.0, zValue - tolerance], plane_normal=[0.0, 0.0, 1.0])
-    if sectionResult is None:
-        sectionResult = mesh.section(plane_origin=[0.0, 0.0, zValue + tolerance], plane_normal=[0.0, 0.0, 1.0])
-    if sectionResult is None:
-        return None
-    slice2d, _ = sectionResult.to_2D()
-    return slice2d.polygons_full
+    def trySection(zVal: float):
+        try:
+            sectionResult = mesh.section(plane_origin=[0.0, 0.0, zVal], plane_normal=[0.0, 0.0, 1.0])
+            if sectionResult is None:
+                return None
+            slice2d, _ = sectionResult.to_2D()
+            polys = slice2d.polygons_full
+            return polys if polys else None
+        except Exception:
+            return None
+
+    result = trySection(zValue)
+    if result is not None:
+        return result
+    result = trySection(zValue - tolerance)
+    if result is not None:
+        return result
+    result = trySection(zValue + tolerance)
+    return result
 
 
 def extractLineStrings(geomValue: Any) -> List[Any]:
@@ -71,10 +81,13 @@ class ZLevelRoughingStrategy(IToolpathStrategy):
             targetPolys = robustSection(targetMesh, zValue)
             if not targetPolys:
                 continue
-            targetSlice = targetMesh.section(plane_origin=[0.0, 0.0, zValue], plane_normal=[0.0, 0.0, 1.0])
-            if targetSlice is None:
+            try:
+                targetSlice = targetMesh.section(plane_origin=[0.0, 0.0, zValue], plane_normal=[0.0, 0.0, 1.0])
+                if targetSlice is None:
+                    continue
+                _, to3dMat = targetSlice.to_2D()
+            except Exception:
                 continue
-            _, to3dMat = targetSlice.to_2D()
             machinablePoly = cleanPolygon(targetPolys).buffer(-(toolRadius + roughStock))
             keepOutPoly = MultiPolygon()
             if keepOutMesh is not None and not keepOutMesh.is_empty:
@@ -226,13 +239,22 @@ class SurfaceProjectionFinishingStrategy(IToolpathStrategy):
         return generateDropCutterPaths(targetMesh, keepOutMesh, toolRadius, params, safetyMargin)
 
 
+class IsoPlanarPatchFinishingStrategy(IToolpathStrategy):
+    def generate(self, targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh, toolRadius: float,
+                 params: Dict[str, Any], safetyMargin: float) -> List[np.ndarray]:
+        params['finishStock'] = float(params.get('finishStock', 0.03))
+        return generateDropCutterPaths(targetMesh, keepOutMesh, toolRadius, params, safetyMargin)
+
+
 class ToolpathStrategyFactory:
     strategies = {
         'zlevelroughing': ZLevelRoughingStrategy,
         'zlr': ZLevelRoughingStrategy,
         'dropraster': DropRasterStrategy,
         'surfacefinishing': SurfaceProjectionFinishingStrategy,
-        'spf': SurfaceProjectionFinishingStrategy
+        'spf': SurfaceProjectionFinishingStrategy,
+        'isoplanarpatchfinishing': IsoPlanarPatchFinishingStrategy,
+        'ippf': IsoPlanarPatchFinishingStrategy
     }
 
     @classmethod
