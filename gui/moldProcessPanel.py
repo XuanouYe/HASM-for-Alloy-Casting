@@ -15,6 +15,7 @@ class MoldProcessPanel(QWidget):
     intentAddGating = pyqtSignal(dict)
     intentOptimizeOrientation = pyqtSignal(dict)
     intentAdjustStructure = pyqtSignal(dict)
+    statusMessageChanged = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -55,7 +56,6 @@ class MoldProcessPanel(QWidget):
         mainLayout.addWidget(self.createMoldGenerationGroup())
         mainLayout.addWidget(self.createOrientationGroup())
         mainLayout.addWidget(self.createSurfaceOffsetGroup())
-        mainLayout.addWidget(self.createStatusDisplay())
         mainLayout.addStretch()
 
         scrollArea.setWidget(contentWidget)
@@ -168,28 +168,16 @@ class MoldProcessPanel(QWidget):
         surfaceOffsetGroup.setLayout(surfaceOffsetLayout)
         return surfaceOffsetGroup
 
-    def createStatusDisplay(self) -> QGroupBox:
-        group = QGroupBox("处理状态")
-        layout = QVBoxLayout()
-        self.statusLabel = QLabel("等待加载模型...")
-        self.statusLabel.setStyleSheet("color: #666; padding: 5px;")
-        self.statusLabel.setWordWrap(True)
-        layout.addWidget(self.statusLabel)
-        group.setLayout(layout)
-        return group
-
     def onLoadSTLClick(self):
         filePath, _ = QFileDialog.getOpenFileName(self, "打开STL文件", "", "STL Files (*.stl);;All Files (*)")
         if filePath:
-            self.statusLabel.setText(f"加载中: {Path(filePath).name}...")
-            self.statusLabel.setStyleSheet("color: #0078d4; padding: 5px;")
+            self.statusMessageChanged.emit(f"加载中: {Path(filePath).name}...")
             self.intentLoadModel.emit(filePath)
 
     def onGenerateMoldClick(self):
         self.generateMoldButton.setEnabled(False)
         self.addGatingButton.setEnabled(False)
-        self.statusLabel.setText("正在生成模具...")
-        self.statusLabel.setStyleSheet("color: #0078d4; padding: 5px;")
+        self.statusMessageChanged.emit("正在生成模具...")
         config = {
             "boundingBoxOffset": self.boundingBoxOffsetSpinBox.value(),
             "booleanEngine": None
@@ -199,8 +187,7 @@ class MoldProcessPanel(QWidget):
     def onAddGatingClick(self):
         self.addGatingButton.setEnabled(False)
         self.generateMoldButton.setEnabled(False)
-        self.statusLabel.setText("正在添加浇道...")
-        self.statusLabel.setStyleSheet("color: #0078d4; padding: 5px;")
+        self.statusMessageChanged.emit("正在添加浇道...")
         config = {
             "targetFillTime": self.fillTimeSpinBox.value(),
             "sprueInletOffset": self.sprueOffsetSpinBox.value(),
@@ -211,15 +198,13 @@ class MoldProcessPanel(QWidget):
     def onOptimizeOrientationClick(self):
         self.optimizeOrientationButton.setEnabled(False)
         optType = "milling" if self.millingRadio.isChecked() else "printing"
-        self.statusLabel.setText(f"正在执行方向优化({optType})...")
-        self.statusLabel.setStyleSheet("color: #0078d4; padding: 5px;")
+        self.statusMessageChanged.emit(f"正在执行方向优化({optType})...")
         self.intentOptimizeOrientation.emit({"optimizationType": optType})
 
     def onAdjustStructureClick(self):
         self.adjustStructureButton.setEnabled(False)
         val = self.surfaceOffsetSpinBox.value()
-        self.statusLabel.setText(f"正在执行表面偏移({val} mm)...")
-        self.statusLabel.setStyleSheet("color: #0078d4; padding: 5px;")
+        self.statusMessageChanged.emit(f"正在执行表面偏移({val} mm)...")
         self.intentAdjustStructure.emit({"offsetValue": val})
 
     def onModelLoadedSuccess(self):
@@ -230,7 +215,7 @@ class MoldProcessPanel(QWidget):
         self.addGatingButton.setEnabled(True)
         self.optimizeOrientationButton.setEnabled(False)
         self.adjustStructureButton.setEnabled(False)
-        self._updateStatusText("模型已加载, 可以添加浇道或生成模具")
+        self.statusMessageChanged.emit("模型已加载，可以添加浇道或生成模具")
 
     def onMoldGeneratedSuccess(self):
         self.statusFlags["molded"] = True
@@ -238,7 +223,7 @@ class MoldProcessPanel(QWidget):
         self.addGatingButton.setEnabled(True)
         self.optimizeOrientationButton.setEnabled(True)
         self.adjustStructureButton.setEnabled(True)
-        self._updateStatusText()
+        self.statusMessageChanged.emit(self._buildStatusText())
         QMessageBox.information(self, "成功", "模具生成完成")
 
     def onGatingAddedSuccess(self):
@@ -246,19 +231,19 @@ class MoldProcessPanel(QWidget):
         self.statusFlags["molded"] = False
         self.addGatingButton.setEnabled(True)
         self.generateMoldButton.setEnabled(True)
-        self._updateStatusText()
-        QMessageBox.information(self, "成功", "浇道添加完成, 请继续生成模具")
+        self.statusMessageChanged.emit(self._buildStatusText())
+        QMessageBox.information(self, "成功", "浇道添加完成，请继续生成模具")
 
     def onOrientationOptimizedSuccess(self, optType: str):
         self.statusFlags["oriented"] = True
         self.optimizeOrientationButton.setEnabled(True)
-        self._updateStatusText()
+        self.statusMessageChanged.emit(self._buildStatusText())
         QMessageBox.information(self, "提示", f"方向优化已完成 ({optType})")
 
     def onStructureAdjustedSuccess(self, offsetVal: float):
         self.statusFlags["adjusted"] = True
         self.adjustStructureButton.setEnabled(True)
-        self._updateStatusText()
+        self.statusMessageChanged.emit(self._buildStatusText())
         QMessageBox.information(self, "提示", f"表面偏移已完成 ({offsetVal} mm)")
 
     def onProcessError(self, title: str, errMsg: str):
@@ -268,9 +253,7 @@ class MoldProcessPanel(QWidget):
         if self.statusFlags["molded"]:
             self.optimizeOrientationButton.setEnabled(True)
             self.adjustStructureButton.setEnabled(True)
-
-        self.statusLabel.setText(f"✗ {title}")
-        self.statusLabel.setStyleSheet("color: red; padding: 5px;")
+        self.statusMessageChanged.emit(f"✗ {title}")
         QMessageBox.critical(self, title, f"{title}:\n{errMsg}")
 
     def loadConfiguration(self, configDict):
@@ -289,20 +272,13 @@ class MoldProcessPanel(QWidget):
             "sprueInletOffset": self.sprueOffsetSpinBox.value(),
         }
 
-    def _updateStatusText(self, defaultMsg=None):
-        if defaultMsg:
-            self.statusLabel.setText(defaultMsg)
-            self.statusLabel.setStyleSheet("color: #0078d4; padding: 5px;")
-            return
-
+    def _buildStatusText(self) -> str:
         parts = []
         if self.statusFlags["molded"]: parts.append("✓ 模具已生成")
         if self.statusFlags["gated"]: parts.append("✓ 浇道已添加")
         if self.statusFlags["oriented"]: parts.append("✓ 方向已优化")
         if self.statusFlags["adjusted"]: parts.append("✓ 表面已偏移")
-
-        self.statusLabel.setText(" | ".join(parts))
-        self.statusLabel.setStyleSheet("color: green; padding: 5px; font-weight: bold;")
+        return " | ".join(parts)
 
     def getStylesheet(self) -> str:
         return """

@@ -47,6 +47,7 @@ class MainController(QObject):
         self.mainWindow.intentGenerateCnc.connect(self.handleGenerateCnc)
         self.moldController.modelLoadedPath.connect(self._onModelLoaded)
         self.moldController.moldGenerated.connect(self._onMoldGeneratedForCnc)
+        self.mainWindow.moldProcessPanel.statusMessageChanged.connect(self.mainWindow.setStatusText)
 
     def _updateTimer(self):
         self.elapsedTime += timedelta(seconds=1)
