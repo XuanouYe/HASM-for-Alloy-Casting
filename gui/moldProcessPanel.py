@@ -4,7 +4,7 @@ from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QPushButton, QLabel, QDoubleSpinBox, QGroupBox,
-    QRadioButton, QButtonGroup, QMessageBox, QFileDialog
+    QRadioButton, QButtonGroup, QMessageBox, QFileDialog, QScrollArea
 )
 from controlConfig import ConfigManager
 
@@ -30,17 +30,26 @@ class MoldProcessPanel(QWidget):
         self.initUI()
 
     def initUI(self):
-        mainLayout = QVBoxLayout()
-        mainLayout.setSpacing(15)
-        mainLayout.setContentsMargins(10, 10, 10, 10)
+        outerLayout = QVBoxLayout()
+        outerLayout.setContentsMargins(0, 0, 0, 0)
+        outerLayout.setSpacing(0)
 
         titleLabel = QLabel("模具生成与处理")
         titleFont = QFont()
         titleFont.setPointSize(12)
         titleFont.setBold(True)
         titleLabel.setFont(titleFont)
+        outerLayout.addWidget(titleLabel)
 
-        mainLayout.addWidget(titleLabel)
+        scrollArea = QScrollArea()
+        scrollArea.setWidgetResizable(True)
+        scrollArea.setFrameShape(QScrollArea.NoFrame)
+
+        contentWidget = QWidget()
+        mainLayout = QVBoxLayout(contentWidget)
+        mainLayout.setSpacing(15)
+        mainLayout.setContentsMargins(10, 10, 10, 10)
+
         mainLayout.addWidget(self.createLoadModelGroup())
         mainLayout.addWidget(self.createAddGatingGroup())
         mainLayout.addWidget(self.createMoldGenerationGroup())
@@ -49,7 +58,10 @@ class MoldProcessPanel(QWidget):
         mainLayout.addWidget(self.createStatusDisplay())
         mainLayout.addStretch()
 
-        self.setLayout(mainLayout)
+        scrollArea.setWidget(contentWidget)
+        outerLayout.addWidget(scrollArea, 1)
+
+        self.setLayout(outerLayout)
         self.setStyleSheet(self.getStylesheet())
 
     def createLoadModelGroup(self) -> QGroupBox:

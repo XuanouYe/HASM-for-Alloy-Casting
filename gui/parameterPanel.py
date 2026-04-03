@@ -77,30 +77,44 @@ class ProcessParameterPanel(QWidget):
 
     def createCastingParametersTab(self) -> QWidget:
         widget = QWidget()
-        layout = QFormLayout()
-
+        mainLayout = QVBoxLayout(widget)
+        mainLayout.setContentsMargins(0, 0, 0, 0)
+        scrollArea = QScrollArea()
+        scrollArea.setWidgetResizable(True)
+        scrollArea.setFrameShape(QScrollArea.NoFrame)
+        contentWidget = QWidget()
+        layout = QFormLayout(contentWidget)
+        layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        layout.setLabelAlignment(Qt.AlignRight)
         castingSchema = parameterSchema.get("casting", {})
         for paramName, paramSpec in castingSchema.items():
             control = self.createControlForParameter("casting", paramName, paramSpec)
             if control:
                 label = QLabel(f"{paramSpec.get('description', paramName)}:")
                 layout.addRow(label, control)
-
-        widget.setLayout(layout)
+        scrollArea.setWidget(contentWidget)
+        mainLayout.addWidget(scrollArea)
         return widget
 
     def createSubtractiveParametersTab(self) -> QWidget:
         widget = QWidget()
-        layout = QFormLayout()
-
+        mainLayout = QVBoxLayout(widget)
+        mainLayout.setContentsMargins(0, 0, 0, 0)
+        scrollArea = QScrollArea()
+        scrollArea.setWidgetResizable(True)
+        scrollArea.setFrameShape(QScrollArea.NoFrame)
+        contentWidget = QWidget()
+        layout = QFormLayout(contentWidget)
+        layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        layout.setLabelAlignment(Qt.AlignRight)
         subtractiveSchema = parameterSchema.get("subtractive", {})
         for paramName, paramSpec in subtractiveSchema.items():
             control = self.createControlForParameter("subtractive", paramName, paramSpec)
             if control:
                 label = QLabel(f"{paramSpec.get('description', paramName)}:")
                 layout.addRow(label, control)
-
-        widget.setLayout(layout)
+        scrollArea.setWidget(contentWidget)
+        mainLayout.addWidget(scrollArea)
         return widget
 
     def createControlForParameter(self, section: str, paramName: str, paramSpec: Dict) -> Optional[QWidget]:

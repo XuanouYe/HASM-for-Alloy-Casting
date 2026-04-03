@@ -46,6 +46,7 @@ class MainWindow(QMainWindow):
         self.rightPanel = QWidget()
         rightLayout = QVBoxLayout()
         rightLayout.setContentsMargins(0, 0, 0, 0)
+        rightLayout.setSpacing(0)
 
         self.toggleRightPanelButton = QToolButton()
         self.toggleRightPanelButton.setText("◀")
@@ -69,6 +70,15 @@ class MainWindow(QMainWindow):
         tabWidget.addTab(self.parameterPanel, "工艺参数")
         scrollContentLayout.addWidget(tabWidget)
 
+        self.rightScrollContent.setLayout(scrollContentLayout)
+        self.rightScrollArea.setWidget(self.rightScrollContent)
+        rightLayout.addWidget(self.rightScrollArea, 1)
+
+        bottomPanel = QWidget()
+        bottomLayout = QVBoxLayout(bottomPanel)
+        bottomLayout.setContentsMargins(4, 4, 4, 4)
+        bottomLayout.setSpacing(6)
+
         self.unifiedConfigGroup = QGroupBox("配置文件")
         unifiedConfigLayout = QHBoxLayout()
         self.loadUnifiedConfigButton = QPushButton("加载配置")
@@ -82,26 +92,22 @@ class MainWindow(QMainWindow):
         unifiedConfigLayout.addWidget(self.resetUnifiedConfigButton)
         unifiedConfigLayout.addStretch()
         self.unifiedConfigGroup.setLayout(unifiedConfigLayout)
-        scrollContentLayout.addWidget(self.unifiedConfigGroup)
+        bottomLayout.addWidget(self.unifiedConfigGroup)
 
         gcodeGroup = QGroupBox("制造文件")
         gcodeLayout = QVBoxLayout()
         self.generateGcodeButton = QPushButton("生成FDM G代码")
-        self.generateGcodeButton.setEnabled(False)  # 默认禁用，由 Controller 控制状态
+        self.generateGcodeButton.setEnabled(False)
         self.generateGcodeButton.clicked.connect(self.onGenerateGcodeClicked)
         gcodeLayout.addWidget(self.generateGcodeButton)
-
         self.generateCncButton = QPushButton("生成CNC G代码")
         self.generateCncButton.setEnabled(False)
         self.generateCncButton.clicked.connect(self.onGenerateCncClicked)
         gcodeLayout.addWidget(self.generateCncButton)
-
         gcodeGroup.setLayout(gcodeLayout)
-        scrollContentLayout.addWidget(gcodeGroup)
-        scrollContentLayout.addStretch()
-        self.rightScrollContent.setLayout(scrollContentLayout)
-        self.rightScrollArea.setWidget(self.rightScrollContent)
-        rightLayout.addWidget(self.rightScrollArea, 1)
+        bottomLayout.addWidget(gcodeGroup)
+
+        rightLayout.addWidget(bottomPanel)
 
         self.rightPanel.setLayout(rightLayout)
         self.rightPanelCollapsed = False
