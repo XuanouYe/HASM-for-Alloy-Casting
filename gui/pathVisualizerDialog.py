@@ -3,12 +3,14 @@ import pyvista as pv
 import vtk
 import numpy as np
 from pyvistaqt import QtInteractor
+from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QCheckBox
 
 
 class PathVisualizationDialog(QDialog):
     def __init__(self, targetMesh: trimesh.Trimesh, clData: dict, parent=None):
         super().__init__(parent)
+        self.setAttribute(Qt.WA_DeleteOnClose)
         self.setWindowTitle("CNC 刀轨可视化")
         self.resize(1024, 768)
         self.targetMesh = targetMesh
@@ -18,6 +20,10 @@ class PathVisualizationDialog(QDialog):
 
         self.initUI()
         self.renderPaths()
+
+    def closeEvent(self, event):
+        self.plotter.close()
+        super().closeEvent(event)
 
     def initUI(self):
         mainLayout = QVBoxLayout(self)
