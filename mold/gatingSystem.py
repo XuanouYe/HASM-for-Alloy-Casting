@@ -34,9 +34,10 @@ class AutoGatingSystem:
         if isinstance(mesh, trimesh.Scene):
             mesh = mesh.dump(concatenate=True)
         self._originalMesh = mesh
-        self.minRadius = 3.0
         self.velocityLimit = 500.0
-        self.bufferDistance = 5.0
+        self.modelScale = float(np.max(self._originalMesh.bounding_box.extents))
+        self.minRadius = max(2.5, self.modelScale * 0.05)
+        self.bufferDistance = self.modelScale * 0.15
         config = config or {}
         self.targetFillTime = config.get('targetFillTime', 5.0)
         self.sprueInletOffset = config.get('sprueInletOffset', 5.0)
