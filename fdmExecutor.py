@@ -128,6 +128,18 @@ class CuraEngineController:
         with open(filePath, 'w') as f:
             f.writelines(filteredLines)
 
+    def insertWorkCoordinateSystem(self, filePath: str) -> None:
+        with open(filePath, 'r') as f:
+            lines = f.readlines()
+        insertIndex = 0
+        for i, line in enumerate(lines):
+            if line.strip() and not line.strip().startswith(';'):
+                insertIndex = i
+                break
+        lines.insert(insertIndex, 'G54\n')
+        with open(filePath, 'w') as f:
+            f.writelines(lines)
+
     def applyRetractionCompensation(self, filePath: str, bufferLength: float, retractDist: float,
                                     reloadSpeed: float, retractSpeedMms: float,
                                     reloadExtraRatio: float, minTravelDist: float) -> None:
@@ -335,6 +347,7 @@ class CuraEngineController:
         dangerousCommands = {'M18', 'M84', 'M81', 'G28'}
         motionCommands = {'G0', 'G1', 'G2', 'G3'}
         dangerousAxes = {'X', 'Y', 'Z', 'A', 'B', 'U', 'V', 'W'}
+        endRetractInserted = False
 
         for line in lines:
             lineStripped = line.strip()
@@ -353,6 +366,10 @@ class CuraEngineController:
             commandName = commandTokens[0]
 
             if commandName in dangerousCommands:
+                if insideEndSection and not endRetractInserted:
+                    processedLines.append('C-5\n')
+                    processedLines.append('G1 Z50\n')
+                    endRetractInserted = True
                 continue
 
             if insideEndSection and commandName in motionCommands:
@@ -362,9 +379,17 @@ class CuraEngineController:
                         hasDangerousAxis = True
                         break
                 if hasDangerousAxis:
+                    if not endRetractInserted:
+                        processedLines.append('C-5\n')
+                        processedLines.append('G1 Z50\n')
+                        endRetractInserted = True
                     continue
 
             processedLines.append(line)
+
+        if insideEndSection and not endRetractInserted:
+            processedLines.append('C-5\n')
+            processedLines.append('G1 Z50\n')
 
         with open(filePath, 'w') as f:
             f.writelines(processedLines)
@@ -469,6 +494,7 @@ class CuraEngineController:
         scaleFactor = float((additiveConfig or {}).get('extrusionScaleFactor', 1.0))
         self.replaceExtruderAxis(windowsOutputPath, extrusionScaleFactor=scaleFactor)
         self.removeUnsafeEndCommands(windowsOutputPath)
+        self.insertWorkCoordinateSystem(windowsOutputPath)
         self.updateGcodeBoundingBox(windowsOutputPath)
         return windowsOutputPath
 
