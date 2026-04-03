@@ -337,6 +337,7 @@ class AutoGatingSystem:
         neckLength = 2.0 * runnerRadius
         neckDiameter = 2.0 * runnerRadius
         riserDiameter = float(np.clip(4.0 * runnerRadius, 2.5 * runnerRadius, float(np.min(bboxExtents)) * 0.4))
+        riserDiameter = max(riserDiameter, neckDiameter * 1.5)
         minRiserTopZ = attachmentZ + neckLength + runnerRadius
         if riserTopZ <= minRiserTopZ:
             riserTopZ = max(minRiserTopZ, sprueInletZ)
