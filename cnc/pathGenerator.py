@@ -150,6 +150,7 @@ class FiveAxisCncPathGenerator:
 
             strategyCtx = dict(stepParam)
             strategyCtx["_toolpathEngine"] = self.toolpathEngine
+            strategyCtx["bottomClearance"] = float(toolParams.get("bottomClearance", toolRadius * 2.0))
             rawPathsLocal = strategy.generate(rotatedTarget, trimesh.Trimesh(), toolRadius, strategyCtx, safetyMargin)
 
             if collisionEngine is not None:
