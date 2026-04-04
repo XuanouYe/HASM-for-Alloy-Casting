@@ -75,7 +75,7 @@ class SupportRegionDetector:
     def _getMergedGeomsBelow(self, layerGeoms: List[Optional[BaseGeometry]],
                              currentLayerIdx: int, layersBelow: int,
                              offsetDist: float) -> Optional[BaseGeometry]:
-  testModels/hollow.cylinder.down.stl      merged = None
+        merged = None
         for offset in range(1, min(layersBelow + 1, currentLayerIdx + 1)):
             g = layerGeoms[currentLayerIdx - offset]
             if g is None or g.is_empty:
