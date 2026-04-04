@@ -8,7 +8,7 @@ if str(rootDir) not in sys.path:
     sys.path.append(str(rootDir))
 
 from controlConfig import parameterSchema
-from cnc.__main__ import generateCncJobInterface
+from cnc.interface import generateCncJobInterface
 from cnc.machineKinematics import XyzacTrtKinematics
 from cnc.pathLinker import ClPathLinker
 
