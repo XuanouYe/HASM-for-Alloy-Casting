@@ -121,6 +121,16 @@ class FiveAxisCncPathGenerator:
             outputSegmentId += 1
         return segments, allClPoints, outputSegmentId, pointId
 
+    def _emptyStep(self, stepId: int, stepType: str, toolParams: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "stepId": int(stepId),
+            "stepType": str(stepType),
+            "toolParams": toolParams,
+            "motionPolicy": "externalPost",
+            "segments": [],
+            "clPoints": []
+        }
+
     def generateStepWithAxes(self, stepId: int, stepType: str, targetMesh: trimesh.Trimesh,
                               collisionEngine: SweptVolumeCollisionEngine, toolParams: Dict[str, Any],
                               stepParam: Dict[str, Any], candidateAxes: List[np.ndarray],
@@ -207,41 +217,58 @@ class FiveAxisCncPathGenerator:
         toolRadius = float(toolParams.get("diameter", 6.0)) * 0.5
         voxelSize = float(toolParams.get("sdfVoxelSize", max(toolRadius * 0.15, 0.2)))
 
+        enableStep1 = bool(axisStrategyParams.get("enableStep1ShellRemoval", True))
+        enableStep2 = bool(axisStrategyParams.get("enableStep2RiserRemoval", True))
+        enableStep3 = bool(axisStrategyParams.get("enableStep3PartFinishing", True))
+        enableStep4 = bool(axisStrategyParams.get("enableStep4GateRemoval", True))
+
         flatTool = self.toolpathEngine.buildFlatEndMillTool(toolParams)
         clearanceVal = toolRadius + safetyMargin
 
-        protectStep1 = concatenateMeshes([partMesh, gateMesh, riserMesh])
-        engine1 = self.toolpathEngine.buildSweptCollisionEngine(flatTool, [protectStep1], [clearanceVal], voxelSize)
-        step1 = self.generateStepWithAxes(1, "shellRemoval", moldMesh, engine1, toolParams, stepParams[0], candidateAxes, globalMinZ, safetyMargin)
+        if enableStep1:
+            protectStep1 = concatenateMeshes([partMesh, gateMesh, riserMesh])
+            engine1 = self.toolpathEngine.buildSweptCollisionEngine(flatTool, [protectStep1], [clearanceVal], voxelSize)
+            step1 = self.generateStepWithAxes(1, "shellRemoval", moldMesh, engine1, toolParams, stepParams[0], candidateAxes, globalMinZ, safetyMargin)
+        else:
+            step1 = self._emptyStep(1, "shellRemoval", toolParams)
 
-        protectStep2 = concatenateMeshes([partMesh, gateMesh])
-        engine2 = self.toolpathEngine.buildSweptCollisionEngine(flatTool, [protectStep2], [clearanceVal], voxelSize)
-        step2 = self.generateStepWithAxes(2, "riserRemoval", riserMesh, engine2, toolParams, stepParams[1],
-                                          [np.array([0.0, 0.0, 1.0], dtype=float)], globalMinZ, safetyMargin)
+        if enableStep2:
+            protectStep2 = concatenateMeshes([partMesh, gateMesh])
+            engine2 = self.toolpathEngine.buildSweptCollisionEngine(flatTool, [protectStep2], [clearanceVal], voxelSize)
+            step2 = self.generateStepWithAxes(2, "riserRemoval", riserMesh, engine2, toolParams, stepParams[1],
+                                              [np.array([0.0, 0.0, 1.0], dtype=float)], globalMinZ, safetyMargin)
+        else:
+            step2 = self._emptyStep(2, "riserRemoval", toolParams)
 
-        finishStock = float(stepParams[2].get("finishStock", 0.03))
-        from .implicitGeometry import buildOffsetSdf
-        partInnerSdf = buildOffsetSdf(partMesh, finishStock, voxelSize)
-        engine3 = SweptVolumeCollisionEngine(flatTool, [partInnerSdf], [clearanceVal])
-        step3Axes = self.selectAxesGreedyCoverage(partMesh, candidateAxes, axisStrategyParams)
-        step3ConfigX = dict(stepParams[2])
-        step3ConfigX["scanAxis"] = "x"
-        step3X = self.generateStepWithAxes(3, "partFinishing", partMesh, engine3, toolParams, step3ConfigX, step3Axes, globalMinZ, safetyMargin)
-        step3ConfigY = dict(stepParams[2])
-        step3ConfigY["scanAxis"] = "y"
-        step3Y = self.generateStepWithAxes(3, "partFinishing", partMesh, engine3, toolParams, step3ConfigY, step3Axes, globalMinZ, safetyMargin)
-        step3 = {
-            "stepId": 3,
-            "stepType": "partFinishing",
-            "toolParams": step3X["toolParams"],
-            "motionPolicy": "externalPost",
-            "segments": step3X["segments"] + step3Y["segments"],
-            "clPoints": step3X["clPoints"] + step3Y["clPoints"]
-        }
+        if enableStep3:
+            finishStock = float(stepParams[2].get("finishStock", 0.03))
+            from .implicitGeometry import buildOffsetSdf
+            partInnerSdf = buildOffsetSdf(partMesh, finishStock, voxelSize)
+            engine3 = SweptVolumeCollisionEngine(flatTool, [partInnerSdf], [clearanceVal])
+            step3Axes = self.selectAxesGreedyCoverage(partMesh, candidateAxes, axisStrategyParams)
+            step3ConfigX = dict(stepParams[2])
+            step3ConfigX["scanAxis"] = "x"
+            step3X = self.generateStepWithAxes(3, "partFinishing", partMesh, engine3, toolParams, step3ConfigX, step3Axes, globalMinZ, safetyMargin)
+            step3ConfigY = dict(stepParams[2])
+            step3ConfigY["scanAxis"] = "y"
+            step3Y = self.generateStepWithAxes(3, "partFinishing", partMesh, engine3, toolParams, step3ConfigY, step3Axes, globalMinZ, safetyMargin)
+            step3 = {
+                "stepId": 3,
+                "stepType": "partFinishing",
+                "toolParams": step3X["toolParams"],
+                "motionPolicy": "externalPost",
+                "segments": step3X["segments"] + step3Y["segments"],
+                "clPoints": step3X["clPoints"] + step3Y["clPoints"]
+            }
+        else:
+            step3 = self._emptyStep(3, "partFinishing", toolParams)
 
-        engine4 = self.toolpathEngine.buildSweptCollisionEngine(flatTool, [partMesh], [clearanceVal], voxelSize)
-        step4 = self.generateStepWithAxes(4, "gateRemoval", gateMesh, engine4, toolParams, stepParams[3],
-                                          [np.array([0.0, 0.0, 1.0], dtype=float)], globalMinZ, safetyMargin)
+        if enableStep4:
+            engine4 = self.toolpathEngine.buildSweptCollisionEngine(flatTool, [partMesh], [clearanceVal], voxelSize)
+            step4 = self.generateStepWithAxes(4, "gateRemoval", gateMesh, engine4, toolParams, stepParams[3],
+                                              [np.array([0.0, 0.0, 1.0], dtype=float)], globalMinZ, safetyMargin)
+        else:
+            step4 = self._emptyStep(4, "gateRemoval", toolParams)
 
         outputData = {"version": self.version, "wcsId": str(wcsId), "steps": [step1, step2, step3, step4]}
         if jobId is not None:

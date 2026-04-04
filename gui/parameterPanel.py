@@ -104,18 +104,54 @@ class ProcessParameterPanel(QWidget):
         scrollArea.setWidgetResizable(True)
         scrollArea.setFrameShape(QScrollArea.NoFrame)
         contentWidget = QWidget()
-        layout = QFormLayout(contentWidget)
+        contentLayout = QVBoxLayout(contentWidget)
+        contentLayout.setContentsMargins(4, 4, 4, 4)
+        contentLayout.setSpacing(6)
+
+        stepEnableGroup = self.createStepEnableGroup()
+        contentLayout.addWidget(stepEnableGroup)
+
+        paramForm = QWidget()
+        layout = QFormLayout(paramForm)
         layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
         layout.setLabelAlignment(Qt.AlignRight)
         subtractiveSchema = parameterSchema.get("subtractive", {})
+        skipKeys = {"enableStep1ShellRemoval", "enableStep2RiserRemoval", "enableStep3PartFinishing", "enableStep4GateRemoval"}
         for paramName, paramSpec in subtractiveSchema.items():
+            if paramName in skipKeys:
+                continue
             control = self.createControlForParameter("subtractive", paramName, paramSpec)
             if control:
                 label = QLabel(f"{paramSpec.get('description', paramName)}:")
                 layout.addRow(label, control)
+        contentLayout.addWidget(paramForm)
+        contentLayout.addStretch()
+
         scrollArea.setWidget(contentWidget)
         mainLayout.addWidget(scrollArea)
         return widget
+
+    def createStepEnableGroup(self) -> QGroupBox:
+        groupBox = QGroupBox("加工步骤选择")
+        groupLayout = QFormLayout()
+        stepItems = [
+            ("enableStep1ShellRemoval",  "Step 1  模壳去除"),
+            ("enableStep2RiserRemoval",  "Step 2  冒口去除"),
+            ("enableStep3PartFinishing", "Step 3  零件精加工"),
+            ("enableStep4GateRemoval",   "Step 4  浇口去除"),
+        ]
+        subtractiveSchema = parameterSchema.get("subtractive", {})
+        for paramName, labelText in stepItems:
+            paramSpec = subtractiveSchema.get(paramName, {})
+            checkBox = QCheckBox()
+            checkBox.setChecked(paramSpec.get("default", True))
+            checkBox.setToolTip(paramSpec.get("description", labelText))
+            checkBox.stateChanged.connect(self.onParameterChanged)
+            controlKey = f"subtractive.{paramName}"
+            self.parameterControls[controlKey] = checkBox
+            groupLayout.addRow(QLabel(f"{labelText}:"), checkBox)
+        groupBox.setLayout(groupLayout)
+        return groupBox
 
     def createControlForParameter(self, section: str, paramName: str, paramSpec: Dict) -> Optional[QWidget]:
         paramType = paramSpec.get("type")

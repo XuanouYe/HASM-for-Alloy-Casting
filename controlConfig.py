@@ -107,6 +107,10 @@ parameterSchema = {
         "coolantEnabled":           {"type": bool,                                "default": True,                   "required": False, "description": "启用冷却"},
         "coolantCode":              {"type": str,                                 "default": "M8",                   "required": False, "description": "冷却指令"},
         "feedrateMergeStrategy":    {"type": bool,                                "default": True,                   "required": False, "description": "进给合并策略"},
+        "enableStep1ShellRemoval":  {"type": bool,                                "default": True,                   "required": False, "description": "Step1 模壳去除"},
+        "enableStep2RiserRemoval":  {"type": bool,                                "default": True,                   "required": False, "description": "Step2 冒口去除"},
+        "enableStep3PartFinishing": {"type": bool,                                "default": True,                   "required": False, "description": "Step3 零件精加工"},
+        "enableStep4GateRemoval":   {"type": bool,                                "default": True,                   "required": False, "description": "Step4 浇口去除"},
         "kinematics": {
             "type": dict,
             "default": {
