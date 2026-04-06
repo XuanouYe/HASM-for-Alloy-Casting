@@ -14,11 +14,8 @@ stepTypeLabels = {
     "gateRemoval": "Step4 浇口去除"
 }
 
-MOTION_COLORS = {
-    "retract": "yellow",
-    "rapid": "cyan",
-    "approach": "lime",
-}
+CUT_LINE_WIDTH = 2.5
+LINK_LINE_WIDTH = 0.8
 
 
 class PathVisualizationDialog(QDialog):
@@ -87,6 +84,20 @@ class PathVisualizationDialog(QDialog):
             pvFaces = np.column_stack((np.full(len(faces), 3), faces)).flatten()
             return pv.PolyData(vertices, pvFaces)
 
+    def buildPolyLines(self, pairsList):
+        if not pairsList:
+            return None
+        pts = np.array(pairsList, dtype=float)
+        lineCount = len(pairsList) // 2
+        lines = np.empty((lineCount, 3), dtype=int)
+        lines[:, 0] = 2
+        lines[:, 1] = np.arange(0, len(pairsList), 2)
+        lines[:, 2] = np.arange(1, len(pairsList), 2)
+        mesh = pv.PolyData()
+        mesh.points = pts
+        mesh.lines = lines.flatten()
+        return mesh
+
     def renderPaths(self):
         pvMesh = self.buildMeshPolyData()
         self.plotter.add_mesh(
@@ -106,113 +117,70 @@ class PathVisualizationDialog(QDialog):
             if not clPoints:
                 continue
 
-            cutSegments: dict = {}
-            linkPairs: list = []
+            stepColor = stepColors[stepIndex % len(stepColors)]
             sortedPts = sorted(clPoints, key=lambda p: int(p.get("pointId", 0)))
+
+            cutPairs = []
+            linkPairs = []
 
             for ptIdx in range(len(sortedPts) - 1):
                 pt0 = sortedPts[ptIdx]
                 pt1 = sortedPts[ptIdx + 1]
                 motionType = str(pt0.get("motionType", "cut")).lower()
-                segId = pt0.get("segmentId", 0)
                 pos0 = list(pt0["position"])
                 pos1 = list(pt1["position"])
                 if motionType == "cut":
-                    cutSegments.setdefault(segId, [])
-                    if not cutSegments[segId]:
-                        cutSegments[segId].append(pos0)
-                    cutSegments[segId].append(pos1)
-                else:
-                    linkColor = MOTION_COLORS.get(motionType, "white")
-                    linkPairs.append((pos0, pos1, linkColor))
-
-            normalLines = []
-            for segId, segPositions in cutSegments.items():
-                displayPts = np.array(segPositions, dtype=float)
-                for k in range(len(displayPts) - 1):
-                    p1 = displayPts[k].tolist()
-                    p2 = displayPts[k + 1].tolist()
-                    if float(np.linalg.norm(np.array(p1) - np.array(p2))) < 1e-6:
+                    if float(np.linalg.norm(np.array(pos0) - np.array(pos1))) < 1e-6:
                         continue
-                    code = tree.IntersectWithLine(p1, p2, intersectPoints, None)
+                    code = tree.IntersectWithLine(pos0, pos1, intersectPoints, None)
                     if code != 0:
-                        allCollisionLines.extend([p1, p2])
+                        allCollisionLines.extend([pos0, pos1])
                     else:
-                        normalLines.extend([p1, p2])
+                        cutPairs.extend([pos0, pos1])
+                else:
+                    linkPairs.extend([pos0, pos1])
 
-            if normalLines:
-                pointArray = np.array(normalLines, dtype=float)
-                lineCount = len(normalLines) // 2
-                lineArray = np.empty((lineCount, 3), dtype=int)
-                lineArray[:, 0] = 2
-                lineArray[:, 1] = np.arange(0, len(normalLines), 2)
-                lineArray[:, 2] = np.arange(1, len(normalLines), 2)
-                pvLines = pv.PolyData()
-                pvLines.points = pointArray
-                pvLines.lines = lineArray.flatten()
-                color = stepColors[stepIndex % len(stepColors)]
-                actor = self.plotter.add_mesh(pvLines, color=color,
-                                              line_width=2.0, name=f"step_{stepIndex}")
+            cutMesh = self.buildPolyLines(cutPairs)
+            if cutMesh is not None:
+                actor = self.plotter.add_mesh(
+                    cutMesh, color=stepColor, line_width=CUT_LINE_WIDTH,
+                    name=f"cut_{stepIndex}")
                 self.stepActors[stepIndex] = actor
 
-            linkLinesByColor: dict = {}
-            for pos0, pos1, linkColor in linkPairs:
-                linkLinesByColor.setdefault(linkColor, []).extend([pos0, pos1])
-
-            stepLinkActors = {}
-            for linkColor, pts in linkLinesByColor.items():
-                pointArray = np.array(pts, dtype=float)
-                lineCount = len(pts) // 2
-                lineArray = np.empty((lineCount, 3), dtype=int)
-                lineArray[:, 0] = 2
-                lineArray[:, 1] = np.arange(0, len(pts), 2)
-                lineArray[:, 2] = np.arange(1, len(pts), 2)
-                pvLink = pv.PolyData()
-                pvLink.points = pointArray
-                pvLink.lines = lineArray.flatten()
+            linkMesh = self.buildPolyLines(linkPairs)
+            if linkMesh is not None:
                 linkActor = self.plotter.add_mesh(
-                    pvLink, color=linkColor, line_width=1.5,
-                    opacity=0.85, name=f"link_{stepIndex}_{linkColor}")
-                stepLinkActors[linkColor] = linkActor
-            self.linkActors[stepIndex] = stepLinkActors
+                    linkMesh, color=stepColor, line_width=LINK_LINE_WIDTH,
+                    opacity=0.6, name=f"link_{stepIndex}")
+                self.linkActors[stepIndex] = linkActor
 
         if allCollisionLines:
-            pointArray = np.array(allCollisionLines, dtype=float)
-            lineCount = len(allCollisionLines) // 2
-            lineArray = np.empty((lineCount, 3), dtype=int)
-            lineArray[:, 0] = 2
-            lineArray[:, 1] = np.arange(0, len(allCollisionLines), 2)
-            lineArray[:, 2] = np.arange(1, len(allCollisionLines), 2)
-            pvCollisionLines = pv.PolyData()
-            pvCollisionLines.points = pointArray
-            pvCollisionLines.lines = lineArray.flatten()
-            self.collisionActor = self.plotter.add_mesh(
-                pvCollisionLines, color="red", line_width=1.0,
-                opacity=0.3, name="collision_lines")
-            self.collisionActor.SetVisibility(False)
+            colMesh = self.buildPolyLines(allCollisionLines)
+            if colMesh is not None:
+                self.collisionActor = self.plotter.add_mesh(
+                    colMesh, color="red", line_width=1.0,
+                    opacity=0.3, name="collision_lines")
+                self.collisionActor.SetVisibility(False)
 
         self.plotter.reset_camera()
 
     def showAllSteps(self):
         for actor in self.stepActors.values():
             actor.SetVisibility(True)
-        for stepLinkActorMap in self.linkActors.values():
-            for actor in stepLinkActorMap.values():
-                actor.SetVisibility(self.showLinkCheck.isChecked())
+        for idx, actor in self.linkActors.items():
+            actor.SetVisibility(self.showLinkCheck.isChecked())
         self.plotter.render()
 
     def showStepOnly(self, stepIndex):
         for idx, actor in self.stepActors.items():
             actor.SetVisibility(idx == stepIndex)
-        for idx, stepLinkActorMap in self.linkActors.items():
-            for actor in stepLinkActorMap.values():
-                actor.SetVisibility(idx == stepIndex and self.showLinkCheck.isChecked())
+        for idx, actor in self.linkActors.items():
+            actor.SetVisibility(idx == stepIndex and self.showLinkCheck.isChecked())
         self.plotter.render()
 
     def toggleLinkVisibility(self, checked):
-        for stepLinkActorMap in self.linkActors.values():
-            for actor in stepLinkActorMap.values():
-                actor.SetVisibility(checked)
+        for actor in self.linkActors.values():
+            actor.SetVisibility(checked)
         self.plotter.render()
 
     def toggleCollision(self, checked):

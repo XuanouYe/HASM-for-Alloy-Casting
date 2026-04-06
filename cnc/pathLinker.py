@@ -5,19 +5,29 @@ import numpy as np
 
 
 def resolveOutwardAxis(toolAxis: List[float], pos: List[float],
-                       sceneCenter: List[float]) -> List[float]:
+                       collisionMesh) -> List[float]:
     ax, ay, az = [float(v) for v in toolAxis]
     axisLen = math.sqrt(ax * ax + ay * ay + az * az)
     if axisLen < 1e-9:
         return [0.0, 0.0, 1.0]
     ax, ay, az = ax / axisLen, ay / axisLen, az / axisLen
-    cx = float(pos[0]) - float(sceneCenter[0])
-    cy = float(pos[1]) - float(sceneCenter[1])
-    cz = float(pos[2]) - float(sceneCenter[2])
-    dotVal = ax * cx + ay * cy + az * cz
-    if dotVal < 0.0:
-        return [-ax, -ay, -az]
-    return [ax, ay, az]
+
+    if collisionMesh is None:
+        return [ax, ay, az]
+
+    try:
+        import trimesh
+        rayOrigin = np.array([[pos[0], pos[1], pos[2]]], dtype=float)
+        fwdDir = np.array([[ax, ay, az]], dtype=float)
+        bwdDir = np.array([[-ax, -ay, -az]], dtype=float)
+        intersector = trimesh.ray.ray_triangle.RayMeshIntersector(collisionMesh)
+        fwdHits = intersector.intersects_any(rayOrigin, fwdDir)
+        bwdHits = intersector.intersects_any(rayOrigin, bwdDir)
+        if fwdHits[0] and not bwdHits[0]:
+            return [-ax, -ay, -az]
+        return [ax, ay, az]
+    except Exception:
+        return [ax, ay, az]
 
 
 class ClPathLinker:
@@ -33,22 +43,18 @@ class ClPathLinker:
         self.retractAxisLength = float(linkerConfig.get("retractAxisLength", 10.0))
         self.retractCollisionMesh = linkerConfig.get("retractCollisionMesh", None)
         self.stepLinkingEnabled = linkerConfig.get("stepLinkingEnabled", {})
-        self._sceneCenter: Optional[List[float]] = None
+        self._intersector = None
+        if self.retractCollisionMesh is not None:
+            try:
+                import trimesh
+                self._intersector = trimesh.ray.ray_triangle.RayMeshIntersector(
+                    self.retractCollisionMesh)
+            except Exception:
+                self._intersector = None
 
     def processClData(self, clData: Dict[str, Any]) -> Dict[str, Any]:
         linkedData = deepcopy(clData)
         stepsList = linkedData.get("steps", [])
-        allPositions = [
-            p["position"]
-            for step in stepsList
-            for p in step.get("clPoints", [])
-            if "position" in p
-        ]
-        if allPositions:
-            arr = np.array(allPositions, dtype=float)
-            self._sceneCenter = arr.mean(axis=0).tolist()
-        else:
-            self._sceneCenter = [0.0, 0.0, 0.0]
         for stepItem in stepsList:
             stepType = str(stepItem.get("stepType", ""))
             allowDirect = bool(self.stepLinkingEnabled.get(stepType, True))
@@ -75,6 +81,9 @@ class ClPathLinker:
         startZ = float(startPt.get("position", [0.0, 0.0, 0.0])[2])
         return max(endZ, startZ) + safeHeight
 
+    def outwardAxisAt(self, pos: List[float], toolAxis: List[float]) -> List[float]:
+        return resolveOutwardAxis(toolAxis, pos, self.retractCollisionMesh)
+
     def computeRetractPointAlongAxis(self, pos: List[float], outwardAxis: List[float],
                                      retractLength: float) -> List[float]:
         ax, ay, az = [float(v) for v in outwardAxis]
@@ -89,13 +98,9 @@ class ClPathLinker:
             float(pos[2]) + az * retractLength,
         ]
 
-    def outwardAxisAt(self, pos: List[float], toolAxis: List[float]) -> List[float]:
-        center = self._sceneCenter if self._sceneCenter is not None else [0.0, 0.0, 0.0]
-        return resolveOutwardAxis(toolAxis, pos, center)
-
     def safeRetractLength(self, pos: List[float], outwardAxis: List[float],
                           desiredLength: float) -> float:
-        if self.retractCollisionMesh is None:
+        if self._intersector is None:
             return desiredLength
         try:
             import vtk
