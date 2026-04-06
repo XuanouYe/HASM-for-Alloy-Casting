@@ -7,6 +7,14 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QCheckBox
 
 
+stepTypeLabels = {
+    "shellRemoval": "Step1 模壳去除",
+    "riserRemoval": "Step2 冒口去除",
+    "partFinishing": "Step3 零件精加工",
+    "gateRemoval": "Step4 浇口去除"
+}
+
+
 class PathVisualizationDialog(QDialog):
     def __init__(self, targetMesh: trimesh.Trimesh, clData: dict, parent=None):
         super().__init__(parent)
@@ -35,17 +43,21 @@ class PathVisualizationDialog(QDialog):
 
         controlLayout = QHBoxLayout()
 
-        self.showAllButton = QPushButton("显示全部(0)")
+        stepCount = len(self.clData.get("steps", []))
+        self.showAllButton = QPushButton(f"显示全部({stepCount})")
         self.showAllButton.clicked.connect(self.showAllSteps)
         controlLayout.addWidget(self.showAllButton)
 
         self.stepButtons = []
         steps = self.clData.get("steps", [])
-        for i, step in enumerate(steps):
-            btn = QPushButton(f"步骤 {i + 1}")
-            btn.clicked.connect(lambda checked, idx=i: self.showStepOnly(idx))
-            controlLayout.addWidget(btn)
-            self.stepButtons.append(btn)
+        for stepIndex, stepData in enumerate(steps):
+            stepType = stepData.get("stepType", "")
+            stepId = stepData.get("stepId", stepIndex + 1)
+            buttonText = stepTypeLabels.get(stepType, f"步骤 {stepId}")
+            button = QPushButton(buttonText)
+            button.clicked.connect(lambda checked, idx=stepIndex: self.showStepOnly(idx))
+            controlLayout.addWidget(button)
+            self.stepButtons.append(button)
 
         self.collisionCheck = QCheckBox("显示碰撞路径(C)")
         self.collisionCheck.setChecked(False)
@@ -62,8 +74,8 @@ class PathVisualizationDialog(QDialog):
         except ImportError:
             vertices = self.targetMesh.vertices
             faces = self.targetMesh.faces
-            pv_faces = np.column_stack((np.full(len(faces), 3), faces)).flatten()
-            pvMesh = pv.PolyData(vertices, pv_faces)
+            pvFaces = np.column_stack((np.full(len(faces), 3), faces)).flatten()
+            pvMesh = pv.PolyData(vertices, pvFaces)
 
         self.plotter.add_mesh(
             pvMesh,
@@ -82,66 +94,71 @@ class PathVisualizationDialog(QDialog):
         colors = ["red", "green", "blue", "orange", "purple", "cyan"]
         allCollisionLines = []
 
-        for stepIndex, step in enumerate(self.clData.get("steps", [])):
-            clPoints = step.get("clPoints", [])
+        for stepIndex, stepData in enumerate(self.clData.get("steps", [])):
+            clPoints = stepData.get("clPoints", [])
             if not clPoints:
                 continue
 
             segments = {}
-            for p in clPoints:
-                sid = p.get("segmentId", 0)
-                segments.setdefault(sid, []).append(p["position"])
+            for pointData in clPoints:
+                segmentId = pointData.get("segmentId", 0)
+                segments.setdefault(segmentId, []).append(pointData["position"])
 
-            normal_lines = []
+            normalLines = []
 
-            for sid, pts in segments.items():
-                if len(pts) < 2:
+            for _, points in segments.items():
+                if len(points) < 2:
                     continue
 
-                for i in range(len(pts) - 1):
-                    p1 = pts[i]
-                    p2 = pts[i + 1]
+                for pointIndex in range(len(points) - 1):
+                    point1 = points[pointIndex]
+                    point2 = points[pointIndex + 1]
 
-                    dist = np.linalg.norm(np.array(p1) - np.array(p2))
-                    if dist < 1e-6:
+                    distance = np.linalg.norm(np.array(point1) - np.array(point2))
+                    if distance < 1e-6:
                         continue
 
-                    code = tree.IntersectWithLine(p1, p2, intersectPoints, None)
+                    code = tree.IntersectWithLine(point1, point2, intersectPoints, None)
                     if code != 0:
-                        allCollisionLines.extend([p1, p2])
+                        allCollisionLines.extend([point1, point2])
                     else:
-                        normal_lines.extend([p1, p2])
+                        normalLines.extend([point1, point2])
 
-            if normal_lines:
-                n_pts = len(normal_lines)
-                pts_arr = np.array(normal_lines)
-                lines_arr = np.empty((n_pts // 2, 3), dtype=int)
-                lines_arr[:, 0] = 2
-                lines_arr[:, 1] = np.arange(0, n_pts, 2)
-                lines_arr[:, 2] = np.arange(1, n_pts, 2)
+            if normalLines:
+                pointCount = len(normalLines)
+                pointArray = np.array(normalLines)
+                lineArray = np.empty((pointCount // 2, 3), dtype=int)
+                lineArray[:, 0] = 2
+                lineArray[:, 1] = np.arange(0, pointCount, 2)
+                lineArray[:, 2] = np.arange(1, pointCount, 2)
 
                 pvLines = pv.PolyData()
-                pvLines.points = pts_arr
-                pvLines.lines = lines_arr.flatten()
+                pvLines.points = pointArray
+                pvLines.lines = lineArray.flatten()
 
                 color = colors[stepIndex % len(colors)]
                 actor = self.plotter.add_mesh(pvLines, color=color, line_width=2.0, name=f"step_{stepIndex}")
                 self.stepActors[stepIndex] = actor
 
         if allCollisionLines:
-            n_pts = len(allCollisionLines)
-            pts_arr = np.array(allCollisionLines)
-            lines_arr = np.empty((n_pts // 2, 3), dtype=int)
-            lines_arr[:, 0] = 2
-            lines_arr[:, 1] = np.arange(0, n_pts, 2)
-            lines_arr[:, 2] = np.arange(1, n_pts, 2)
+            pointCount = len(allCollisionLines)
+            pointArray = np.array(allCollisionLines)
+            lineArray = np.empty((pointCount // 2, 3), dtype=int)
+            lineArray[:, 0] = 2
+            lineArray[:, 1] = np.arange(0, pointCount, 2)
+            lineArray[:, 2] = np.arange(1, pointCount, 2)
 
-            pvColLines = pv.PolyData()
-            pvColLines.points = pts_arr
-            pvColLines.lines = lines_arr.flatten()
+            pvCollisionLines = pv.PolyData()
+            pvCollisionLines.points = pointArray
+            pvCollisionLines.lines = lineArray.flatten()
 
-            self.collisionActor = self.plotter.add_mesh(pvColLines, color="red", line_width=1.0, opacity=0.3,
-                                                        name="collision_lines")
+            self.collisionActor = self.plotter.add_mesh(
+                pvCollisionLines,
+                color="red",
+                line_width=1.0,
+                opacity=0.3,
+                name="collision_lines"
+            )
             self.collisionActor.SetVisibility(False)
 
         self.plotter.reset_camera()
@@ -152,8 +169,8 @@ class PathVisualizationDialog(QDialog):
         self.plotter.render()
 
     def showStepOnly(self, stepIndex):
-        for idx, actor in self.stepActors.items():
-            actor.SetVisibility(idx == stepIndex)
+        for currentIndex, actor in self.stepActors.items():
+            actor.SetVisibility(currentIndex == stepIndex)
         self.plotter.render()
 
     def toggleCollision(self, checked):

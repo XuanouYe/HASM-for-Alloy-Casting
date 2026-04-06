@@ -4,6 +4,7 @@ from cnc.geometryUtils import concatenateMeshes, generateHemisphereAxes, generat
 from cnc.pathGenerator import FiveAxisCncPathGenerator
 from cnc.visualization import PathVisualizer
 
+
 def generateCncJobInterface(partStl: str, moldStl: str, gateStl: str, riserStl: str,
                              outputJsonPath: str, processConfig: Dict[str, Any],
                              jobId: str = "JOB_AUTO", visualize: bool = False) -> Dict[str, Any]:
@@ -36,50 +37,77 @@ def generateCncJobInterface(partStl: str, moldStl: str, gateStl: str, riserStl: 
     candidateAxes = generateHemisphereAxes(axisCount, minAxisZ) if axisMode == "hemisphere" else subCfg.get("candidateAxes", [[0.0, 0.0, 1.0]])
     step3CandidateAxes = generateSphereAxes(max(axisCount, 64)) if axisMode == "hemisphere" else candidateAxes
 
-    stepParams = [
+    enableStep1 = bool(subCfg.get("enableStep1ShellRemoval", True))
+    enableStep2 = bool(subCfg.get("enableStep2RiserRemoval", True))
+    enableStep3 = bool(subCfg.get("enableStep3PartFinishing", True))
+    enableStep4 = bool(subCfg.get("enableStep4GateRemoval", True))
+
+    allStepDefs = [
         {
-            "mode": "zLevelRoughing",
-            "stepOver": float(subCfg.get("shellStepOver", stepOver)),
-            "layerStep": float(subCfg.get("shellLayerStepDown", layerStep)),
-            "safeHeight": safeHeight,
-            "maxRetractOffset": maxRetractOffset,
-            "feedrate": float(subCfg.get("shellFeedRate", feedrate)),
-            "roughStock": float(subCfg.get("shellRoughStock", 0.0)),
-            "sweepTol": sdfVoxelSize,
-            "enablePathLinking": True
+            "stepId": 1,
+            "stepType": "shellRemoval",
+            "enabled": enableStep1,
+            "params": {
+                "mode": "zLevelRoughing",
+                "stepOver": float(subCfg.get("shellStepOver", stepOver)),
+                "layerStep": float(subCfg.get("shellLayerStepDown", layerStep)),
+                "safeHeight": safeHeight,
+                "maxRetractOffset": maxRetractOffset,
+                "feedrate": float(subCfg.get("shellFeedRate", feedrate)),
+                "roughStock": float(subCfg.get("shellRoughStock", 0.0)),
+                "sweepTol": sdfVoxelSize,
+                "enablePathLinking": True
+            }
         },
         {
-            "mode": str(subCfg.get("riserMode", "dropRaster")),
-            "stepOver": float(subCfg.get("riserStepOver", max(stepOver * 0.8, 0.8))),
-            "safeHeight": safeHeight,
-            "maxRetractOffset": maxRetractOffset,
-            "feedrate": float(subCfg.get("riserFeedRate", feedrate)),
-            "angleThreshold": angleThreshold,
-            "sweepTol": sdfVoxelSize,
-            "enablePathLinking": True
+            "stepId": 2,
+            "stepType": "riserRemoval",
+            "enabled": enableStep2,
+            "params": {
+                "mode": str(subCfg.get("riserMode", "dropRaster")),
+                "stepOver": float(subCfg.get("riserStepOver", max(stepOver * 0.8, 0.8))),
+                "safeHeight": safeHeight,
+                "maxRetractOffset": maxRetractOffset,
+                "feedrate": float(subCfg.get("riserFeedRate", feedrate)),
+                "angleThreshold": angleThreshold,
+                "sweepTol": sdfVoxelSize,
+                "enablePathLinking": True
+            }
         },
         {
-            "mode": "isoplanarpatchfinishing",
-            "stepOver": float(subCfg.get("finishStepOver", 0.45)),
-            "projectionStep": float(subCfg.get("finishProjectionStep", 0.25)),
-            "safeHeight": safeHeight,
-            "maxRetractOffset": maxRetractOffset,
-            "feedrate": float(subCfg.get("finishFeedRate", feedrate * 0.85)),
-            "finishStock": float(subCfg.get("finishStock", 0.03)),
-            "sweepTol": sdfVoxelSize,
-            "enablePathLinking": False
+            "stepId": 3,
+            "stepType": "partFinishing",
+            "enabled": enableStep3,
+            "params": {
+                "mode": "isoplanarpatchfinishing",
+                "stepOver": float(subCfg.get("finishStepOver", 0.45)),
+                "projectionStep": float(subCfg.get("finishProjectionStep", 0.25)),
+                "safeHeight": safeHeight,
+                "maxRetractOffset": maxRetractOffset,
+                "feedrate": float(subCfg.get("finishFeedRate", feedrate * 0.85)),
+                "finishStock": float(subCfg.get("finishStock", 0.03)),
+                "sweepTol": sdfVoxelSize,
+                "enablePathLinking": False
+            }
         },
         {
-            "mode": "dropRaster",
-            "stepOver": float(subCfg.get("gateStepOver", stepOver)),
-            "safeHeight": safeHeight,
-            "maxRetractOffset": maxRetractOffset,
-            "feedrate": float(subCfg.get("gateFeedRate", feedrate)),
-            "angleThreshold": angleThreshold,
-            "sweepTol": sdfVoxelSize,
-            "enablePathLinking": True
+            "stepId": 4,
+            "stepType": "gateRemoval",
+            "enabled": enableStep4,
+            "params": {
+                "mode": "dropRaster",
+                "stepOver": float(subCfg.get("gateStepOver", stepOver)),
+                "safeHeight": safeHeight,
+                "maxRetractOffset": maxRetractOffset,
+                "feedrate": float(subCfg.get("gateFeedRate", feedrate)),
+                "angleThreshold": angleThreshold,
+                "sweepTol": sdfVoxelSize,
+                "enablePathLinking": True
+            }
         }
     ]
+
+    stepParams = [stepDef["params"] for stepDef in allStepDefs]
 
     axisStrategyParams = {
         "candidateAxes": candidateAxes,
@@ -95,6 +123,20 @@ def generateCncJobInterface(partStl: str, moldStl: str, gateStl: str, riserStl: 
     clData = generator.generateJob(partStl, moldStl, gateStl, riserStl, toolParams, stepParams,
                                     axisStrategyParams, "WCS_MAIN", jobId)
 
+    rawSteps = clData.get("steps", [])
+    for stepIndex, stepData in enumerate(rawSteps):
+        if stepIndex < len(allStepDefs):
+            stepData["stepId"] = allStepDefs[stepIndex]["stepId"]
+            stepData["stepType"] = allStepDefs[stepIndex]["stepType"]
+
+    enabledStepMap = {stepDef["stepId"]: stepDef["enabled"] for stepDef in allStepDefs}
+    filteredSteps = []
+    for stepIndex, stepData in enumerate(rawSteps):
+        stepId = int(stepData.get("stepId", stepIndex + 1))
+        if enabledStepMap.get(stepId, False):
+            filteredSteps.append(stepData)
+    clData["steps"] = filteredSteps
+
     linkerConfig = {
         "safeHeight": safeHeight,
         "maxRetractOffset": maxRetractOffset,
@@ -104,10 +146,10 @@ def generateCncJobInterface(partStl: str, moldStl: str, gateStl: str, riserStl: 
         "rotationSafeZ": float(subCfg.get("rotationSafeZ", 30.0)),
         "linkFeedRate": float(subCfg.get("linkFeedRate", 2000.0)),
         "stepLinkingEnabled": {
-            "shellRemoval": True,
-            "riserRemoval": True,
-            "partFinishing": False,
-            "gateRemoval": True
+            "shellRemoval": enableStep1,
+            "riserRemoval": enableStep2,
+            "partFinishing": enableStep3,
+            "gateRemoval": enableStep4
         }
     }
     clData["linkerConfig"] = linkerConfig
@@ -118,7 +160,8 @@ def generateCncJobInterface(partStl: str, moldStl: str, gateStl: str, riserStl: 
         gateMesh = generator.loadMesh(gateStl)
         riserMesh = generator.loadMesh(riserStl)
         displayMesh = concatenateMeshes([partMesh, gateMesh, riserMesh])
-        PathVisualizer().visualize(displayMesh, clData, None, {"shellRemoval", "riserRemoval", "partFinishing", "gateRemoval"})
+        activeStepTypes = {stepData.get("stepType", "") for stepData in clData.get("steps", [])}
+        PathVisualizer().visualize(displayMesh, clData, None, activeStepTypes)
 
     return clData
 
