@@ -111,6 +111,9 @@ class ProcessParameterPanel(QWidget):
         stepEnableGroup = self.createStepEnableGroup()
         contentLayout.addWidget(stepEnableGroup)
 
+        safeGroup = self.createSafeAndPerfGroup()
+        contentLayout.addWidget(safeGroup)
+
         paramForm = QWidget()
         layout = QFormLayout(paramForm)
         layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
@@ -150,6 +153,28 @@ class ProcessParameterPanel(QWidget):
             controlKey = f"subtractive.{paramName}"
             self.parameterControls[controlKey] = checkBox
             groupLayout.addRow(QLabel(f"{labelText}:"), checkBox)
+        groupBox.setLayout(groupLayout)
+        return groupBox
+
+    def createSafeAndPerfGroup(self) -> QGroupBox:
+        groupBox = QGroupBox("性能与安全设置")
+        groupLayout = QFormLayout()
+        safeItems = [
+            ("sdfBackend",       "SDF后端选择"),
+            ("sweptDiskCount",   "刀具Disk采样数"),
+            ("sweptRingCount",   "刀具Ring采样数"),
+            ("sweptSafeBuffer",  "远距快通阈值 (mm)"),
+            ("sweptMaxDepth",    "Swept最大递归深度"),
+            ("bottomSafeOffset", "底面安全间隙 (mm)"),
+            ("stepSafeClearance","CL点安全距离 (mm)"),
+            ("gateSafeClearance","浇口CL安全距离 (mm)"),
+        ]
+        subtractiveSchema = parameterSchema.get("subtractive", {})
+        for paramName, labelText in safeItems:
+            paramSpec = subtractiveSchema.get(paramName, {})
+            control = self.createControlForParameter("subtractive", paramName, paramSpec)
+            if control:
+                groupLayout.addRow(QLabel(f"{labelText}:"), control)
         groupBox.setLayout(groupLayout)
         return groupBox
 

@@ -6,6 +6,8 @@ from .geometryUtils import applyRotation, buildRotationFromTo, concatenateMeshes
 from .toolpathEngine import TrimeshToolpathEngine, PointCloudIPW
 from .sweptCollision import SweptVolumeCollisionEngine
 from .toolpathStrategies import ToolpathStrategyFactory
+from .implicitGeometry import SdfVolume, buildSdfVolume, buildOffsetSdf
+
 
 class FiveAxisCncPathGenerator:
     def __init__(self, version: str = "4.0"):
@@ -131,6 +133,118 @@ class FiveAxisCncPathGenerator:
             "clPoints": []
         }
 
+    def _clipClPointsByWorldZ(self, stepData: Dict[str, Any], zMin: float, bottomSafeOffset: float) -> Dict[str, Any]:
+        safeZ = float(zMin) + float(bottomSafeOffset)
+        clPoints = stepData.get("clPoints", [])
+        if not clPoints:
+            return stepData
+
+        segMap: Dict[int, List[Dict]] = {}
+        for pt in sorted(clPoints, key=lambda p: int(p.get("pointId", 0))):
+            sid = int(pt.get("segmentId", -1))
+            segMap.setdefault(sid, []).append(pt)
+
+        newClPoints = []
+        newSegments = []
+        newPointId = 0
+        newSegId = 0
+
+        for sid, pts in segMap.items():
+            currentRun = []
+            for pt in pts:
+                z = float(pt["position"][2])
+                if z >= safeZ:
+                    currentRun.append(pt)
+                else:
+                    if len(currentRun) >= 2:
+                        for p in currentRun:
+                            p["pointId"] = newPointId
+                            p["segmentId"] = newSegId
+                            newPointId += 1
+                        newClPoints.extend(currentRun)
+                        newSegments.append({
+                            "segmentId": newSegId,
+                            "axisIndex": currentRun[0].get("axisIndex", 0),
+                            "toolAxis": currentRun[0].get("toolAxis", [0.0, 0.0, 1.0]),
+                            "pointCount": len(currentRun)
+                        })
+                        newSegId += 1
+                    currentRun = []
+            if len(currentRun) >= 2:
+                for p in currentRun:
+                    p["pointId"] = newPointId
+                    p["segmentId"] = newSegId
+                    newPointId += 1
+                newClPoints.extend(currentRun)
+                newSegments.append({
+                    "segmentId": newSegId,
+                    "axisIndex": currentRun[0].get("axisIndex", 0),
+                    "toolAxis": currentRun[0].get("toolAxis", [0.0, 0.0, 1.0]),
+                    "pointCount": len(currentRun)
+                })
+                newSegId += 1
+
+        stepData["clPoints"] = newClPoints
+        stepData["segments"] = newSegments
+        return stepData
+
+    def _filterClPointsByPartSdf(self, stepData: Dict[str, Any], partSdf: SdfVolume,
+                                  safeClearance: float) -> Dict[str, Any]:
+        clPoints = stepData.get("clPoints", [])
+        if not clPoints or partSdf.isEmpty:
+            return stepData
+
+        positions = np.array([p["position"] for p in clPoints], dtype=float)
+        sdVals = partSdf.query(positions)
+
+        segMap: Dict[int, List] = {}
+        for i, pt in enumerate(sorted(clPoints, key=lambda p: int(p.get("pointId", 0)))):
+            sid = int(pt.get("segmentId", -1))
+            segMap.setdefault(sid, []).append((i, pt))
+
+        newClPoints = []
+        newSegments = []
+        newPointId = 0
+        newSegId = 0
+
+        for sid, indexedPts in segMap.items():
+            currentRun = []
+            for origIdx, pt in indexedPts:
+                if float(sdVals[origIdx]) >= -safeClearance:
+                    currentRun.append(pt)
+                else:
+                    if len(currentRun) >= 2:
+                        for p in currentRun:
+                            p["pointId"] = newPointId
+                            p["segmentId"] = newSegId
+                            newPointId += 1
+                        newClPoints.extend(currentRun)
+                        newSegments.append({
+                            "segmentId": newSegId,
+                            "axisIndex": currentRun[0].get("axisIndex", 0),
+                            "toolAxis": currentRun[0].get("toolAxis", [0.0, 0.0, 1.0]),
+                            "pointCount": len(currentRun)
+                        })
+                        newSegId += 1
+                    currentRun = []
+            if len(currentRun) >= 2:
+                for p in currentRun:
+                    p["pointId"] = newPointId
+                    p["segmentId"] = newSegId
+                    newPointId += 1
+                newClPoints.extend(currentRun)
+                newSegments.append({
+                    "segmentId": newSegId,
+                    "axisIndex": currentRun[0].get("axisIndex", 0),
+                    "toolAxis": currentRun[0].get("toolAxis", [0.0, 0.0, 1.0]),
+                    "pointCount": len(currentRun)
+                })
+                newSegId += 1
+
+        stepData["clPoints"] = newClPoints
+        stepData["segments"] = newSegments
+        return stepData
+
     def generateStepWithAxes(self, stepId: int, stepType: str, targetMesh: trimesh.Trimesh,
                               collisionEngine: SweptVolumeCollisionEngine, toolParams: Dict[str, Any],
                               stepParam: Dict[str, Any], candidateAxes: List[np.ndarray],
@@ -215,7 +329,15 @@ class FiveAxisCncPathGenerator:
         candidateAxes = [normalizeVector(np.asarray(a, dtype=float)) for a in candidateAxesRaw]
         safetyMargin = float(toolParams.get("safetyMargin", 0.5))
         toolRadius = float(toolParams.get("diameter", 6.0)) * 0.5
-        voxelSize = float(toolParams.get("sdfVoxelSize", max(toolRadius * 0.15, 0.2)))
+        voxelSize = float(toolParams.get("sdfVoxelSize", max(toolRadius * 0.05, 0.2)))
+        backendName = str(toolParams.get("sdfBackend", "auto"))
+        bottomSafeOffset = float(toolParams.get("bottomSafeOffset", 1.0))
+        stepSafeClearance = float(toolParams.get("stepSafeClearance", safetyMargin))
+        gateSafeClearance = float(toolParams.get("gateSafeClearance", safetyMargin * 0.6))
+        sweptDiskCount = int(toolParams.get("sweptDiskCount", 16))
+        sweptRingCount = int(toolParams.get("sweptRingCount", 6))
+        sweptSafeBuffer = float(toolParams.get("sweptSafeBuffer", 2.0))
+        sweptMaxDepth = int(toolParams.get("sweptMaxDepth", 8))
 
         enableStep1 = bool(axisStrategyParams.get("enableStep1ShellRemoval", True))
         enableStep2 = bool(axisStrategyParams.get("enableStep2RiserRemoval", True))
@@ -225,33 +347,54 @@ class FiveAxisCncPathGenerator:
         flatTool = self.toolpathEngine.buildFlatEndMillTool(toolParams)
         clearanceVal = toolRadius + safetyMargin
 
+        partSdf = buildSdfVolume(partMesh, voxelSize, backendName)
+
+        def buildEngine(protectMeshes, clearances):
+            sdfList = [buildSdfVolume(m, voxelSize, backendName) for m in protectMeshes]
+            return SweptVolumeCollisionEngine(
+                flatTool, sdfList, clearances,
+                diskCount=sweptDiskCount,
+                ringCount=sweptRingCount,
+                safeBuffer=sweptSafeBuffer
+            )
+
         if enableStep1:
             protectStep1 = concatenateMeshes([partMesh, gateMesh, riserMesh])
-            engine1 = self.toolpathEngine.buildSweptCollisionEngine(flatTool, [protectStep1], [clearanceVal], voxelSize)
-            step1 = self.generateStepWithAxes(1, "shellRemoval", moldMesh, engine1, toolParams, stepParams[0], candidateAxes, globalMinZ, safetyMargin)
+            engine1 = buildEngine([protectStep1], [clearanceVal])
+            step1 = self.generateStepWithAxes(1, "shellRemoval", moldMesh, engine1, toolParams,
+                                               stepParams[0], candidateAxes, globalMinZ, safetyMargin)
+            step1 = self._clipClPointsByWorldZ(step1, globalMinZ, bottomSafeOffset)
+            step1 = self._filterClPointsByPartSdf(step1, partSdf, stepSafeClearance)
         else:
             step1 = self._emptyStep(1, "shellRemoval", toolParams)
 
         if enableStep2:
             protectStep2 = concatenateMeshes([partMesh, gateMesh])
-            engine2 = self.toolpathEngine.buildSweptCollisionEngine(flatTool, [protectStep2], [clearanceVal], voxelSize)
-            step2 = self.generateStepWithAxes(2, "riserRemoval", riserMesh, engine2, toolParams, stepParams[1],
-                                              [np.array([0.0, 0.0, 1.0], dtype=float)], globalMinZ, safetyMargin)
+            engine2 = buildEngine([protectStep2], [clearanceVal])
+            step2 = self.generateStepWithAxes(2, "riserRemoval", riserMesh, engine2, toolParams,
+                                               stepParams[1], [np.array([0.0, 0.0, 1.0], dtype=float)],
+                                               globalMinZ, safetyMargin)
+            step2 = self._clipClPointsByWorldZ(step2, globalMinZ, bottomSafeOffset)
+            step2 = self._filterClPointsByPartSdf(step2, partSdf, stepSafeClearance)
         else:
             step2 = self._emptyStep(2, "riserRemoval", toolParams)
 
         if enableStep3:
             finishStock = float(stepParams[2].get("finishStock", 0.03))
-            from .implicitGeometry import buildOffsetSdf
-            partInnerSdf = buildOffsetSdf(partMesh, finishStock, voxelSize)
-            engine3 = SweptVolumeCollisionEngine(flatTool, [partInnerSdf], [clearanceVal])
+            partInnerSdf = buildOffsetSdf(partMesh, finishStock, voxelSize, backendName)
+            engine3 = SweptVolumeCollisionEngine(
+                flatTool, [partInnerSdf], [clearanceVal],
+                diskCount=sweptDiskCount, ringCount=sweptRingCount, safeBuffer=sweptSafeBuffer
+            )
             step3Axes = self.selectAxesGreedyCoverage(partMesh, candidateAxes, axisStrategyParams)
             step3ConfigX = dict(stepParams[2])
             step3ConfigX["scanAxis"] = "x"
-            step3X = self.generateStepWithAxes(3, "partFinishing", partMesh, engine3, toolParams, step3ConfigX, step3Axes, globalMinZ, safetyMargin)
+            step3X = self.generateStepWithAxes(3, "partFinishing", partMesh, engine3, toolParams,
+                                                step3ConfigX, step3Axes, globalMinZ, safetyMargin)
             step3ConfigY = dict(stepParams[2])
             step3ConfigY["scanAxis"] = "y"
-            step3Y = self.generateStepWithAxes(3, "partFinishing", partMesh, engine3, toolParams, step3ConfigY, step3Axes, globalMinZ, safetyMargin)
+            step3Y = self.generateStepWithAxes(3, "partFinishing", partMesh, engine3, toolParams,
+                                                step3ConfigY, step3Axes, globalMinZ, safetyMargin)
             step3 = {
                 "stepId": 3,
                 "stepType": "partFinishing",
@@ -260,13 +403,17 @@ class FiveAxisCncPathGenerator:
                 "segments": step3X["segments"] + step3Y["segments"],
                 "clPoints": step3X["clPoints"] + step3Y["clPoints"]
             }
+            step3 = self._clipClPointsByWorldZ(step3, globalMinZ, bottomSafeOffset)
         else:
             step3 = self._emptyStep(3, "partFinishing", toolParams)
 
         if enableStep4:
-            engine4 = self.toolpathEngine.buildSweptCollisionEngine(flatTool, [partMesh], [clearanceVal], voxelSize)
-            step4 = self.generateStepWithAxes(4, "gateRemoval", gateMesh, engine4, toolParams, stepParams[3],
-                                              [np.array([0.0, 0.0, 1.0], dtype=float)], globalMinZ, safetyMargin)
+            engine4 = buildEngine([partMesh], [clearanceVal])
+            step4 = self.generateStepWithAxes(4, "gateRemoval", gateMesh, engine4, toolParams,
+                                               stepParams[3], [np.array([0.0, 0.0, 1.0], dtype=float)],
+                                               globalMinZ, safetyMargin)
+            step4 = self._clipClPointsByWorldZ(step4, globalMinZ, bottomSafeOffset)
+            step4 = self._filterClPointsByPartSdf(step4, partSdf, gateSafeClearance)
         else:
             step4 = self._emptyStep(4, "gateRemoval", toolParams)
 
