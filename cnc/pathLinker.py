@@ -1,6 +1,7 @@
 import math
 from copy import deepcopy
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
+import numpy as np
 
 
 class ClPathLinker:
@@ -12,6 +13,9 @@ class ClPathLinker:
         self.rotationRetractAngle = float(linkerConfig.get("rotationRetractAngle", 30.0))
         self.rotationSafeZ = float(linkerConfig.get("rotationSafeZ", 30.0))
         self.linkFeedRate = float(linkerConfig.get("linkFeedRate", 2000.0))
+        self.retractAlongAxis = bool(linkerConfig.get("retractAlongAxis", True))
+        self.retractAxisLength = float(linkerConfig.get("retractAxisLength", 10.0))
+        self.retractCollisionMesh = linkerConfig.get("retractCollisionMesh", None)
         self.stepLinkingEnabled = linkerConfig.get("stepLinkingEnabled", {})
 
     def processClData(self, clData: Dict[str, Any]) -> Dict[str, Any]:
@@ -23,7 +27,8 @@ class ClPathLinker:
             self.insertLinkPoints(stepItem, allowDirect)
         return linkedData
 
-    def classifyLink(self, endPt: Dict[str, Any], startPt: Dict[str, Any], endAxis: List[float], startAxis: List[float], allowDirect: bool) -> int:
+    def classifyLink(self, endPt: Dict[str, Any], startPt: Dict[str, Any],
+                     endAxis: List[float], startAxis: List[float], allowDirect: bool) -> int:
         endPos = endPt.get("position", [0.0, 0.0, 0.0])
         startPos = startPt.get("position", [0.0, 0.0, 0.0])
         moveDist = self.computeDistance(endPos, startPos)
@@ -36,46 +41,133 @@ class ClPathLinker:
             return 1
         return 2
 
-    def computeLocalSafeZ(self, endPt: Dict[str, Any], startPt: Dict[str, Any], safeHeight: float) -> float:
+    def computeLocalSafeZ(self, endPt: Dict[str, Any], startPt: Dict[str, Any],
+                          safeHeight: float) -> float:
         endZ = float(endPt.get("position", [0.0, 0.0, 0.0])[2])
         startZ = float(startPt.get("position", [0.0, 0.0, 0.0])[2])
         return max(endZ, startZ) + safeHeight
 
-    def buildLevel1Link(self, endPt: Dict[str, Any], startPt: Dict[str, Any], toolAxis: List[float], localSafeZ: float) -> List[Dict[str, Any]]:
-        endPos = endPt.get("position", [0.0, 0.0, 0.0])
-        startPos = startPt.get("position", [0.0, 0.0, 0.0])
+    def computeRetractPointAlongAxis(self, pos: List[float], toolAxis: List[float],
+                                     retractLength: float) -> List[float]:
+        ax, ay, az = [float(v) for v in toolAxis]
+        axisLen = math.sqrt(ax * ax + ay * ay + az * az)
+        if axisLen < 1e-9:
+            ax, ay, az = 0.0, 0.0, 1.0
+        else:
+            ax, ay, az = ax / axisLen, ay / axisLen, az / axisLen
         return [
-            self.makePoint([endPos[0], endPos[1], localSafeZ], toolAxis, "retract"),
-            self.makePoint([startPos[0], startPos[1], localSafeZ], toolAxis, "rapid"),
-            self.makePoint([startPos[0], startPos[1], startPos[2]], toolAxis, "approach"),
+            float(pos[0]) + ax * retractLength,
+            float(pos[1]) + ay * retractLength,
+            float(pos[2]) + az * retractLength,
         ]
 
-    def buildLevel2Link(self, endPt: Dict[str, Any], startPt: Dict[str, Any], endAxis: List[float], startAxis: List[float], clearanceZ: float) -> List[Dict[str, Any]]:
+    def safeRetractLength(self, pos: List[float], toolAxis: List[float],
+                          desiredLength: float) -> float:
+        if self.retractCollisionMesh is None:
+            return desiredLength
+        try:
+            import trimesh
+            import vtk
+            pvMesh = None
+            try:
+                import pyvista as pv
+                verts = np.array(self.retractCollisionMesh.vertices)
+                faces = self.retractCollisionMesh.faces
+                pvFaces = np.column_stack((np.full(len(faces), 3), faces)).flatten()
+                pvMesh = pv.PolyData(verts, pvFaces)
+            except Exception:
+                return desiredLength
+            tree = vtk.vtkOBBTree()
+            tree.SetDataSet(pvMesh)
+            tree.BuildLocator()
+            endPt = self.computeRetractPointAlongAxis(pos, toolAxis, desiredLength)
+            intersectPts = vtk.vtkPoints()
+            code = tree.IntersectWithLine(pos, endPt, intersectPts, None)
+            if code == 0:
+                return desiredLength
+            closestDist = desiredLength
+            for i in range(intersectPts.GetNumberOfPoints()):
+                iPt = intersectPts.GetPoint(i)
+                d = math.sqrt(sum((iPt[k] - float(pos[k])) ** 2 for k in range(3)))
+                if d < closestDist:
+                    closestDist = max(0.0, d - 0.5)
+            return closestDist
+        except Exception:
+            return desiredLength
+
+    def buildAxisRetractPoint(self, pos: List[float], toolAxis: List[float],
+                              desiredLength: float) -> List[float]:
+        safeLen = self.safeRetractLength(pos, toolAxis, desiredLength)
+        return self.computeRetractPointAlongAxis(pos, toolAxis, safeLen)
+
+    def buildLevel1Link(self, endPt: Dict[str, Any], startPt: Dict[str, Any],
+                        endAxis: List[float], startAxis: List[float],
+                        localSafeZ: float) -> List[Dict[str, Any]]:
         endPos = endPt.get("position", [0.0, 0.0, 0.0])
         startPos = startPt.get("position", [0.0, 0.0, 0.0])
+        if self.retractAlongAxis:
+            retractEndPos = self.buildAxisRetractPoint(endPos, endAxis, self.retractAxisLength)
+            retractStartPos = self.buildAxisRetractPoint(startPos, startAxis, self.retractAxisLength)
+            return [
+                self.makePoint(retractEndPos, endAxis, "retract"),
+                self.makePoint(retractStartPos, startAxis, "rapid"),
+                self.makePoint(startPos, startAxis, "approach"),
+            ]
+        return [
+            self.makePoint([endPos[0], endPos[1], localSafeZ], endAxis, "retract"),
+            self.makePoint([startPos[0], startPos[1], localSafeZ], endAxis, "rapid"),
+            self.makePoint(startPos, startAxis, "approach"),
+        ]
+
+    def buildLevel2Link(self, endPt: Dict[str, Any], startPt: Dict[str, Any],
+                        endAxis: List[float], startAxis: List[float],
+                        clearanceZ: float) -> List[Dict[str, Any]]:
+        endPos = endPt.get("position", [0.0, 0.0, 0.0])
+        startPos = startPt.get("position", [0.0, 0.0, 0.0])
+        if self.retractAlongAxis:
+            retractEndPos = self.buildAxisRetractPoint(endPos, endAxis, self.retractAxisLength)
+            retractStartPos = self.buildAxisRetractPoint(startPos, startAxis, self.retractAxisLength)
+            return [
+                self.makePoint(retractEndPos, endAxis, "retract"),
+                self.makePoint(retractStartPos, startAxis, "rapid"),
+                self.makePoint(startPos, startAxis, "approach"),
+            ]
         return [
             self.makePoint([endPos[0], endPos[1], clearanceZ], endAxis, "retract"),
             self.makePoint([startPos[0], startPos[1], clearanceZ], endAxis, "rapid"),
-            self.makePoint([startPos[0], startPos[1], startPos[2]], startAxis, "approach"),
+            self.makePoint(startPos, startAxis, "approach"),
         ]
 
-    def buildLevel3Link(self, endPt: Dict[str, Any], startPt: Dict[str, Any], endAxis: List[float], startAxis: List[float], rotationSafeZ: float, clearanceZ: float) -> List[Dict[str, Any]]:
+    def buildLevel3Link(self, endPt: Dict[str, Any], startPt: Dict[str, Any],
+                        endAxis: List[float], startAxis: List[float],
+                        rotationSafeZ: float, clearanceZ: float) -> List[Dict[str, Any]]:
         endPos = endPt.get("position", [0.0, 0.0, 0.0])
         startPos = startPt.get("position", [0.0, 0.0, 0.0])
+        if self.retractAlongAxis:
+            longRetract = self.retractAxisLength * 2.0
+            retractEndPos = self.buildAxisRetractPoint(endPos, endAxis, longRetract)
+            retractStartPos = self.buildAxisRetractPoint(startPos, startAxis, longRetract)
+            return [
+                self.makePoint(retractEndPos, endAxis, "retract"),
+                self.makePoint(retractEndPos, startAxis, "rapid"),
+                self.makePoint(retractStartPos, startAxis, "rapid"),
+                self.makePoint(startPos, startAxis, "approach"),
+            ]
         highZ = max(rotationSafeZ, clearanceZ)
         return [
             self.makePoint([endPos[0], endPos[1], highZ], endAxis, "retract"),
             self.makePoint([endPos[0], endPos[1], highZ], startAxis, "rapid"),
             self.makePoint([startPos[0], startPos[1], highZ], startAxis, "rapid"),
-            self.makePoint([startPos[0], startPos[1], startPos[2]], startAxis, "approach"),
+            self.makePoint(startPos, startAxis, "approach"),
         ]
 
     def insertLinkPoints(self, step: Dict[str, Any], allowDirect: bool) -> None:
         clPoints = step.get("clPoints", [])
         if not clPoints:
             return
-        pointsSorted = sorted(clPoints, key=lambda pointItem: (int(pointItem.get("segmentId", 0)), int(pointItem.get("pointId", 0))))
-        maxZ = max(float(pointItem.get("position", [0.0, 0.0, 0.0])[2]) for pointItem in pointsSorted)
+        pointsSorted = sorted(clPoints, key=lambda p: (int(p.get("segmentId", 0)),
+                                                        int(p.get("pointId", 0))))
+        maxZ = max(float(p.get("position", [0.0, 0.0, 0.0])[2]) for p in pointsSorted)
         clearanceZ = maxZ + self.safeHeight
         mergedPoints: List[Dict[str, Any]] = []
         lastSegmentId = None
@@ -94,20 +186,26 @@ class ClPathLinker:
                 continue
             if segmentEndPoint is not None and segmentEndAxis is not None:
                 startAxis = pointCopy.get("toolAxis", segmentEndAxis)
-                moveDist = self.computeDistance(segmentEndPoint.get("position", [0.0, 0.0, 0.0]), pointCopy.get("position", [0.0, 0.0, 0.0]))
+                moveDist = self.computeDistance(segmentEndPoint.get("position", [0.0, 0.0, 0.0]),
+                                                pointCopy.get("position", [0.0, 0.0, 0.0]))
                 axisChange = self.computeAxisAngle(segmentEndAxis, startAxis)
-                shouldLink = segmentId != lastSegmentId or moveDist > self.directLinkThreshold or axisChange > self.rotationChangeThreshold
-                if shouldLink:
-                    linkLevel = self.classifyLink(segmentEndPoint, pointCopy, segmentEndAxis, startAxis, allowDirect)
-                else:
-                    linkLevel = 0
+                shouldLink = (segmentId != lastSegmentId
+                              or moveDist > self.directLinkThreshold
+                              or axisChange > self.rotationChangeThreshold)
+                linkLevel = (self.classifyLink(segmentEndPoint, pointCopy,
+                                               segmentEndAxis, startAxis, allowDirect)
+                             if shouldLink else 0)
                 if linkLevel == 1:
                     localSafeZ = self.computeLocalSafeZ(segmentEndPoint, pointCopy, self.safeHeight)
-                    mergedPoints.extend(self.buildLevel1Link(segmentEndPoint, pointCopy, segmentEndAxis, localSafeZ))
+                    mergedPoints.extend(self.buildLevel1Link(
+                        segmentEndPoint, pointCopy, segmentEndAxis, startAxis, localSafeZ))
                 elif linkLevel == 2:
-                    mergedPoints.extend(self.buildLevel2Link(segmentEndPoint, pointCopy, segmentEndAxis, startAxis, clearanceZ))
+                    mergedPoints.extend(self.buildLevel2Link(
+                        segmentEndPoint, pointCopy, segmentEndAxis, startAxis, clearanceZ))
                 elif linkLevel == 3:
-                    mergedPoints.extend(self.buildLevel3Link(segmentEndPoint, pointCopy, segmentEndAxis, startAxis, self.rotationSafeZ, clearanceZ))
+                    mergedPoints.extend(self.buildLevel3Link(
+                        segmentEndPoint, pointCopy, segmentEndAxis, startAxis,
+                        self.rotationSafeZ, clearanceZ))
             mergedPoints.append(pointCopy)
             lastSegmentId = segmentId
             segmentEndPoint = pointCopy
@@ -119,7 +217,8 @@ class ClPathLinker:
                 pointItem["feedrate"] = float(pointItem.get("feedrate", self.linkFeedRate))
         step["clPoints"] = mergedPoints
 
-    def makePoint(self, position: List[float], toolAxis: List[float], motionType: str) -> Dict[str, Any]:
+    def makePoint(self, position: List[float], toolAxis: List[float],
+                  motionType: str) -> Dict[str, Any]:
         return {
             "pointId": 0,
             "position": [float(position[0]), float(position[1]), float(position[2])],
@@ -138,8 +237,8 @@ class ClPathLinker:
 
     @staticmethod
     def computeAxisAngle(endAxis: List[float], startAxis: List[float]) -> float:
-        ex, ey, ez = [float(val) for val in endAxis]
-        sx, sy, sz = [float(val) for val in startAxis]
+        ex, ey, ez = [float(v) for v in endAxis]
+        sx, sy, sz = [float(v) for v in startAxis]
         endLen = math.sqrt(ex * ex + ey * ey + ez * ez)
         startLen = math.sqrt(sx * sx + sy * sy + sz * sz)
         if endLen <= 0.0 or startLen <= 0.0:

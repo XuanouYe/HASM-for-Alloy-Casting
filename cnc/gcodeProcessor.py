@@ -23,7 +23,9 @@ def loadPostConfig(rawConfig: Dict[str, Any]) -> Dict[str, Any]:
     subtractiveSchema = parameterSchema.get("subtractive", {})
     for keyVal, valueVal in subtractiveSchema.items():
         if "default" in valueVal:
-            cfg[keyVal] = dict(valueVal["default"]) if isinstance(valueVal["default"], dict) else valueVal["default"]
+            cfg[keyVal] = (dict(valueVal["default"])
+                           if isinstance(valueVal["default"], dict)
+                           else valueVal["default"])
     subtractiveRaw = rawConfig.get("subtractive", {})
     for keyVal, valueVal in subtractiveRaw.items():
         if isinstance(valueVal, dict) and keyVal in cfg and isinstance(cfg[keyVal], dict):
@@ -52,21 +54,36 @@ def loadLinkerConfig(processConfig: Dict[str, Any], clData: Dict[str, Any]) -> D
         "gateRemoval": True
     }
     linkerCfg = {
-        "safeHeight": float(subtractiveCfg.get("safeHeight", subtractiveSchema.get("safeHeight", {}).get("default", 5.0))),
-        "maxRetractOffset": float(subtractiveCfg.get("maxRetractOffset", subtractiveSchema.get("maxRetractOffset", {}).get("default", 100.0))),
-        "directLinkThreshold": float(subtractiveCfg.get("directLinkThreshold", subtractiveSchema.get("directLinkThreshold", {}).get("default", 2.0))),
-        "rotationChangeThreshold": float(subtractiveCfg.get("rotationChangeThreshold", subtractiveSchema.get("rotationChangeThreshold", {}).get("default", 5.0))),
-        "rotationRetractAngle": float(subtractiveCfg.get("rotationRetractAngle", subtractiveSchema.get("rotationRetractAngle", {}).get("default", 30.0))),
-        "rotationSafeZ": float(subtractiveCfg.get("rotationSafeZ", subtractiveSchema.get("rotationSafeZ", {}).get("default", 30.0))),
-        "linkFeedRate": float(subtractiveCfg.get("linkFeedRate", subtractiveSchema.get("linkFeedRate", {}).get("default", 2000.0))),
+        "safeHeight": float(subtractiveCfg.get(
+            "safeHeight", subtractiveSchema.get("safeHeight", {}).get("default", 5.0))),
+        "maxRetractOffset": float(subtractiveCfg.get(
+            "maxRetractOffset", subtractiveSchema.get("maxRetractOffset", {}).get("default", 100.0))),
+        "directLinkThreshold": float(subtractiveCfg.get(
+            "directLinkThreshold", subtractiveSchema.get("directLinkThreshold", {}).get("default", 2.0))),
+        "rotationChangeThreshold": float(subtractiveCfg.get(
+            "rotationChangeThreshold", subtractiveSchema.get("rotationChangeThreshold", {}).get("default", 5.0))),
+        "rotationRetractAngle": float(subtractiveCfg.get(
+            "rotationRetractAngle", subtractiveSchema.get("rotationRetractAngle", {}).get("default", 30.0))),
+        "rotationSafeZ": float(subtractiveCfg.get(
+            "rotationSafeZ", subtractiveSchema.get("rotationSafeZ", {}).get("default", 30.0))),
+        "linkFeedRate": float(subtractiveCfg.get(
+            "linkFeedRate", subtractiveSchema.get("linkFeedRate", {}).get("default", 2000.0))),
+        "retractAlongAxis": bool(subtractiveCfg.get("retractAlongAxis", True)),
+        "retractAxisLength": float(subtractiveCfg.get("retractAxisLength", 10.0)),
         "stepLinkingEnabled": dict(defaultStepEnable),
     }
     linkerCfg["stepLinkingEnabled"].update(clLinkerCfg.get("stepLinkingEnabled", {}))
     if isinstance(subtractiveCfg.get("stepLinkingEnabled"), dict):
         linkerCfg["stepLinkingEnabled"].update(subtractiveCfg["stepLinkingEnabled"])
-    for keyVal in ("safeHeight", "maxRetractOffset", "directLinkThreshold", "rotationChangeThreshold", "rotationRetractAngle", "rotationSafeZ", "linkFeedRate"):
+    for keyVal in ("safeHeight", "maxRetractOffset", "directLinkThreshold",
+                   "rotationChangeThreshold", "rotationRetractAngle",
+                   "rotationSafeZ", "linkFeedRate",
+                   "retractAlongAxis", "retractAxisLength"):
         if keyVal in clLinkerCfg and keyVal not in subtractiveCfg:
-            linkerCfg[keyVal] = float(clLinkerCfg[keyVal])
+            if keyVal in ("retractAlongAxis",):
+                linkerCfg[keyVal] = bool(clLinkerCfg[keyVal])
+            else:
+                linkerCfg[keyVal] = float(clLinkerCfg[keyVal])
     return linkerCfg
 
 
@@ -139,19 +156,25 @@ def generateGcode(clData: Dict[str, Any], postCfg: Dict[str, Any]) -> List[str]:
         emit(headerLine)
 
     prevFeed: Optional[float] = None
-    prevAxes: Dict[str, Optional[float]] = {"X": None, "Y": None, "Z": None, aAxisName: None, cAxisName: None}
-    stepsList = sorted(clData.get("steps", []), key=lambda stepItem: int(stepItem.get("stepId", 0)))
+    prevAxes: Dict[str, Optional[float]] = {
+        "X": None, "Y": None, "Z": None,
+        aAxisName: None, cAxisName: None
+    }
+    stepsList = sorted(clData.get("steps", []),
+                       key=lambda s: int(s.get("stepId", 0)))
 
     for stepItem in stepsList:
         stepId = int(stepItem.get("stepId", 0))
         stepType = str(stepItem.get("stepType", "unknown"))
         emit(f"(STEP {stepId}: {stepType})")
-        pointsList = sorted(stepItem.get("clPoints", []), key=lambda pointItem: int(pointItem.get("pointId", 0)))
+        pointsList = sorted(stepItem.get("clPoints", []),
+                            key=lambda p: int(p.get("pointId", 0)))
         for pointItem in pointsList:
             pointPos = pointItem.get("position", [0.0, 0.0, 0.0])
             pointAxis = pointItem.get("toolAxis", [0.0, 0.0, 1.0])
             motionType = str(pointItem.get("motionType", "cut")).lower()
             feedrate = float(pointItem.get("feedrate", defaultFeed))
+
             px, py, pz, aDeg, cDeg = kinematicsSolver.convertPoint(pointPos, pointAxis)
             currAxes = {"X": px, "Y": py, "Z": pz, aAxisName: aDeg, cAxisName: cDeg}
 
@@ -160,18 +183,13 @@ def generateGcode(clData: Dict[str, Any], postCfg: Dict[str, Any]) -> List[str]:
             else:
                 blockParts = ["G1"]
 
-            if motionType == "retract":
-                if prevAxes["Z"] is None or abs(currAxes["Z"] - prevAxes["Z"]) > axisEps:
-                    blockParts.append(f"Z{formatValue(currAxes['Z'], coordDec)}")
-                    prevAxes["Z"] = currAxes["Z"]
-            else:
-                for axisName, axisVal in currAxes.items():
-                    if prevAxes[axisName] is None or abs(axisVal - float(prevAxes[axisName])) > axisEps:
-                        decimals = angleDec if axisName in {aAxisName, cAxisName} else coordDec
-                        blockParts.append(f"{axisName}{formatValue(axisVal, decimals)}")
-                        prevAxes[axisName] = axisVal
+            for axisName, axisVal in currAxes.items():
+                if prevAxes[axisName] is None or abs(axisVal - float(prevAxes[axisName])) > axisEps:
+                    decimals = angleDec if axisName in {aAxisName, cAxisName} else coordDec
+                    blockParts.append(f"{axisName}{formatValue(axisVal, decimals)}")
+                    prevAxes[axisName] = axisVal
 
-            if blockParts == ["G0"]:
+            if blockParts == ["G0"] or blockParts == ["G1"]:
                 continue
 
             if motionType == "cut":
@@ -193,7 +211,8 @@ def writeGcodeFile(gcodeLines: List[str], outputPath: str) -> None:
             fileHandle.write("\n")
 
 
-def generateGcodeFromClJson(inputJsonPath: str, processConfig: Dict[str, Any], outputGcodePath: str) -> None:
+def generateGcodeFromClJson(inputJsonPath: str, processConfig: Dict[str, Any],
+                            outputGcodePath: str) -> None:
     clData = loadClJson(inputJsonPath)
     postCfg = loadPostConfig(processConfig)
     linkerCfg = loadLinkerConfig(processConfig, clData)
@@ -202,8 +221,12 @@ def generateGcodeFromClJson(inputJsonPath: str, processConfig: Dict[str, Any], o
     writeGcodeFile(gcodeLines, outputGcodePath)
 
 
-def generateCncGcodeInterface(partStl: str, moldStl: str, gateStl: str, riserStl: str, outputGcodePath: str, processConfig: Dict[str, Any], visualize: bool = False) -> Dict[str, Any]:
-    clData = generateCncJobInterface(partStl, moldStl, gateStl, riserStl, outputGcodePath + ".json", processConfig, visualize=visualize)
+def generateCncGcodeInterface(partStl: str, moldStl: str, gateStl: str, riserStl: str,
+                              outputGcodePath: str, processConfig: Dict[str, Any],
+                              visualize: bool = False) -> Dict[str, Any]:
+    clData = generateCncJobInterface(
+        partStl, moldStl, gateStl, riserStl,
+        outputGcodePath + ".json", processConfig, visualize=visualize)
     postCfg = loadPostConfig(processConfig)
     linkerCfg = loadLinkerConfig(processConfig, clData)
     linkedData = ClPathLinker(linkerCfg).processClData(clData)
@@ -230,6 +253,8 @@ if __name__ == '__main__':
             "axisMode": "hemisphere",
             "axisCount": 18,
             "angleThreshold": 1.047,
+            "retractAlongAxis": True,
+            "retractAxisLength": 10.0,
         }
     }
     if Path(inputJson).exists():
