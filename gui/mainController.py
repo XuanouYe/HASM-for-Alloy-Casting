@@ -208,6 +208,7 @@ class MainController(QObject):
 
         self._currentVisualizeFlag = visualize
         self._currentPartStlPath = partStlToUse
+        self._currentProcessConfig = config
 
         def taskCallable():
             return generateCncGcodeInterface(
@@ -236,10 +237,14 @@ class MainController(QObject):
                 from gui.pathVisualizerDialog import PathVisualizationDialog
                 generator = FiveAxisCncPathGenerator()
                 mesh = generator.loadMesh(self._currentPartStlPath)
-                self.vizDialog = PathVisualizationDialog(mesh, result, self.mainWindow)
+                kinematicsCfg = self._currentProcessConfig.get(
+                    "subtractive", {}).get("kinematics", {})
+                self.vizDialog = PathVisualizationDialog(
+                    mesh, result, kinematicsCfg, self.mainWindow)
                 self.vizDialog.show()
             except Exception as e:
-                self.mainWindow.showMessage("可视化错误", f"启动PyVista可视化窗口失败: {str(e)}", isError=True)
+                self.mainWindow.showMessage(
+                    "可视化错误", f"启动PyVista可视化窗口失败: {str(e)}", isError=True)
 
     def _onGenerateError(self, title, errorMsg, btnType):
         if btnType == "Gcode":
