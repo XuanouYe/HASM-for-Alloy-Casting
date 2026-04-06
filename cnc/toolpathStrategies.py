@@ -10,8 +10,9 @@ from shapely.validation import make_valid
 
 class IToolpathStrategy(ABC):
     @abstractmethod
-    def generate(self, targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh, toolRadius: float,
-                 params: Dict[str, Any], safetyMargin: float) -> List[np.ndarray]:
+    def generate(self, targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh,
+                 toolRadius: float, params: Dict[str, Any],
+                 safetyMargin: float) -> List[np.ndarray]:
         pass
 
 
@@ -32,7 +33,9 @@ def cleanPolygon(polys: List[Any]) -> Any:
 def robustSection(mesh: trimesh.Trimesh, zValue: float, tolerance: float = 0.05) -> Any:
     def trySection(zVal: float):
         try:
-            sectionResult = mesh.section(plane_origin=[0.0, 0.0, zVal], plane_normal=[0.0, 0.0, 1.0])
+            sectionResult = mesh.section(
+                plane_origin=[0.0, 0.0, zVal],
+                plane_normal=[0.0, 0.0, 1.0])
             if sectionResult is None:
                 return None
             slice2d, _ = sectionResult.to_2D()
@@ -47,8 +50,7 @@ def robustSection(mesh: trimesh.Trimesh, zValue: float, tolerance: float = 0.05)
     result = trySection(zValue - tolerance)
     if result is not None:
         return result
-    result = trySection(zValue + tolerance)
-    return result
+    return trySection(zValue + tolerance)
 
 
 def extractLineStrings(geomValue: Any) -> List[Any]:
@@ -65,25 +67,31 @@ def extractLineStrings(geomValue: Any) -> List[Any]:
 
 
 class ZLevelRoughingStrategy(IToolpathStrategy):
-    def generate(self, targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh, toolRadius: float,
-                 params: Dict[str, Any], safetyMargin: float) -> List[np.ndarray]:
+    def generate(self, targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh,
+                 toolRadius: float, params: Dict[str, Any],
+                 safetyMargin: float) -> List[np.ndarray]:
         if targetMesh.is_empty:
             return []
         stepOver = float(params.get('stepOver', 1.0))
         layerStep = float(params.get('layerStep', 1.0))
         roughStock = float(params.get('roughStock', 0.0))
-        bottomClearance = float(params.get('bottomClearance', toolRadius * 2.0))
+        bottomClearance = float(params.get('bottomClearance', 0.0))
         boundsArray = np.asarray(targetMesh.bounds, dtype=float)
         zMin = float(boundsArray[0, 2])
         zMax = float(boundsArray[1, 2])
-        zLevels = np.arange(zMax - layerStep, zMin + bottomClearance, -layerStep, dtype=float)
+        localSafeZ = zMin + bottomClearance if bottomClearance > 0.0 else -np.inf
+        zLevels = np.arange(zMax - layerStep, zMin, -layerStep, dtype=float)
         allPaths = []
         for zValue in zLevels:
+            if zValue < localSafeZ:
+                continue
             targetPolys = robustSection(targetMesh, zValue)
             if not targetPolys:
                 continue
             try:
-                targetSlice = targetMesh.section(plane_origin=[0.0, 0.0, zValue], plane_normal=[0.0, 0.0, 1.0])
+                targetSlice = targetMesh.section(
+                    plane_origin=[0.0, 0.0, zValue],
+                    plane_normal=[0.0, 0.0, 1.0])
                 if targetSlice is None:
                     continue
                 _, to3dMat = targetSlice.to_2D()
@@ -94,13 +102,15 @@ class ZLevelRoughingStrategy(IToolpathStrategy):
             if keepOutMesh is not None and not keepOutMesh.is_empty:
                 keepOutPolys = robustSection(keepOutMesh, zValue)
                 if keepOutPolys:
-                    keepOutPoly = cleanPolygon(keepOutPolys).buffer(toolRadius + safetyMargin + roughStock)
+                    keepOutPoly = cleanPolygon(keepOutPolys).buffer(
+                        toolRadius + safetyMargin + roughStock)
             if machinablePoly.is_empty:
                 continue
             safePoly = machinablePoly.difference(keepOutPoly.buffer(0))
             if safePoly.is_empty:
                 continue
-            polyGeoms = list(safePoly.geoms) if safePoly.geom_type == 'MultiPolygon' else [safePoly]
+            polyGeoms = (list(safePoly.geoms)
+                         if safePoly.geom_type == 'MultiPolygon' else [safePoly])
             for polyItem in polyGeoms:
                 if polyItem.is_empty:
                     continue
@@ -117,7 +127,9 @@ class ZLevelRoughingStrategy(IToolpathStrategy):
                             continue
                         if reverseFlag:
                             coordArray = coordArray[::-1]
-                        coordHomo = np.column_stack([coordArray, np.zeros(len(coordArray)), np.ones(len(coordArray))])
+                        coordHomo = np.column_stack(
+                            [coordArray, np.zeros(len(coordArray)),
+                             np.ones(len(coordArray))])
                         path3d = (to3dMat @ coordHomo.T).T[:, :3]
                         if len(path3d) >= 2:
                             allPaths.append(path3d)
@@ -125,8 +137,9 @@ class ZLevelRoughingStrategy(IToolpathStrategy):
         return allPaths
 
 
-def generateDropCutterPaths(targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh, toolRadius: float,
-                            params: Dict[str, Any], safetyMargin: float) -> List[np.ndarray]:
+def generateDropCutterPaths(targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh,
+                            toolRadius: float, params: Dict[str, Any],
+                            safetyMargin: float) -> List[np.ndarray]:
     if targetMesh is None or targetMesh.is_empty:
         return []
 
@@ -134,14 +147,14 @@ def generateDropCutterPaths(targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Tr
     stepOver = float(params.get('stepOver', 0.5))
     projectionStep = float(params.get('projectionStep', 0.5))
     finishStock = float(params.get('finishStock', 0.0))
-    bottomClearance = float(params.get('bottomClearance', toolRadius * 2.0))
 
     padValue = toolRadius + max(finishStock, safetyMargin) + stepOver
     b = targetMesh.bounds
-    xMin, yMin = float(b[0, 0]) - padValue, float(b[0, 1]) - padValue
-    xMax, yMax = float(b[1, 0]) + padValue, float(b[1, 1]) + padValue
+    xMin = float(b[0, 0]) - padValue
+    yMin = float(b[0, 1]) - padValue
+    xMax = float(b[1, 0]) + padValue
+    yMax = float(b[1, 1]) + padValue
     bottomZ = float(b[0, 2]) - padValue
-    meshBottomZ = float(b[0, 2])
 
     gridRes = min(projectionStep, stepOver, toolRadius) * 0.3
     gridRes = max(gridRes, 0.05)
@@ -175,9 +188,9 @@ def generateDropCutterPaths(targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Tr
     y, x = np.ogrid[-cells:cells + 1, -cells:cells + 1]
     distSq = x ** 2 + y ** 2
     maskR = distSq <= (toolRadius / gridRes) ** 2
-
     kernelTarget = np.full((kSize, kSize), -np.inf, dtype=float)
-    kernelTarget[maskR] = np.sqrt(np.maximum(toolRadius ** 2 - distSq[maskR] * (gridRes ** 2), 0.0))
+    kernelTarget[maskR] = np.sqrt(
+        np.maximum(toolRadius ** 2 - distSq[maskR] * (gridRes ** 2), 0.0))
 
     rSafe = toolRadius + safetyMargin
     cellsSafe = int(np.ceil(rSafe / gridRes))
@@ -186,7 +199,8 @@ def generateDropCutterPaths(targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Tr
     distSqSafe = xS ** 2 + yS ** 2
     maskRSafe = distSqSafe <= (rSafe / gridRes) ** 2
     kernelKeepOut = np.full((kSizeSafe, kSizeSafe), -np.inf, dtype=float)
-    kernelKeepOut[maskRSafe] = np.sqrt(np.maximum(rSafe ** 2 - distSqSafe[maskRSafe] * (gridRes ** 2), 0.0))
+    kernelKeepOut[maskRSafe] = np.sqrt(
+        np.maximum(rSafe ** 2 - distSqSafe[maskRSafe] * (gridRes ** 2), 0.0))
 
     clTarget = nd.grey_dilation(zTarget, structure=kernelTarget)
     clKeepOut = nd.grey_dilation(zKeepOut, structure=kernelKeepOut)
@@ -198,10 +212,12 @@ def generateDropCutterPaths(targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Tr
     paths = []
     if scanAxis == 'x':
         scanVals = np.arange(float(b[0, 1]), float(b[1, 1]) + stepOver * 0.5, stepOver)
-        travelVals = np.arange(float(b[0, 0]) - toolRadius, float(b[1, 0]) + toolRadius, projectionStep)
+        travelVals = np.arange(float(b[0, 0]) - toolRadius,
+                               float(b[1, 0]) + toolRadius, projectionStep)
     else:
         scanVals = np.arange(float(b[0, 0]), float(b[1, 0]) + stepOver * 0.5, stepOver)
-        travelVals = np.arange(float(b[0, 1]) - toolRadius, float(b[1, 1]) + toolRadius, projectionStep)
+        travelVals = np.arange(float(b[0, 1]) - toolRadius,
+                               float(b[1, 1]) + toolRadius, projectionStep)
 
     reverse = False
     for scan in scanVals:
@@ -215,11 +231,10 @@ def generateDropCutterPaths(targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Tr
             iy = int(round((yVal - yMin) / gridRes))
             if 0 <= ix < nx and 0 <= iy < ny:
                 if targetFootprint[ix, iy]:
-                    zVal = float(clFinal[ix, iy])
                     if clTarget[ix, iy] >= clKeepOut[ix, iy] - 1e-3:
-                        if zVal >= meshBottomZ + bottomClearance:
-                            seg.append([float(xVal), float(yVal), zVal])
-                            continue
+                        zVal = float(clFinal[ix, iy])
+                        seg.append([float(xVal), float(yVal), zVal])
+                        continue
             if len(seg) >= 2:
                 paths.append(np.array(seg, dtype=float))
             seg = []
@@ -230,22 +245,25 @@ def generateDropCutterPaths(targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Tr
 
 
 class DropRasterStrategy(IToolpathStrategy):
-    def generate(self, targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh, toolRadius: float,
-                 params: Dict[str, Any], safetyMargin: float) -> List[np.ndarray]:
+    def generate(self, targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh,
+                 toolRadius: float, params: Dict[str, Any],
+                 safetyMargin: float) -> List[np.ndarray]:
         params['finishStock'] = float(params.get('roughStock', 0.5))
         return generateDropCutterPaths(targetMesh, keepOutMesh, toolRadius, params, safetyMargin)
 
 
 class SurfaceProjectionFinishingStrategy(IToolpathStrategy):
-    def generate(self, targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh, toolRadius: float,
-                 params: Dict[str, Any], safetyMargin: float) -> List[np.ndarray]:
+    def generate(self, targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh,
+                 toolRadius: float, params: Dict[str, Any],
+                 safetyMargin: float) -> List[np.ndarray]:
         params['finishStock'] = float(params.get('finishStock', 0.03))
         return generateDropCutterPaths(targetMesh, keepOutMesh, toolRadius, params, safetyMargin)
 
 
 class IsoPlanarPatchFinishingStrategy(IToolpathStrategy):
-    def generate(self, targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh, toolRadius: float,
-                 params: Dict[str, Any], safetyMargin: float) -> List[np.ndarray]:
+    def generate(self, targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh,
+                 toolRadius: float, params: Dict[str, Any],
+                 safetyMargin: float) -> List[np.ndarray]:
         params['finishStock'] = float(params.get('finishStock', 0.03))
         return generateDropCutterPaths(targetMesh, keepOutMesh, toolRadius, params, safetyMargin)
 

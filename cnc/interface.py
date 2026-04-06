@@ -1,9 +1,8 @@
 from pathlib import Path
 from typing import Any, Dict
-import numpy as np
-from .geometryUtils import concatenateMeshes, generateHemisphereAxes, generateSphereAxes
-from .pathGenerator import FiveAxisCncPathGenerator
-from .visualization import PathVisualizer
+from cnc.geometryUtils import concatenateMeshes, generateHemisphereAxes, generateSphereAxes
+from cnc.pathGenerator import FiveAxisCncPathGenerator
+from cnc.visualization import PathVisualizer
 
 def generateCncJobInterface(partStl: str, moldStl: str, gateStl: str, riserStl: str,
                              outputJsonPath: str, processConfig: Dict[str, Any],

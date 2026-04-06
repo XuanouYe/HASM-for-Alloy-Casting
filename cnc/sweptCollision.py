@@ -2,8 +2,8 @@ from typing import List, Optional
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from .toolModel import FlatEndMillTool
-from .implicitGeometry import SdfVolume
+from cnc.toolModel import FlatEndMillTool
+from cnc.implicitGeometry import SdfVolume
 
 
 def _buildRotMatFromAxis(axisVec: np.ndarray) -> np.ndarray:

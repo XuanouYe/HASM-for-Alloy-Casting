@@ -1,7 +1,7 @@
 from typing import Any, Dict, List, Optional
 import numpy as np
 import trimesh
-from .geometryUtils import deduplicateAxes, densifyPolyline, generateHemisphereAxes, nearestDistanceToPath, normalizeVector, sampleMeshPointsWithNormals
+from cnc.geometryUtils import deduplicateAxes, densifyPolyline, generateHemisphereAxes, nearestDistanceToPath, normalizeVector, sampleMeshPointsWithNormals
 
 class ShellCoveragePlanner:
     def __init__(self, shellMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh, toolRadius: float, safetyMargin: float, sampleCount: int = 8000, accessAngleDeg: float = 72.0, minAxisZ: float = 0.02):

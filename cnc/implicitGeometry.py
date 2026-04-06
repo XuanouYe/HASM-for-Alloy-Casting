@@ -1,7 +1,7 @@
 from typing import Optional
 import numpy as np
 import trimesh
-from .sdfBackend import createSdfBackend
+from cnc.sdfBackend import createSdfBackend
 
 
 class SdfVolume:
