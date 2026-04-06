@@ -4,10 +4,7 @@ import vtk
 import numpy as np
 from pyvistaqt import QtInteractor
 from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout,
-                              QPushButton, QCheckBox, QLabel, QComboBox)
-
-from cnc.machineKinematics import XyzacTrtKinematics
+from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QCheckBox
 
 
 stepTypeLabels = {
@@ -18,7 +15,6 @@ stepTypeLabels = {
 }
 
 MOTION_COLORS = {
-    "cut": None,
     "retract": "yellow",
     "rapid": "cyan",
     "approach": "lime",
@@ -34,11 +30,9 @@ class PathVisualizationDialog(QDialog):
         self.resize(1200, 800)
         self.targetMesh = targetMesh
         self.clData = clData
-        self.kinematics = XyzacTrtKinematics(kinematicsConfig or {})
         self.stepActors = {}
         self.linkActors = {}
         self.collisionActor = None
-        self.showMachineCoords = False
         self.initUI()
         self.renderPaths()
 
@@ -70,17 +64,12 @@ class PathVisualizationDialog(QDialog):
             controlLayout.addWidget(button)
             self.stepButtons.append(button)
 
-        self.coordModeCheck = QCheckBox("机床坐标系(逆解)")
-        self.coordModeCheck.setChecked(False)
-        self.coordModeCheck.toggled.connect(self.toggleCoordMode)
-        controlLayout.addWidget(self.coordModeCheck)
-
         self.showLinkCheck = QCheckBox("显示抬刀/连接")
         self.showLinkCheck.setChecked(True)
         self.showLinkCheck.toggled.connect(self.toggleLinkVisibility)
         controlLayout.addWidget(self.showLinkCheck)
 
-        self.collisionCheck = QCheckBox("显示碰撞路径(C)")
+        self.collisionCheck = QCheckBox("显示碰撞路径")
         self.collisionCheck.setChecked(False)
         self.collisionCheck.toggled.connect(self.toggleCollision)
         controlLayout.addWidget(self.collisionCheck)
@@ -97,17 +86,6 @@ class PathVisualizationDialog(QDialog):
             faces = self.targetMesh.faces
             pvFaces = np.column_stack((np.full(len(faces), 3), faces)).flatten()
             return pv.PolyData(vertices, pvFaces)
-
-    def convertPointsForDisplay(self, positions: list, toolAxes: list,
-                                useMachineCoords: bool) -> np.ndarray:
-        if not useMachineCoords:
-            return np.array(positions, dtype=float)
-        kin = XyzacTrtKinematics(self.kinematics.kinematicsCfg)
-        result = []
-        for pos, axis in zip(positions, toolAxes):
-            px, py, pz, aDeg, cDeg = kin.convertPoint(pos, axis)
-            result.append([px, py, pz])
-        return np.array(result, dtype=float)
 
     def renderPaths(self):
         pvMesh = self.buildMeshPolyData()
@@ -130,7 +108,6 @@ class PathVisualizationDialog(QDialog):
 
             cutSegments: dict = {}
             linkPairs: list = []
-
             sortedPts = sorted(clPoints, key=lambda p: int(p.get("pointId", 0)))
 
             for ptIdx in range(len(sortedPts) - 1):
@@ -138,32 +115,24 @@ class PathVisualizationDialog(QDialog):
                 pt1 = sortedPts[ptIdx + 1]
                 motionType = str(pt0.get("motionType", "cut")).lower()
                 segId = pt0.get("segmentId", 0)
-
                 pos0 = list(pt0["position"])
                 pos1 = list(pt1["position"])
-                axis0 = list(pt0.get("toolAxis", [0.0, 0.0, 1.0]))
-                axis1 = list(pt1.get("toolAxis", [0.0, 0.0, 1.0]))
-
                 if motionType == "cut":
-                    cutSegments.setdefault(segId, {"positions": [], "axes": []})
-                    if not cutSegments[segId]["positions"]:
-                        cutSegments[segId]["positions"].append(pos0)
-                        cutSegments[segId]["axes"].append(axis0)
-                    cutSegments[segId]["positions"].append(pos1)
-                    cutSegments[segId]["axes"].append(axis1)
+                    cutSegments.setdefault(segId, [])
+                    if not cutSegments[segId]:
+                        cutSegments[segId].append(pos0)
+                    cutSegments[segId].append(pos1)
                 else:
                     linkColor = MOTION_COLORS.get(motionType, "white")
-                    linkPairs.append((pos0, axis0, pos1, axis1, linkColor))
+                    linkPairs.append((pos0, pos1, linkColor))
 
             normalLines = []
-            for segId, segData in cutSegments.items():
-                displayPts = self.convertPointsForDisplay(
-                    segData["positions"], segData["axes"], self.showMachineCoords)
+            for segId, segPositions in cutSegments.items():
+                displayPts = np.array(segPositions, dtype=float)
                 for k in range(len(displayPts) - 1):
                     p1 = displayPts[k].tolist()
                     p2 = displayPts[k + 1].tolist()
-                    dist = float(np.linalg.norm(np.array(p1) - np.array(p2)))
-                    if dist < 1e-6:
+                    if float(np.linalg.norm(np.array(p1) - np.array(p2))) < 1e-6:
                         continue
                     code = tree.IntersectWithLine(p1, p2, intersectPoints, None)
                     if code != 0:
@@ -187,13 +156,8 @@ class PathVisualizationDialog(QDialog):
                 self.stepActors[stepIndex] = actor
 
             linkLinesByColor: dict = {}
-            for pos0, axis0, pos1, axis1, linkColor in linkPairs:
-                displayPt0 = self.convertPointsForDisplay(
-                    [pos0], [axis0], self.showMachineCoords)[0]
-                displayPt1 = self.convertPointsForDisplay(
-                    [pos1], [axis1], self.showMachineCoords)[0]
-                linkLinesByColor.setdefault(linkColor, []).extend(
-                    [displayPt0.tolist(), displayPt1.tolist()])
+            for pos0, pos1, linkColor in linkPairs:
+                linkLinesByColor.setdefault(linkColor, []).extend([pos0, pos1])
 
             stepLinkActors = {}
             for linkColor, pts in linkLinesByColor.items():
@@ -206,10 +170,9 @@ class PathVisualizationDialog(QDialog):
                 pvLink = pv.PolyData()
                 pvLink.points = pointArray
                 pvLink.lines = lineArray.flatten()
-                actorName = f"link_{stepIndex}_{linkColor}"
                 linkActor = self.plotter.add_mesh(
                     pvLink, color=linkColor, line_width=1.5,
-                    opacity=0.85, name=actorName)
+                    opacity=0.85, name=f"link_{stepIndex}_{linkColor}")
                 stepLinkActors[linkColor] = linkActor
             self.linkActors[stepIndex] = stepLinkActors
 
@@ -230,18 +193,6 @@ class PathVisualizationDialog(QDialog):
 
         self.plotter.reset_camera()
 
-    def refreshPaths(self):
-        self.plotter.clear_actors()
-        self.stepActors = {}
-        self.linkActors = {}
-        self.collisionActor = None
-        self.renderPaths()
-        showLinks = self.showLinkCheck.isChecked()
-        for stepLinkActorMap in self.linkActors.values():
-            for actor in stepLinkActorMap.values():
-                actor.SetVisibility(showLinks)
-        self.plotter.render()
-
     def showAllSteps(self):
         for actor in self.stepActors.values():
             actor.SetVisibility(True)
@@ -257,10 +208,6 @@ class PathVisualizationDialog(QDialog):
             for actor in stepLinkActorMap.values():
                 actor.SetVisibility(idx == stepIndex and self.showLinkCheck.isChecked())
         self.plotter.render()
-
-    def toggleCoordMode(self, checked):
-        self.showMachineCoords = checked
-        self.refreshPaths()
 
     def toggleLinkVisibility(self, checked):
         for stepLinkActorMap in self.linkActors.values():

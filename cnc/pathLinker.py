@@ -1,7 +1,23 @@
 import math
 from copy import deepcopy
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 import numpy as np
+
+
+def resolveOutwardAxis(toolAxis: List[float], pos: List[float],
+                       sceneCenter: List[float]) -> List[float]:
+    ax, ay, az = [float(v) for v in toolAxis]
+    axisLen = math.sqrt(ax * ax + ay * ay + az * az)
+    if axisLen < 1e-9:
+        return [0.0, 0.0, 1.0]
+    ax, ay, az = ax / axisLen, ay / axisLen, az / axisLen
+    cx = float(pos[0]) - float(sceneCenter[0])
+    cy = float(pos[1]) - float(sceneCenter[1])
+    cz = float(pos[2]) - float(sceneCenter[2])
+    dotVal = ax * cx + ay * cy + az * cz
+    if dotVal < 0.0:
+        return [-ax, -ay, -az]
+    return [ax, ay, az]
 
 
 class ClPathLinker:
@@ -17,10 +33,22 @@ class ClPathLinker:
         self.retractAxisLength = float(linkerConfig.get("retractAxisLength", 10.0))
         self.retractCollisionMesh = linkerConfig.get("retractCollisionMesh", None)
         self.stepLinkingEnabled = linkerConfig.get("stepLinkingEnabled", {})
+        self._sceneCenter: Optional[List[float]] = None
 
     def processClData(self, clData: Dict[str, Any]) -> Dict[str, Any]:
         linkedData = deepcopy(clData)
         stepsList = linkedData.get("steps", [])
+        allPositions = [
+            p["position"]
+            for step in stepsList
+            for p in step.get("clPoints", [])
+            if "position" in p
+        ]
+        if allPositions:
+            arr = np.array(allPositions, dtype=float)
+            self._sceneCenter = arr.mean(axis=0).tolist()
+        else:
+            self._sceneCenter = [0.0, 0.0, 0.0]
         for stepItem in stepsList:
             stepType = str(stepItem.get("stepType", ""))
             allowDirect = bool(self.stepLinkingEnabled.get(stepType, True))
@@ -47,9 +75,9 @@ class ClPathLinker:
         startZ = float(startPt.get("position", [0.0, 0.0, 0.0])[2])
         return max(endZ, startZ) + safeHeight
 
-    def computeRetractPointAlongAxis(self, pos: List[float], toolAxis: List[float],
+    def computeRetractPointAlongAxis(self, pos: List[float], outwardAxis: List[float],
                                      retractLength: float) -> List[float]:
-        ax, ay, az = [float(v) for v in toolAxis]
+        ax, ay, az = [float(v) for v in outwardAxis]
         axisLen = math.sqrt(ax * ax + ay * ay + az * az)
         if axisLen < 1e-9:
             ax, ay, az = 0.0, 0.0, 1.0
@@ -61,26 +89,25 @@ class ClPathLinker:
             float(pos[2]) + az * retractLength,
         ]
 
-    def safeRetractLength(self, pos: List[float], toolAxis: List[float],
+    def outwardAxisAt(self, pos: List[float], toolAxis: List[float]) -> List[float]:
+        center = self._sceneCenter if self._sceneCenter is not None else [0.0, 0.0, 0.0]
+        return resolveOutwardAxis(toolAxis, pos, center)
+
+    def safeRetractLength(self, pos: List[float], outwardAxis: List[float],
                           desiredLength: float) -> float:
         if self.retractCollisionMesh is None:
             return desiredLength
         try:
-            import trimesh
             import vtk
-            pvMesh = None
-            try:
-                import pyvista as pv
-                verts = np.array(self.retractCollisionMesh.vertices)
-                faces = self.retractCollisionMesh.faces
-                pvFaces = np.column_stack((np.full(len(faces), 3), faces)).flatten()
-                pvMesh = pv.PolyData(verts, pvFaces)
-            except Exception:
-                return desiredLength
+            import pyvista as pv
+            verts = np.array(self.retractCollisionMesh.vertices)
+            faces = self.retractCollisionMesh.faces
+            pvFaces = np.column_stack((np.full(len(faces), 3), faces)).flatten()
+            pvMesh = pv.PolyData(verts, pvFaces)
             tree = vtk.vtkOBBTree()
             tree.SetDataSet(pvMesh)
             tree.BuildLocator()
-            endPt = self.computeRetractPointAlongAxis(pos, toolAxis, desiredLength)
+            endPt = self.computeRetractPointAlongAxis(pos, outwardAxis, desiredLength)
             intersectPts = vtk.vtkPoints()
             code = tree.IntersectWithLine(pos, endPt, intersectPts, None)
             if code == 0:
@@ -97,8 +124,9 @@ class ClPathLinker:
 
     def buildAxisRetractPoint(self, pos: List[float], toolAxis: List[float],
                               desiredLength: float) -> List[float]:
-        safeLen = self.safeRetractLength(pos, toolAxis, desiredLength)
-        return self.computeRetractPointAlongAxis(pos, toolAxis, safeLen)
+        outAxis = self.outwardAxisAt(pos, toolAxis)
+        safeLen = self.safeRetractLength(pos, outAxis, desiredLength)
+        return self.computeRetractPointAlongAxis(pos, outAxis, safeLen)
 
     def buildLevel1Link(self, endPt: Dict[str, Any], startPt: Dict[str, Any],
                         endAxis: List[float], startAxis: List[float],
