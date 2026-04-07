@@ -117,6 +117,74 @@ class FiveAxisCncPathGenerator:
             selectedAxes = [normalizeVector(np.asarray(candidateAxes[0], dtype=float))]
         return selectedAxes
 
+    def _selectStep1Axes(self, axisStrategyParams: Dict[str, Any]) -> List[np.ndarray]:
+        tiltAngleDeg = float(axisStrategyParams.get("step1TiltAngleDeg", 35.0))
+        tiltCount = int(axisStrategyParams.get("step1TiltCount", 2))
+        tiltCount = max(0, min(tiltCount, 2))
+        axes = [np.array([0.0, 0.0, 1.0], dtype=float)]
+        tiltRad = np.radians(tiltAngleDeg)
+        tiltDirs = [
+            np.array([np.sin(tiltRad), 0.0, np.cos(tiltRad)], dtype=float),
+            np.array([0.0, np.sin(tiltRad), np.cos(tiltRad)], dtype=float),
+        ]
+        for i in range(tiltCount):
+            axes.append(normalizeVector(tiltDirs[i]))
+        return axes
+
+    def _filterStep1ByPartSdf(self, stepData: Dict[str, Any],
+                               partSdf: SdfVolume,
+                               safeClearance: float) -> Dict[str, Any]:
+        clPoints = stepData.get("clPoints", [])
+        if not clPoints or partSdf.isEmpty:
+            return stepData
+        sortedPts = sorted(clPoints, key=lambda p: int(p.get("pointId", 0)))
+        positions = np.array([p["position"] for p in sortedPts], dtype=float)
+        sdVals = partSdf.query(positions)
+        segMap: Dict[int, List] = {}
+        for i, pt in enumerate(sortedPts):
+            sid = int(pt.get("segmentId", -1))
+            segMap.setdefault(sid, []).append((i, pt))
+        newClPoints = []
+        newSegments = []
+        newPointId = 0
+        newSegId = 0
+        for sid, indexedPts in segMap.items():
+            currentRun = []
+            for origIdx, pt in indexedPts:
+                if float(sdVals[origIdx]) >= -safeClearance:
+                    currentRun.append(pt)
+                else:
+                    if len(currentRun) >= 2:
+                        for p in currentRun:
+                            p["pointId"] = newPointId
+                            p["segmentId"] = newSegId
+                            newPointId += 1
+                        newClPoints.extend(currentRun)
+                        newSegments.append({
+                            "segmentId": newSegId,
+                            "axisIndex": currentRun[0].get("axisIndex", 0),
+                            "toolAxis": currentRun[0].get("toolAxis", [0.0, 0.0, 1.0]),
+                            "pointCount": len(currentRun)
+                        })
+                        newSegId += 1
+                    currentRun = []
+            if len(currentRun) >= 2:
+                for p in currentRun:
+                    p["pointId"] = newPointId
+                    p["segmentId"] = newSegId
+                    newPointId += 1
+                newClPoints.extend(currentRun)
+                newSegments.append({
+                    "segmentId": newSegId,
+                    "axisIndex": currentRun[0].get("axisIndex", 0),
+                    "toolAxis": currentRun[0].get("toolAxis", [0.0, 0.0, 1.0]),
+                    "pointCount": len(currentRun)
+                })
+                newSegId += 1
+        stepData["clPoints"] = newClPoints
+        stepData["segments"] = newSegments
+        return stepData
+
     def _emitSegments(self, localPaths: List[np.ndarray], axisUnit: np.ndarray,
                       feedrate: float, rotBack: np.ndarray,
                       outputSegmentId: int, pointId: int, axisIndex: int,
@@ -128,7 +196,6 @@ class FiveAxisCncPathGenerator:
             if len(pathArray) < 2:
                 continue
             finalWcsPath = applyRotation(pathArray, rotBack)
-
             safeRows = finalWcsPath[:, 2] >= worldSafeZ
             currentRun = []
             for i, safe in enumerate(safeRows):
@@ -164,7 +231,6 @@ class FiveAxisCncPathGenerator:
                 })
                 allClPoints.extend(clPts)
                 outputSegmentId += 1
-
         return segments, allClPoints, outputSegmentId, pointId
 
     def _emptyStep(self, stepId: int, stepType: str,
@@ -184,21 +250,17 @@ class FiveAxisCncPathGenerator:
         clPoints = stepData.get("clPoints", [])
         if not clPoints or partSdf.isEmpty:
             return stepData
-
         sortedPts = sorted(clPoints, key=lambda p: int(p.get("pointId", 0)))
         positions = np.array([p["position"] for p in sortedPts], dtype=float)
         sdVals = partSdf.query(positions)
-
         segMap: Dict[int, List] = {}
         for i, pt in enumerate(sortedPts):
             sid = int(pt.get("segmentId", -1))
             segMap.setdefault(sid, []).append((i, pt))
-
         newClPoints = []
         newSegments = []
         newPointId = 0
         newSegId = 0
-
         for sid, indexedPts in segMap.items():
             currentRun = []
             for origIdx, pt in indexedPts:
@@ -232,7 +294,6 @@ class FiveAxisCncPathGenerator:
                     "pointCount": len(currentRun)
                 })
                 newSegId += 1
-
         stepData["clPoints"] = newClPoints
         stepData["segments"] = newSegments
         return stepData
@@ -257,46 +318,37 @@ class FiveAxisCncPathGenerator:
         ipwData = (PointCloudIPW(targetMesh, int(stepParam.get("ipwSampleCount", 50000)))
                    if useIpw else None)
         sweepTol = float(stepParam.get("sweepTol", toolRadius * 0.1))
-
         platformSafeZ = float(globalMinZ + toolRadius + safetyMargin)
         effectiveWorldSafeZ = max(worldSafeZ, platformSafeZ)
-
         segments = []
         allClPoints = []
         pointId = 0
         outputSegmentId = 0
-
         for axisIndex, toolAxis in enumerate(candidateAxes):
             axisUnit = normalizeVector(np.asarray(toolAxis, dtype=float))
             rotToToolFrame = buildRotationFromTo(
                 axisUnit, np.array([0.0, 0.0, 1.0], dtype=float))
             rotBack = rotToToolFrame.T
-
             rotatedTarget = self.rotateMesh(targetMesh, rotToToolFrame)
-
             strategyCtx = dict(stepParam)
             strategyCtx["_toolpathEngine"] = self.toolpathEngine
             strategyCtx["bottomClearance"] = float(
                 toolParams.get("bottomClearance", 0.0))
             rawPathsLocal = strategy.generate(
                 rotatedTarget, trimesh.Trimesh(), toolRadius, strategyCtx, safetyMargin)
-
             if collisionEngine is not None:
                 rawPathsLocal = collisionEngine.filterPaths(
                     rawPathsLocal, axisUnit, rotBack, sweepTol)
             else:
                 rawPathsLocal = [np.asarray(p, dtype=float)
                                  for p in rawPathsLocal if len(p) >= 2]
-
             rawPathsWcs = [applyRotation(np.asarray(p, dtype=float), rotBack)
                            for p in rawPathsLocal if len(p) >= 2]
             clippedWcs = self.toolpathEngine.clipWcsPathsByZ(
                 rawPathsWcs, effectiveWorldSafeZ)
-
             rotInv = rotToToolFrame
             validPathsLocal = [applyRotation(pw, rotInv) for pw in clippedWcs
                                 if len(pw) >= 2]
-
             if not isFinishing:
                 reClipped = []
                 for pathLocal in validPathsLocal:
@@ -304,22 +356,18 @@ class FiveAxisCncPathGenerator:
                         self.toolpathEngine.slicePathByPlatformZ(
                             pathLocal, rotBack, effectiveWorldSafeZ))
                 validPathsLocal = reClipped
-
             if ipwData is not None and validPathsLocal:
                 validPathsLocal = ipwData.filterPathsLocal(
                     validPathsLocal, rotToToolFrame, toolRadius, stepOver)
                 ipwData.updateIpwLocal(validPathsLocal, rotToToolFrame, toolRadius)
-
             if not validPathsLocal:
                 continue
-
             stepSegs, stepPts, outputSegmentId, pointId = self._emitSegments(
                 validPathsLocal, axisUnit, feedrate, rotBack,
                 outputSegmentId, pointId, axisIndex,
                 worldSafeZ=effectiveWorldSafeZ)
             segments.extend(stepSegs)
             allClPoints.extend(stepPts)
-
         return {
             "stepId": int(stepId),
             "stepType": str(stepType),
@@ -329,6 +377,75 @@ class FiveAxisCncPathGenerator:
             "clPoints": allClPoints
         }
 
+    def generateStep1ShellRemoval(self, toolParams: Dict[str, Any],
+                                   stepParam: Dict[str, Any],
+                                   moldMesh: trimesh.Trimesh,
+                                   partSdf: SdfVolume,
+                                   step1Axes: List[np.ndarray],
+                                   globalMinZ: float,
+                                   safetyMargin: float,
+                                   worldSafeZ: float) -> Dict[str, Any]:
+        toolRadius = float(toolParams.get("diameter", 6.0)) * 0.5
+        feedrate = float(stepParam.get("feedrate", 500.0))
+        coarseStepOver = float(stepParam.get("step1StepOver",
+                               stepParam.get("stepOver", toolRadius * 1.5)))
+        coarseLayerStep = float(stepParam.get("step1LayerStep",
+                                stepParam.get("layerStep", toolRadius * 1.5)))
+        step1SafeClearance = float(stepParam.get("step1SafeClearance", safetyMargin * 1.5))
+        platformSafeZ = float(globalMinZ + toolRadius + safetyMargin)
+        effectiveWorldSafeZ = max(worldSafeZ, platformSafeZ)
+        coarseParams = dict(stepParam)
+        coarseParams["mode"] = "shellRemovalRoughing"
+        coarseParams["stepOver"] = coarseStepOver
+        coarseParams["layerStep"] = coarseLayerStep
+        coarseParams["roughStock"] = float(stepParam.get("roughStock", toolRadius * 0.3))
+        coarseParams["step1UseContour"] = bool(stepParam.get("step1UseContour", True))
+        coarseParams["step1ContourPasses"] = int(stepParam.get("step1ContourPasses", 2))
+        coarseParams["_toolpathEngine"] = self.toolpathEngine
+        coarseParams["bottomClearance"] = float(toolParams.get("bottomClearance", 0.0))
+        strategy = ToolpathStrategyFactory.getStrategy("shellRemovalRoughing")
+        segments = []
+        allClPoints = []
+        pointId = 0
+        outputSegmentId = 0
+        for axisIndex, toolAxis in enumerate(step1Axes):
+            axisUnit = normalizeVector(np.asarray(toolAxis, dtype=float))
+            rotToToolFrame = buildRotationFromTo(
+                axisUnit, np.array([0.0, 0.0, 1.0], dtype=float))
+            rotBack = rotToToolFrame.T
+            rotatedMold = self.rotateMesh(moldMesh, rotToToolFrame)
+            rawPathsLocal = strategy.generate(
+                rotatedMold, trimesh.Trimesh(), toolRadius, coarseParams, safetyMargin)
+            rawPathsLocal = [np.asarray(p, dtype=float) for p in rawPathsLocal if len(p) >= 2]
+            rawPathsWcs = [applyRotation(np.asarray(p, dtype=float), rotBack)
+                           for p in rawPathsLocal if len(p) >= 2]
+            clippedWcs = self.toolpathEngine.clipWcsPathsByZ(rawPathsWcs, effectiveWorldSafeZ)
+            rotInv = rotToToolFrame
+            validPathsLocal = [applyRotation(pw, rotInv) for pw in clippedWcs if len(pw) >= 2]
+            reClipped = []
+            for pathLocal in validPathsLocal:
+                reClipped.extend(
+                    self.toolpathEngine.slicePathByPlatformZ(
+                        pathLocal, rotBack, effectiveWorldSafeZ))
+            validPathsLocal = reClipped
+            if not validPathsLocal:
+                continue
+            stepSegs, stepPts, outputSegmentId, pointId = self._emitSegments(
+                validPathsLocal, axisUnit, feedrate, rotBack,
+                outputSegmentId, pointId, axisIndex,
+                worldSafeZ=effectiveWorldSafeZ)
+            segments.extend(stepSegs)
+            allClPoints.extend(stepPts)
+        stepData = {
+            "stepId": 1,
+            "stepType": "shellRemoval",
+            "toolParams": toolParams,
+            "motionPolicy": "externalPost",
+            "segments": segments,
+            "clPoints": allClPoints
+        }
+        return self._filterStep1ByPartSdf(stepData, partSdf, step1SafeClearance)
+
     def generateJob(self, partStl: str, moldStl: str, gateStl: str, riserStl: str,
                     toolParams: Dict[str, Any], stepParams: List[Dict[str, Any]],
                     axisStrategyParams: Dict[str, Any], wcsId: str = "WCS_MAIN",
@@ -337,11 +454,9 @@ class FiveAxisCncPathGenerator:
         moldMesh = self.loadMesh(moldStl)
         gateMesh = self.loadMesh(gateStl)
         riserMesh = self.loadMesh(riserStl)
-
         meshList = [partMesh, moldMesh, gateMesh, riserMesh]
         globalMinZ = min(
             float(m.bounds[0, 2]) for m in meshList if m is not None and not m.is_empty)
-
         candidateAxesRaw = axisStrategyParams.get("candidateAxes", [[0.0, 0.0, 1.0]])
         candidateAxes = [normalizeVector(np.asarray(a, dtype=float))
                          for a in candidateAxesRaw]
@@ -355,17 +470,13 @@ class FiveAxisCncPathGenerator:
         sweptDiskCount = int(toolParams.get("sweptDiskCount", 16))
         sweptRingCount = int(toolParams.get("sweptRingCount", 6))
         sweptSafeBuffer = float(toolParams.get("sweptSafeBuffer", 2.0))
-
         worldSafeZ = globalMinZ + bottomSafeOffset
-
         enableStep1 = bool(axisStrategyParams.get("enableStep1ShellRemoval", True))
         enableStep2 = bool(axisStrategyParams.get("enableStep2RiserRemoval", True))
         enableStep3 = bool(axisStrategyParams.get("enableStep3PartFinishing", True))
         enableStep4 = bool(axisStrategyParams.get("enableStep4GateRemoval", True))
-
         flatTool = self.toolpathEngine.buildFlatEndMillTool(toolParams)
         clearanceVal = toolRadius + safetyMargin
-
         partSdf = buildSdfVolume(partMesh, voxelSize, backendName)
 
         def buildEngine(protectMeshes, clearances):
@@ -378,12 +489,10 @@ class FiveAxisCncPathGenerator:
                 safeBuffer=sweptSafeBuffer)
 
         if enableStep1:
-            protectStep1 = concatenateMeshes([partMesh, gateMesh, riserMesh])
-            engine1 = buildEngine([protectStep1], [clearanceVal])
-            step1 = self.generateStepWithAxes(
-                1, "shellRemoval", moldMesh, engine1, toolParams,
-                stepParams[0], candidateAxes, globalMinZ, safetyMargin, worldSafeZ)
-            step1 = self._filterClPointsByPartSdf(step1, partSdf, stepSafeClearance)
+            step1Axes = self._selectStep1Axes(axisStrategyParams)
+            step1 = self.generateStep1ShellRemoval(
+                toolParams, stepParams[0], moldMesh, partSdf,
+                step1Axes, globalMinZ, safetyMargin, worldSafeZ)
         else:
             step1 = self._emptyStep(1, "shellRemoval", toolParams)
 

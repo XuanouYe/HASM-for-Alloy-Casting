@@ -42,21 +42,37 @@ def generateCncJobInterface(partStl: str, moldStl: str, gateStl: str, riserStl: 
     enableStep3 = bool(subCfg.get("enableStep3PartFinishing", True))
     enableStep4 = bool(subCfg.get("enableStep4GateRemoval", True))
 
+    shellStepOver = float(subCfg.get("shellStepOver", stepOver))
+    shellLayerStep = float(subCfg.get("shellLayerStepDown", layerStep))
+    shellFeedrate = float(subCfg.get("shellFeedRate", feedrate))
+    shellRoughStock = float(subCfg.get("shellRoughStock", 0.0))
+
+    step1TiltAngleDeg = float(subCfg.get("step1TiltAngleDeg", 35.0))
+    step1TiltCount = int(subCfg.get("step1TiltCount", 2))
+    step1UseContour = bool(subCfg.get("step1UseContour", True))
+    step1ContourPasses = int(subCfg.get("step1ContourPasses", 2))
+    step1SafeClearance = float(subCfg.get("step1SafeClearance", safetyMargin * 1.5))
+
     allStepDefs = [
         {
             "stepId": 1,
             "stepType": "shellRemoval",
             "enabled": enableStep1,
             "params": {
-                "mode": "zLevelRoughing",
-                "stepOver": float(subCfg.get("shellStepOver", stepOver)),
-                "layerStep": float(subCfg.get("shellLayerStepDown", layerStep)),
+                "mode": "shellRemovalRoughing",
+                "stepOver": shellStepOver,
+                "layerStep": shellLayerStep,
                 "safeHeight": safeHeight,
                 "maxRetractOffset": maxRetractOffset,
-                "feedrate": float(subCfg.get("shellFeedRate", feedrate)),
-                "roughStock": float(subCfg.get("shellRoughStock", 0.0)),
+                "feedrate": shellFeedrate,
+                "roughStock": shellRoughStock,
                 "sweepTol": sdfVoxelSize,
-                "enablePathLinking": True
+                "enablePathLinking": True,
+                "step1TiltAngleDeg": step1TiltAngleDeg,
+                "step1TiltCount": step1TiltCount,
+                "step1UseContour": step1UseContour,
+                "step1ContourPasses": step1ContourPasses,
+                "step1SafeClearance": step1SafeClearance,
             }
         },
         {
@@ -116,7 +132,9 @@ def generateCncJobInterface(partStl: str, moldStl: str, gateStl: str, riserStl: 
         "step3AxisSampleCount": int(subCfg.get("step3AxisSampleCount", 16000)),
         "step3MinNormalDot": 0.0,
         "step3TargetCoverage": float(subCfg.get("step3TargetCoverage", 0.995)),
-        "step3AxisDiversityDot": float(subCfg.get("step3AxisDiversityDot", 0.985))
+        "step3AxisDiversityDot": float(subCfg.get("step3AxisDiversityDot", 0.985)),
+        "step1TiltAngleDeg": step1TiltAngleDeg,
+        "step1TiltCount": step1TiltCount,
     }
 
     generator = FiveAxisCncPathGenerator(version="4.0")
@@ -197,7 +215,12 @@ if __name__ == "__main__":
                     "step3AxisSampleCount": 16000,
                     "step3TargetCoverage": 0.995,
                     "step3AxisDiversityDot": 0.985,
-                    "angleThreshold": 1.047
+                    "angleThreshold": 1.047,
+                    "step1TiltAngleDeg": 35.0,
+                    "step1TiltCount": 2,
+                    "step1UseContour": True,
+                    "step1ContourPasses": 2,
+                    "step1SafeClearance": 0.75,
                 }
             },
             jobId="JOB_TEST",

@@ -3,7 +3,7 @@ from typing import Any, Dict, List
 import numpy as np
 import scipy.ndimage as nd
 import trimesh
-from shapely.geometry import LineString, MultiPolygon
+from shapely.geometry import LineString, MultiPolygon, Polygon
 from shapely.ops import unary_union
 from shapely.validation import make_valid
 
@@ -66,6 +66,34 @@ def extractLineStrings(geomValue: Any) -> List[Any]:
     return []
 
 
+def _rasterFillPoly(polyItem: Any, stepOver: float, to3dMat: np.ndarray,
+                    zValue: float, reverseStart: bool) -> List[np.ndarray]:
+    paths = []
+    if polyItem.is_empty:
+        return paths
+    minX, minY, maxX, maxY = polyItem.bounds
+    yList = np.arange(minY, maxY + stepOver * 0.5, stepOver, dtype=float)
+    reverseFlag = reverseStart
+    for yValue in yList:
+        scanLine = LineString([(minX - 1.0, yValue), (maxX + 1.0, yValue)])
+        interResult = scanLine.intersection(polyItem)
+        lineItems = extractLineStrings(interResult)
+        for lineItem in lineItems:
+            coordArray = np.asarray(lineItem.coords, dtype=float)
+            if len(coordArray) < 2:
+                continue
+            if reverseFlag:
+                coordArray = coordArray[::-1]
+            coordHomo = np.column_stack(
+                [coordArray, np.zeros(len(coordArray)),
+                 np.ones(len(coordArray))])
+            path3d = (to3dMat @ coordHomo.T).T[:, :3]
+            if len(path3d) >= 2:
+                paths.append(path3d)
+        reverseFlag = not reverseFlag
+    return paths
+
+
 class ZLevelRoughingStrategy(IToolpathStrategy):
     def generate(self, targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh,
                  toolRadius: float, params: Dict[str, Any],
@@ -111,12 +139,12 @@ class ZLevelRoughingStrategy(IToolpathStrategy):
                 continue
             polyGeoms = (list(safePoly.geoms)
                          if safePoly.geom_type == 'MultiPolygon' else [safePoly])
+            reverseFlag = False
             for polyItem in polyGeoms:
                 if polyItem.is_empty:
                     continue
                 minX, minY, maxX, maxY = polyItem.bounds
                 yList = np.arange(minY, maxY + stepOver * 0.5, stepOver, dtype=float)
-                reverseFlag = False
                 for yValue in yList:
                     scanLine = LineString([(minX - 1.0, yValue), (maxX + 1.0, yValue)])
                     interResult = scanLine.intersection(polyItem)
@@ -244,6 +272,97 @@ def generateDropCutterPaths(targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Tr
     return paths
 
 
+def generateShellRemovalPaths(targetMesh: trimesh.Trimesh,
+                               toolRadius: float,
+                               params: Dict[str, Any],
+                               safetyMargin: float) -> List[np.ndarray]:
+    if targetMesh is None or targetMesh.is_empty:
+        return []
+
+    stepOver = float(params.get('stepOver', toolRadius * 1.5))
+    layerStep = float(params.get('layerStep', toolRadius * 1.5))
+    roughStock = float(params.get('roughStock', toolRadius * 0.3))
+    bottomClearance = float(params.get('bottomClearance', 0.0))
+    useContour = bool(params.get('step1UseContour', True))
+    contourPasses = int(params.get('step1ContourPasses', 2))
+
+    boundsArray = np.asarray(targetMesh.bounds, dtype=float)
+    zMin = float(boundsArray[0, 2])
+    zMax = float(boundsArray[1, 2])
+    localSafeZ = zMin + bottomClearance if bottomClearance > 0.0 else -np.inf
+
+    zLevels = np.arange(zMax - layerStep, zMin, -layerStep, dtype=float)
+    if len(zLevels) == 0 or zLevels[-1] > zMin + layerStep * 0.1:
+        zLevels = np.append(zLevels, zMin)
+
+    allPaths = []
+
+    for zValue in zLevels:
+        if zValue < localSafeZ:
+            continue
+
+        targetPolys = robustSection(targetMesh, zValue)
+        if not targetPolys:
+            continue
+
+        try:
+            targetSlice = targetMesh.section(
+                plane_origin=[0.0, 0.0, zValue],
+                plane_normal=[0.0, 0.0, 1.0])
+            if targetSlice is None:
+                continue
+            _, to3dMat = targetSlice.to_2D()
+        except Exception:
+            continue
+
+        outerUnion = cleanPolygon(targetPolys)
+        if outerUnion.is_empty:
+            continue
+
+        fillablePoly = outerUnion.buffer(-(toolRadius + roughStock))
+        if fillablePoly.is_empty:
+            continue
+
+        if useContour:
+            for passIdx in range(contourPasses):
+                offsetDist = toolRadius + roughStock + passIdx * stepOver
+                contourRing = outerUnion.buffer(-offsetDist)
+                if contourRing.is_empty:
+                    break
+                boundary = contourRing.boundary
+                if boundary is None or boundary.is_empty:
+                    break
+                geomType = boundary.geom_type
+                lineGeoms = []
+                if geomType == 'LineString':
+                    lineGeoms = [boundary]
+                elif geomType == 'MultiLineString':
+                    lineGeoms = list(boundary.geoms)
+                elif geomType == 'GeometryCollection':
+                    lineGeoms = [g for g in boundary.geoms
+                                 if g.geom_type in ('LineString', 'LinearRing')]
+                for lineGeom in lineGeoms:
+                    coords2d = np.asarray(lineGeom.coords, dtype=float)
+                    if len(coords2d) < 2:
+                        continue
+                    coordHomo = np.column_stack(
+                        [coords2d, np.zeros(len(coords2d)),
+                         np.ones(len(coords2d))])
+                    path3d = (to3dMat @ coordHomo.T).T[:, :3]
+                    if len(path3d) >= 2:
+                        allPaths.append(path3d)
+
+        polyGeoms = (list(fillablePoly.geoms)
+                     if fillablePoly.geom_type == 'MultiPolygon' else [fillablePoly])
+        reverseFlag = False
+        for polyItem in polyGeoms:
+            rasterPaths = _rasterFillPoly(polyItem, stepOver, to3dMat, zValue, reverseFlag)
+            allPaths.extend(rasterPaths)
+            reverseFlag = not reverseFlag
+
+    return allPaths
+
+
 class DropRasterStrategy(IToolpathStrategy):
     def generate(self, targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh,
                  toolRadius: float, params: Dict[str, Any],
@@ -268,6 +387,13 @@ class IsoPlanarPatchFinishingStrategy(IToolpathStrategy):
         return generateDropCutterPaths(targetMesh, keepOutMesh, toolRadius, params, safetyMargin)
 
 
+class ShellRemovalRoughingStrategy(IToolpathStrategy):
+    def generate(self, targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh,
+                 toolRadius: float, params: Dict[str, Any],
+                 safetyMargin: float) -> List[np.ndarray]:
+        return generateShellRemovalPaths(targetMesh, toolRadius, params, safetyMargin)
+
+
 class ToolpathStrategyFactory:
     strategies = {
         'zlevelroughing': ZLevelRoughingStrategy,
@@ -276,7 +402,9 @@ class ToolpathStrategyFactory:
         'surfacefinishing': SurfaceProjectionFinishingStrategy,
         'spf': SurfaceProjectionFinishingStrategy,
         'isoplanarpatchfinishing': IsoPlanarPatchFinishingStrategy,
-        'ippf': IsoPlanarPatchFinishingStrategy
+        'ippf': IsoPlanarPatchFinishingStrategy,
+        'shellremovalroughing': ShellRemovalRoughingStrategy,
+        'srr': ShellRemovalRoughingStrategy,
     }
 
     @classmethod
