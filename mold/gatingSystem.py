@@ -13,14 +13,6 @@ class MoldConfig:
     lowestZ: float
 
 @dataclass
-class RheologyParams:
-    meltViscosity: float = 2e-3
-    solidificationFactor: float = 1.5
-    maxPressureDrop: float = 1e5
-    heatTransferCoeff: float = 500.0
-    meltOverheat: float = 30.0
-
-@dataclass
 class GateCandidate:
     surfacePoint: np.ndarray
     surfaceNormal: np.ndarray
@@ -34,25 +26,17 @@ class AutoGatingSystem:
         if isinstance(mesh, trimesh.Scene):
             mesh = mesh.dump(concatenate=True)
         self._originalMesh = mesh
-        self.velocityLimit = 500.0
-        self.modelScale = float(np.max(self._originalMesh.bounding_box.extents))
-        self.minRadius = max(2.5, self.modelScale * 0.05)
-        self.bufferDistance = self.modelScale * 0.15
+        self.bufferDistance = float(np.max(self._originalMesh.bounding_box.extents)) * 0.15
         config = config or {}
-        self.targetFillTime = config.get('targetFillTime', 5.0)
         self.sprueInletOffset = config.get('sprueInletOffset', 5.0)
         self.boundingBoxOffset = config.get('boundingBoxOffset', 2.0)
         self.cavityMeshOverride = config.get('cavityMesh', None)
-
-        rConf = config.get('rheology', {})
-        self.rheologyParams = RheologyParams(
-            meltViscosity=rConf.get('meltViscosity', 2e-3),
-            solidificationFactor=rConf.get('solidificationFactor', 1.5),
-            maxPressureDrop=rConf.get('maxPressureDrop', 1e5),
-            heatTransferCoeff=rConf.get('heatTransferCoeff', 500.0),
-            meltOverheat=rConf.get('meltOverheat', 30.0)
-        )
         self.moldConfig = self._analyzeMold(self._originalMesh)
+        bboxMin, bboxMax = self.moldConfig.boundingBox
+        shortEdge = float(np.min(bboxMax - bboxMin))
+        maxAllowedRadius = shortEdge / 2.0
+        requestedRadius = float(config.get('runnerDiameter', 6.0)) / 2.0
+        self.runnerRadius = float(np.clip(requestedRadius, 1.0, maxAllowedRadius))
 
     def _analyzeMold(self, mesh: trimesh.Trimesh) -> MoldConfig:
         return MoldConfig(
@@ -138,7 +122,6 @@ class AutoGatingSystem:
         xWidth = dists[0] + dists[1] if dists[0] >= 0 and dists[1] >= 0 else -1.0
         yWidth = dists[2] + dists[3] if dists[2] >= 0 and dists[3] >= 0 else -1.0
         zHeight = dists[4] + dists[5] if dists[4] >= 0 and dists[5] >= 0 else -1.0
-
         diagDirs = np.array([[1, 1, 0], [-1, -1, 0], [1, -1, 0], [-1, 1, 0]], dtype=float)
         diagDirsNorm = diagDirs / np.linalg.norm(diagDirs, axis=1, keepdims=True)
         diagOrigins = np.tile(pIn, (4, 1))
@@ -176,7 +159,7 @@ class AutoGatingSystem:
         cavityMesh = self._getCavityMesh()
         bboxMin, bboxMax = self.moldConfig.boundingBox
         zMin, zMax = float(bboxMin[2]), float(bboxMax[2])
-        runnerRadius = self._computeRheologyRadius()
+        runnerRadius = self.runnerRadius
         modelScale = float(np.max(cavityMesh.bounding_box.extents))
         targetZ = self._computeTargetGateZ(runnerRadius)
         sampleStep = max(runnerRadius * 0.5, modelScale * 0.005)
@@ -201,7 +184,6 @@ class AutoGatingSystem:
                 projPoints, normals = self._projectAndGetNormal(cavityMesh, sectionPoints)
                 filteredPoints, filteredNormals = self._filterSideCandidates(projPoints, normals, currentZ, zTol, 0.3,
                                                                              0.3, cavityMesh)
-
                 for idx in range(len(filteredPoints)):
                     pSurf = filteredPoints[idx]
                     nSurf = filteredNormals[idx]
@@ -213,7 +195,6 @@ class AutoGatingSystem:
                         candidates.append(
                             GateCandidate(surfacePoint=pSurf, surfaceNormal=nSurf, thicknessScore=score, xWidth=xWidth,
                                           yWidth=yWidth, zHeight=zHeight))
-
                 if len(candidates) > 0:
                     break
                 currentZ += dzStep
@@ -227,36 +208,6 @@ class AutoGatingSystem:
             projPt, _, faceIdx = cavityMesh.nearest.on_surface([pts[0]])
             return projPt[0], cavityMesh.face_normals[faceIdx[0]]
         return np.array([bboxMax[0], (bboxMin[1] + bboxMax[1]) / 2.0, targetZ]), np.array([1.0, 0.0, 0.0])
-
-    def _calculateRunnerRadius(self) -> float:
-        cavityVolumeM3 = self.moldConfig.cavityVolume * 1e-9
-        flowRate = cavityVolumeM3 / max(self.targetFillTime, 0.1)
-        minArea = flowRate / (self.velocityLimit * 1e-3)
-        radius = np.sqrt(minArea / np.pi) * 1000.0
-        bboxMin, bboxMax = self.moldConfig.boundingBox
-        maxAllowed = float(np.min(bboxMax - bboxMin)) * 0.25
-        return float(np.clip(max(radius, self.minRadius), self.minRadius, maxAllowed))
-
-    def _computeRheologyRadius(self, runnerLengthMm: float = None) -> float:
-        if runnerLengthMm is None:
-            bboxMin, bboxMax = self.moldConfig.boundingBox
-            runnerLengthMm = float(np.max(bboxMax - bboxMin)) * 0.6
-        runnerLengthM = runnerLengthMm * 1e-3
-        rp = self.rheologyParams
-        cavityVolumeM3 = self.moldConfig.cavityVolume * 1e-9
-        flowRate = cavityVolumeM3 / max(self.targetFillTime, 0.1)
-        effectiveViscosity = rp.meltViscosity * rp.solidificationFactor
-        numerator = 8.0 * effectiveViscosity * runnerLengthM * flowRate
-        denominator = np.pi * rp.maxPressureDrop
-        rheologyRadiusMm = (
-            (numerator / denominator) ** 0.25) * 1000.0 if denominator > 0 and numerator > 0 else self.minRadius
-        thermalFactor = 1.0 + 0.1 * (rp.heatTransferCoeff / 500.0)
-        rheologyRadiusMm *= thermalFactor
-        velocityRadius = self._calculateRunnerRadius()
-        finalRadius = max(rheologyRadiusMm, velocityRadius, self.minRadius)
-        bboxMin, bboxMax = self.moldConfig.boundingBox
-        maxAllowed = float(np.min(bboxMax - bboxMin)) * 0.25
-        return float(min(finalRadius, maxAllowed))
 
     def _generateRunnerPath(self, gateSurface: np.ndarray, gateNormal: np.ndarray, runnerZ: float, runnerRadius: float,
                             sprueInletZ: Optional[float] = None) -> List[np.ndarray]:
@@ -331,7 +282,7 @@ class AutoGatingSystem:
         projPoints, _, _ = cavityMesh.nearest.on_surface([bestTopPoint])
         return projPoints[0]
 
-    def _computeRiserDimensions(self, runnerRadius: float, attachmentZ: float, sprueInletZ: float, modelScale: float,
+    def _computeRiserDimensions(self, runnerRadius: float, attachmentZ: float, sprueInletZ: float,
                                 bboxExtents: np.ndarray) -> Dict:
         riserTopZ = sprueInletZ
         neckLength = 2.0 * runnerRadius
@@ -359,7 +310,7 @@ class AutoGatingSystem:
 
     def generateComponents(self) -> GatingComponents:
         gateSurface, gateNormal = self._proposeGateLocation()
-        runnerRadius = self._computeRheologyRadius()
+        runnerRadius = self.runnerRadius
         runnerZ = self._computeTargetGateZ(runnerRadius)
         cavityMesh = self._getCavityMesh()
         bboxExtents = np.array(cavityMesh.bounding_box.extents)
@@ -367,8 +318,7 @@ class AutoGatingSystem:
         sprueInletZ = float(bboxMax[2]) + self.boundingBoxOffset
         attachmentPoint = self._proposeRiserAttachmentPoint(cavityMesh, gateSurface)
         dims = self._computeRiserDimensions(
-            runnerRadius, float(attachmentPoint[2]), sprueInletZ,
-            float(np.max(bboxExtents)), bboxExtents)
+            runnerRadius, float(attachmentPoint[2]), sprueInletZ, bboxExtents)
         riserMesh = self._createRiserMesh(
             attachmentPoint, dims['riserTopZ'], dims['riserDiameter'],
             dims['neckDiameter'], dims['neckLength'], runnerRadius)
