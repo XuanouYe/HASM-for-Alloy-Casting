@@ -42,7 +42,7 @@ class SweptVolumeCollisionEngine:
             if sdfVol.isEmpty:
                 continue
             sdVals = sdfVol.query(worldPts)
-            localMin = float(np.min(sdVals)) + clearance
+            localMin = float(np.min(sdVals)) - clearance
             if localMin < minDist:
                 minDist = localMin
         return minDist
@@ -57,7 +57,7 @@ class SweptVolumeCollisionEngine:
                 continue
             sdFlat = sdfVol.query(worldPtsFlat)
             sdPerPose = sdFlat.reshape(N, self._nPts)
-            poseMin = np.min(sdPerPose, axis=1) + clearance
+            poseMin = np.min(sdPerPose, axis=1) - clearance
             np.minimum(minDists, poseMin, out=minDists)
         return minDists
 
