@@ -102,20 +102,21 @@ class MoldProcessPanel(QWidget):
         paramLayout = QFormLayout()
         moldSchema = self.configManager.getParameterSchema("mold")
 
-        fillTimeSpec = moldSchema.get("targetFillTime", {})
-        self.fillTimeSpinBox = QDoubleSpinBox()
-        self.fillTimeSpinBox.setRange(fillTimeSpec.get("min", 0.1), fillTimeSpec.get("max", 100.0))
-        self.fillTimeSpinBox.setValue(
-            self.currentConfig.get("mold", {}).get("targetFillTime", fillTimeSpec.get("default", 5.0)))
-        self.fillTimeSpinBox.setSuffix(f" {fillTimeSpec.get('unit', 's')}")
-        self.fillTimeSpinBox.setDecimals(1)
-        paramLayout.addRow("目标填充时间:", self.fillTimeSpinBox)
+        runnerSpec = moldSchema.get("runnerDiameter", {})
+        self.runnerDiameterSpinBox = QDoubleSpinBox()
+        self.runnerDiameterSpinBox.setRange(runnerSpec.get("min", 1.0), runnerSpec.get("max", 100.0))
+        self.runnerDiameterSpinBox.setValue(
+            self.currentConfig.get("mold", {}).get("runnerDiameter", runnerSpec.get("default", 6.0)))
+        self.runnerDiameterSpinBox.setSuffix(f" {runnerSpec.get('unit', 'mm')}")
+        self.runnerDiameterSpinBox.setDecimals(2)
+        self.runnerDiameterSpinBox.setSingleStep(0.5)
+        paramLayout.addRow("浇道直径:", self.runnerDiameterSpinBox)
 
         sprueSpec = moldSchema.get("sprueInletOffset", {})
         self.sprueOffsetSpinBox = QDoubleSpinBox()
         self.sprueOffsetSpinBox.setRange(sprueSpec.get("min", 0.0), sprueSpec.get("max", 100.0))
         self.sprueOffsetSpinBox.setValue(
-            self.currentConfig.get("mold", {}).get("sprueInletOffset", sprueSpec.get("default", 10.0)))
+            self.currentConfig.get("mold", {}).get("sprueInletOffset", sprueSpec.get("default", 2.0)))
         self.sprueOffsetSpinBox.setSuffix(f" {sprueSpec.get('unit', 'mm')}")
         self.sprueOffsetSpinBox.setDecimals(1)
         paramLayout.addRow("浇口偏移:", self.sprueOffsetSpinBox)
@@ -189,7 +190,7 @@ class MoldProcessPanel(QWidget):
         self.generateMoldButton.setEnabled(False)
         self.statusMessageChanged.emit("正在添加浇道...")
         config = {
-            "targetFillTime": self.fillTimeSpinBox.value(),
+            "runnerDiameter": self.runnerDiameterSpinBox.value(),
             "sprueInletOffset": self.sprueOffsetSpinBox.value(),
             "boundingBoxOffset": self.boundingBoxOffsetSpinBox.value()
         }
@@ -262,13 +263,13 @@ class MoldProcessPanel(QWidget):
             self.currentConfig["mold"] = {}
         self.currentConfig["mold"].update(moldConfig)
         self.boundingBoxOffsetSpinBox.setValue(moldConfig.get("boundingBoxOffset", 2.0))
-        self.fillTimeSpinBox.setValue(moldConfig.get("targetFillTime", 5.0))
-        self.sprueOffsetSpinBox.setValue(moldConfig.get("sprueInletOffset", 5.0))
+        self.runnerDiameterSpinBox.setValue(moldConfig.get("runnerDiameter", 6.0))
+        self.sprueOffsetSpinBox.setValue(moldConfig.get("sprueInletOffset", 2.0))
 
     def getMoldConfigurationSection(self):
         return {
             "boundingBoxOffset": self.boundingBoxOffsetSpinBox.value(),
-            "targetFillTime": self.fillTimeSpinBox.value(),
+            "runnerDiameter": self.runnerDiameterSpinBox.value(),
             "sprueInletOffset": self.sprueOffsetSpinBox.value(),
         }
 
