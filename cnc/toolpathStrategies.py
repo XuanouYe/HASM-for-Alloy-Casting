@@ -94,6 +94,31 @@ def _rasterFillPoly(polyItem: Any, stepOver: float, to3dMat: np.ndarray,
     return paths
 
 
+def _contourPaths(poly: Any, to3dMat: np.ndarray) -> List[np.ndarray]:
+    paths = []
+    boundary = poly.boundary
+    if boundary is None or boundary.is_empty:
+        return paths
+    geomType = boundary.geom_type
+    lineGeoms = []
+    if geomType in ('LineString', 'LinearRing'):
+        lineGeoms = [boundary]
+    elif geomType == 'MultiLineString':
+        lineGeoms = list(boundary.geoms)
+    elif geomType == 'GeometryCollection':
+        lineGeoms = [g for g in boundary.geoms if g.geom_type in ('LineString', 'LinearRing')]
+    for lineGeom in lineGeoms:
+        coords2d = np.asarray(lineGeom.coords, dtype=float)
+        if len(coords2d) < 2:
+            continue
+        coordHomo = np.column_stack(
+            [coords2d, np.zeros(len(coords2d)), np.ones(len(coords2d))])
+        path3d = (to3dMat @ coordHomo.T).T[:, :3]
+        if len(path3d) >= 2:
+            paths.append(path3d)
+    return paths
+
+
 class ZLevelRoughingStrategy(IToolpathStrategy):
     def generate(self, targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh,
                  toolRadius: float, params: Dict[str, Any],
@@ -162,6 +187,63 @@ class ZLevelRoughingStrategy(IToolpathStrategy):
                         if len(path3d) >= 2:
                             allPaths.append(path3d)
                     reverseFlag = not reverseFlag
+        return allPaths
+
+
+class RiserGateRemovalStrategy(IToolpathStrategy):
+    def generate(self, targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh,
+                 toolRadius: float, params: Dict[str, Any],
+                 safetyMargin: float) -> List[np.ndarray]:
+        if targetMesh is None or targetMesh.is_empty:
+            return []
+        stepOver = float(params.get('stepOver', toolRadius * 1.5))
+        layerStep = float(params.get('layerStep', toolRadius * 1.5))
+        roughStock = float(params.get('roughStock', 0.0))
+        bottomClearance = float(params.get('bottomClearance', 0.0))
+        boundsArray = np.asarray(targetMesh.bounds, dtype=float)
+        zMin = float(boundsArray[0, 2])
+        zMax = float(boundsArray[1, 2])
+        localSafeZ = zMin + bottomClearance if bottomClearance > 0.0 else -np.inf
+        zLevels = np.arange(zMax, zMin - layerStep * 0.1, -layerStep, dtype=float)
+        if len(zLevels) == 0:
+            zLevels = np.array([zMax, zMin], dtype=float)
+        allPaths = []
+        for zValue in zLevels:
+            if zValue < localSafeZ:
+                continue
+            targetPolys = robustSection(targetMesh, zValue)
+            if not targetPolys:
+                continue
+            try:
+                targetSlice = targetMesh.section(
+                    plane_origin=[0.0, 0.0, zValue],
+                    plane_normal=[0.0, 0.0, 1.0])
+                if targetSlice is None:
+                    continue
+                _, to3dMat = targetSlice.to_2D()
+            except Exception:
+                continue
+            outerUnion = cleanPolygon(targetPolys)
+            if outerUnion.is_empty:
+                continue
+            machinablePoly = outerUnion.buffer(-(toolRadius + roughStock))
+            if machinablePoly.is_empty:
+                machinablePoly = outerUnion.buffer(-roughStock) if roughStock > 0 else outerUnion
+            if machinablePoly.is_empty:
+                allPaths.extend(_contourPaths(outerUnion, to3dMat))
+                continue
+            polyGeoms = (list(machinablePoly.geoms)
+                         if machinablePoly.geom_type == 'MultiPolygon' else [machinablePoly])
+            reverseFlag = False
+            for polyItem in polyGeoms:
+                if polyItem.is_empty:
+                    continue
+                rasterPaths = _rasterFillPoly(polyItem, stepOver, to3dMat, zValue, reverseFlag)
+                if rasterPaths:
+                    allPaths.extend(rasterPaths)
+                else:
+                    allPaths.extend(_contourPaths(polyItem, to3dMat))
+                reverseFlag = not reverseFlag
         return allPaths
 
 
@@ -404,6 +486,8 @@ class ToolpathStrategyFactory:
         'ippf': IsoPlanarPatchFinishingStrategy,
         'shellremovalroughing': ShellRemovalRoughingStrategy,
         'srr': ShellRemovalRoughingStrategy,
+        'risergateremoval': RiserGateRemovalStrategy,
+        'rgr': RiserGateRemovalStrategy,
     }
 
     @classmethod
