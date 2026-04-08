@@ -264,7 +264,7 @@ class FiveAxisCncPathGenerator:
         for sid, indexedPts in segMap.items():
             currentRun = []
             for origIdx, pt in indexedPts:
-                if float(sdVals[origIdx]) >= -safeClearance:
+                if float(sdVals[origIdx]) >= toolRadius if (toolRadius := 0.0) else float(sdVals[origIdx]) >= -safeClearance:
                     currentRun.append(pt)
                 else:
                     if len(currentRun) >= 2:
@@ -534,7 +534,7 @@ class FiveAxisCncPathGenerator:
         enableStep3 = bool(axisStrategyParams.get("enableStep3PartFinishing", True))
         enableStep4 = bool(axisStrategyParams.get("enableStep4GateRemoval", True))
         flatTool = self.toolpathEngine.buildFlatEndMillTool(toolParams)
-        clearanceVal = toolRadius + safetyMargin
+        sweptClearance = safetyMargin
         partSdf = buildSdfVolume(partMesh, voxelSize, backendName)
 
         def buildEngine(protectMeshes, clearances):
@@ -565,7 +565,7 @@ class FiveAxisCncPathGenerator:
             finishStock = float(stepParams[2].get("finishStock", 0.03))
             partInnerSdf = buildOffsetSdf(partMesh, finishStock, voxelSize, backendName)
             engine3 = SweptVolumeCollisionEngine(
-                flatTool, [partInnerSdf], [clearanceVal],
+                flatTool, [partInnerSdf], [sweptClearance],
                 diskCount=sweptDiskCount, ringCount=sweptRingCount,
                 safeBuffer=sweptSafeBuffer)
             step3Axes = self.selectAxesGreedyCoverage(
