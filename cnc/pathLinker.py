@@ -233,14 +233,14 @@ class ClPathLinker:
             self.makePoint(startPos,                          startAxis, "approach"),
         ]
 
-    def _collectSegmentBoundaries(self, pointsSorted: List[Dict[str, Any]]) -> set:
-        segFirstPointIds: Dict[int, int] = {}
+    def _buildSegmentFirstPointIdSet(self, pointsSorted: List[Dict[str, Any]]) -> set:
+        segMinPid: Dict[int, int] = {}
         for pt in pointsSorted:
             sid = int(pt.get("segmentId", 0))
             pid = int(pt.get("pointId", 0))
-            if sid not in segFirstPointIds or pid < segFirstPointIds[sid]:
-                segFirstPointIds[sid] = pid
-        return set(segFirstPointIds.values())
+            if sid not in segMinPid or pid < segMinPid[sid]:
+                segMinPid[sid] = pid
+        return set(segMinPid.values())
 
     def insertLinkPoints(self, step: Dict[str, Any], allowDirect: bool) -> None:
         clPoints = step.get("clPoints", [])
@@ -251,7 +251,7 @@ class ClPathLinker:
                                              int(p.get("pointId", 0))))
         maxZ = max(float(p.get("position", [0, 0, 0])[2]) for p in pointsSorted)
         clearanceZ = maxZ + self.safeHeight
-        segFirstPidSet = self._collectSegmentBoundaries(pointsSorted)
+        segFirstPidSet = self._buildSegmentFirstPointIdSet(pointsSorted)
         mergedPoints: List[Dict[str, Any]] = []
         lastSegmentId = None
         segEndPt = None
