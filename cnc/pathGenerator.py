@@ -499,9 +499,14 @@ class FiveAxisCncPathGenerator:
         if enableStep2:
             protectStep2 = concatenateMeshes([partMesh, gateMesh])
             engine2 = buildEngine([protectStep2], [clearanceVal])
+            riserParams = dict(stepParams[1])
+            riserParams["mode"] = "zlevelroughing"
+            riserParams.setdefault("stepOver", toolRadius * 1.5)
+            riserParams.setdefault("layerStep", toolRadius * 1.5)
+            riserParams.setdefault("roughStock", 0.0)
             step2 = self.generateStepWithAxes(
                 2, "riserRemoval", riserMesh, engine2, toolParams,
-                stepParams[1], [np.array([0.0, 0.0, 1.0], dtype=float)],
+                riserParams, [np.array([0.0, 0.0, 1.0], dtype=float)],
                 globalMinZ, safetyMargin, worldSafeZ)
             step2 = self._filterClPointsByPartSdf(step2, partSdf, stepSafeClearance)
         else:
@@ -539,9 +544,14 @@ class FiveAxisCncPathGenerator:
 
         if enableStep4:
             engine4 = buildEngine([partMesh], [clearanceVal])
+            gateParams = dict(stepParams[3])
+            gateParams["mode"] = "zlevelroughing"
+            gateParams.setdefault("stepOver", toolRadius * 1.5)
+            gateParams.setdefault("layerStep", toolRadius * 1.5)
+            gateParams.setdefault("roughStock", 0.0)
             step4 = self.generateStepWithAxes(
                 4, "gateRemoval", gateMesh, engine4, toolParams,
-                stepParams[3], [np.array([0.0, 0.0, 1.0], dtype=float)],
+                gateParams, [np.array([0.0, 0.0, 1.0], dtype=float)],
                 globalMinZ, safetyMargin, worldSafeZ)
             step4 = self._filterClPointsByPartSdf(step4, partSdf, gateSafeClearance)
         else:
