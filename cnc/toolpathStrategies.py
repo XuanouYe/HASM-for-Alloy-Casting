@@ -217,8 +217,7 @@ def generateDropCutterPaths(targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Tr
     distSq = x ** 2 + y ** 2
     maskR = distSq <= (toolRadius / gridRes) ** 2
     kernelTarget = np.full((kSize, kSize), -np.inf, dtype=float)
-    kernelTarget[maskR] = np.sqrt(
-        np.maximum(toolRadius ** 2 - distSq[maskR] * (gridRes ** 2), 0.0))
+    kernelTarget[maskR] = 0.0
 
     rSafe = toolRadius + safetyMargin
     cellsSafe = int(np.ceil(rSafe / gridRes))
