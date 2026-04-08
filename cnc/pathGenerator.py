@@ -377,6 +377,64 @@ class FiveAxisCncPathGenerator:
             "clPoints": allClPoints
         }
 
+    def generateRiserGateStep(self, stepId: int, stepType: str,
+                               targetMesh: trimesh.Trimesh,
+                               toolParams: Dict[str, Any],
+                               stepParam: Dict[str, Any],
+                               partSdf: SdfVolume,
+                               safeClearance: float,
+                               globalMinZ: float,
+                               safetyMargin: float,
+                               worldSafeZ: float) -> Dict[str, Any]:
+        toolRadius = float(toolParams.get("diameter", 6.0)) * 0.5
+        feedrate = float(stepParam.get("feedrate", 500.0))
+        platformSafeZ = float(globalMinZ + toolRadius + safetyMargin)
+        effectiveWorldSafeZ = max(worldSafeZ, platformSafeZ)
+        removalParams = dict(stepParam)
+        removalParams["mode"] = "risergateremoval"
+        removalParams.setdefault("stepOver", toolRadius * 1.5)
+        removalParams.setdefault("layerStep", toolRadius * 1.5)
+        removalParams.setdefault("roughStock", 0.0)
+        removalParams["bottomClearance"] = float(toolParams.get("bottomClearance", 0.0))
+        strategy = ToolpathStrategyFactory.getStrategy("risergateremoval")
+        axisUnit = np.array([0.0, 0.0, 1.0], dtype=float)
+        rotToToolFrame = buildRotationFromTo(axisUnit, axisUnit)
+        rotBack = rotToToolFrame.T
+        rawPathsLocal = strategy.generate(
+            targetMesh, trimesh.Trimesh(), toolRadius, removalParams, safetyMargin)
+        rawPathsLocal = [np.asarray(p, dtype=float) for p in rawPathsLocal if len(p) >= 2]
+        rawPathsWcs = [applyRotation(np.asarray(p, dtype=float), rotBack)
+                       for p in rawPathsLocal if len(p) >= 2]
+        clippedWcs = self.toolpathEngine.clipWcsPathsByZ(rawPathsWcs, effectiveWorldSafeZ)
+        rotInv = rotToToolFrame
+        validPathsLocal = [applyRotation(pw, rotInv) for pw in clippedWcs if len(pw) >= 2]
+        reClipped = []
+        for pathLocal in validPathsLocal:
+            reClipped.extend(
+                self.toolpathEngine.slicePathByPlatformZ(
+                    pathLocal, rotBack, effectiveWorldSafeZ))
+        validPathsLocal = reClipped
+        segments = []
+        allClPoints = []
+        pointId = 0
+        outputSegmentId = 0
+        if validPathsLocal:
+            stepSegs, stepPts, outputSegmentId, pointId = self._emitSegments(
+                validPathsLocal, axisUnit, feedrate, rotBack,
+                outputSegmentId, pointId, 0,
+                worldSafeZ=effectiveWorldSafeZ)
+            segments.extend(stepSegs)
+            allClPoints.extend(stepPts)
+        stepData = {
+            "stepId": int(stepId),
+            "stepType": str(stepType),
+            "toolParams": toolParams,
+            "motionPolicy": "externalPost",
+            "segments": segments,
+            "clPoints": allClPoints
+        }
+        return self._filterClPointsByPartSdf(stepData, partSdf, safeClearance)
+
     def generateStep1ShellRemoval(self, toolParams: Dict[str, Any],
                                    stepParam: Dict[str, Any],
                                    moldMesh: trimesh.Trimesh,
@@ -497,18 +555,9 @@ class FiveAxisCncPathGenerator:
             step1 = self._emptyStep(1, "shellRemoval", toolParams)
 
         if enableStep2:
-            protectStep2 = concatenateMeshes([partMesh, gateMesh])
-            engine2 = buildEngine([protectStep2], [clearanceVal])
-            riserParams = dict(stepParams[1])
-            riserParams["mode"] = "zlevelroughing"
-            riserParams.setdefault("stepOver", toolRadius * 1.5)
-            riserParams.setdefault("layerStep", toolRadius * 1.5)
-            riserParams.setdefault("roughStock", 0.0)
-            step2 = self.generateStepWithAxes(
-                2, "riserRemoval", riserMesh, engine2, toolParams,
-                riserParams, [np.array([0.0, 0.0, 1.0], dtype=float)],
-                globalMinZ, safetyMargin, worldSafeZ)
-            step2 = self._filterClPointsByPartSdf(step2, partSdf, stepSafeClearance)
+            step2 = self.generateRiserGateStep(
+                2, "riserRemoval", riserMesh, toolParams, stepParams[1],
+                partSdf, stepSafeClearance, globalMinZ, safetyMargin, worldSafeZ)
         else:
             step2 = self._emptyStep(2, "riserRemoval", toolParams)
 
@@ -543,17 +592,9 @@ class FiveAxisCncPathGenerator:
             step3 = self._emptyStep(3, "partFinishing", toolParams)
 
         if enableStep4:
-            engine4 = buildEngine([partMesh], [clearanceVal])
-            gateParams = dict(stepParams[3])
-            gateParams["mode"] = "zlevelroughing"
-            gateParams.setdefault("stepOver", toolRadius * 1.5)
-            gateParams.setdefault("layerStep", toolRadius * 1.5)
-            gateParams.setdefault("roughStock", 0.0)
-            step4 = self.generateStepWithAxes(
-                4, "gateRemoval", gateMesh, engine4, toolParams,
-                gateParams, [np.array([0.0, 0.0, 1.0], dtype=float)],
-                globalMinZ, safetyMargin, worldSafeZ)
-            step4 = self._filterClPointsByPartSdf(step4, partSdf, gateSafeClearance)
+            step4 = self.generateRiserGateStep(
+                4, "gateRemoval", gateMesh, toolParams, stepParams[3],
+                partSdf, gateSafeClearance, globalMinZ, safetyMargin, worldSafeZ)
         else:
             step4 = self._emptyStep(4, "gateRemoval", toolParams)
 
