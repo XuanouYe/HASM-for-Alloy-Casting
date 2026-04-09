@@ -128,7 +128,7 @@ parameterSchema = {
                 "cAxisLimit": [-360.0, 360.0],
                 "workOffsetX": 0.0,
                 "workOffsetY": 0.0,
-                "workOffsetZ": -90.0383,
+                "workOffsetZ": 0,
                 "aAxisOffsetY": 0.0,
                 "aAxisOffsetZ": 90.0383,
                 "singularityEps": 0.01
