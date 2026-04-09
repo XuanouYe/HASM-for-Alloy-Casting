@@ -76,6 +76,11 @@ class XyzacTrtKinematics:
             float(kinematicsCfg.get("aAxisOffsetY", 0.0)),
             float(kinematicsCfg.get("aAxisOffsetZ", 0.0)),
         )
+        self.mountOffset = (
+            self.workOffset[0] - self.aAxisOffset[0],
+            self.workOffset[1] - self.aAxisOffset[1],
+            self.workOffset[2] - self.aAxisOffset[2],
+        )
         self.prevA: Optional[float] = None
         self.prevC: Optional[float] = None
 
@@ -103,24 +108,20 @@ class XyzacTrtKinematics:
     def buildPivotRotationTransform(self, aDeg: float, cDeg: float) -> List[List[float]]:
         aPhysRad = math.radians(aDeg / self.aSign if self.aSign != 0.0 else aDeg)
         cPhysRad = math.radians(cDeg / self.cSign if self.cSign != 0.0 else cDeg)
-        pivotVec = (
-            self.workOffset[0] + self.aAxisOffset[0],
-            self.workOffset[1] + self.aAxisOffset[1],
-            self.workOffset[2] + self.aAxisOffset[2],
-        )
-        matToPivot = self.buildTranslationFromVec(pivotVec)
-        matFromPivot = buildTranslation(-pivotVec[0], -pivotVec[1], -pivotVec[2])
         rotA = buildRotationA(aPhysRad)
         rotC = buildRotationC(cPhysRad)
-        tempMat = multiplyHomogeneous(rotC, rotA)
-        tempMat2 = multiplyHomogeneous(tempMat, matFromPivot)
-        return multiplyHomogeneous(matToPivot, tempMat2)
+        return multiplyHomogeneous(rotC, rotA)
 
     def solveLinearAxes(self, tipPositionWcs: List[float], aDeg: float, cDeg: float) -> Tuple[float, float, float]:
-        chainMat = self.buildPivotRotationTransform(aDeg, cDeg)
-        invMat = inverseHomogeneous(chainMat)
-        qVec = [float(tipPositionWcs[0]), float(tipPositionWcs[1]), float(tipPositionWcs[2]), 1.0]
-        pVec = applyHomogeneous(invMat, qVec)
+        pInMachine = [
+            float(tipPositionWcs[0]) + self.mountOffset[0],
+            float(tipPositionWcs[1]) + self.mountOffset[1],
+            float(tipPositionWcs[2]) + self.mountOffset[2],
+            1.0,
+        ]
+        rotMat = self.buildPivotRotationTransform(aDeg, cDeg)
+        invMat = inverseHomogeneous(rotMat)
+        pVec = applyHomogeneous(invMat, pInMachine)
         return pVec[0], pVec[1], pVec[2]
 
     def minimizeAngularJump(self, prevA: Optional[float], prevC: Optional[float], newA: float, newC: float) -> Tuple[float, float]:
