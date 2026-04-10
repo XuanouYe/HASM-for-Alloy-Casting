@@ -88,6 +88,7 @@ class ModelViewerWidget(QWidget):
         if self.castingPlotter is None or mesh is None:
             return
 
+        self.clearMoldView()
         self.castingTriMesh = mesh.copy()
         try:
             pvMesh = trimeshToPyVista(self.castingTriMesh)
@@ -101,18 +102,10 @@ class ModelViewerWidget(QWidget):
                 show_edges=True,
                 edge_color="navy",
                 line_width=2.0,
-                lighting=True,
-                smooth_shading=True,
-                specular=0.5,
-                specular_power=15,
-                ambient=0.3,
-                diffuse=0.8,
-                metallic=0.2,
-                roughness=0.5,
+                lighting=False,
                 reset_camera=True
             )
 
-            self.castingPlotter.enable_shadows()
             self.castingPlotter.enable_anti_aliasing()
             self.castingPlotter.reset_camera()
             self.castingPlotter.camera.zoom(1.3)
@@ -141,8 +134,7 @@ class ModelViewerWidget(QWidget):
                 show_edges=True,
                 edge_color="darkred",
                 line_width=1.5,
-                lighting=True,
-                smooth_shading=True,
+                lighting=False,
                 reset_camera=True
             )
 
