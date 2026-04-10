@@ -48,6 +48,7 @@ class MainController(QObject):
         self.moldController.modelLoadedPath.connect(self._onModelLoaded)
         self.moldController.moldGenerated.connect(self._onMoldGeneratedForCnc)
         self.moldController.moldBoundsReady.connect(self.mainWindow.moldProcessPanel.onMoldBoundsReady)
+        self.moldController.cavityVolumeReady.connect(self.mainWindow.moldProcessPanel.onCavityVolumeReady)
         self.mainWindow.moldProcessPanel.statusMessageChanged.connect(self.mainWindow.setStatusText)
 
     def _updateTimer(self):

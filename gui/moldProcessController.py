@@ -15,6 +15,7 @@ class MoldProcessController(QObject):
     updateMoldView = pyqtSignal(object)
     modelLoadedPath = pyqtSignal(str)
     moldBoundsReady = pyqtSignal(dict)
+    cavityVolumeReady = pyqtSignal(float)
 
     def __init__(self):
         super().__init__()
@@ -88,6 +89,17 @@ class MoldProcessController(QObject):
         self.currentRiserMesh = data["riser"]
         self.gatingAdded.emit()
         self.updateCastingView.emit(self.currentCastingMesh)
+        self._emitCavityVolume()
+
+    def _emitCavityVolume(self):
+        totalVolume = 0.0
+        if self.currentCastingMesh is not None:
+            totalVolume += float(self.currentCastingMesh.volume)
+        if self.currentGateMesh is not None:
+            totalVolume += float(self.currentGateMesh.volume)
+        if self.currentRiserMesh is not None:
+            totalVolume += float(self.currentRiserMesh.volume)
+        self.cavityVolumeReady.emit(totalVolume)
 
     def handleOptimizeOrientation(self, config: dict):
         if self.currentMoldShell is None:

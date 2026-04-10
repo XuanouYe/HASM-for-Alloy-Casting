@@ -73,6 +73,67 @@ class MoldProcessPanel(QWidget):
         group.setLayout(layout)
         return group
 
+    def createAddGatingGroup(self) -> QGroupBox:
+        gatingGroup = QGroupBox("添加浇道")
+        layout = QVBoxLayout()
+        paramLayout = QFormLayout()
+        moldSchema = self.configManager.getParameterSchema("mold")
+
+        runnerSpec = moldSchema.get("runnerDiameter", {})
+        self.runnerDiameterSpinBox = QDoubleSpinBox()
+        self.runnerDiameterSpinBox.setRange(runnerSpec.get("min", 1.0), runnerSpec.get("max", 100.0))
+        self.runnerDiameterSpinBox.setValue(
+            self.currentConfig.get("mold", {}).get("runnerDiameter", runnerSpec.get("default", 6.0)))
+        self.runnerDiameterSpinBox.setSuffix(f" {runnerSpec.get('unit', 'mm')}")
+        self.runnerDiameterSpinBox.setDecimals(2)
+        self.runnerDiameterSpinBox.setSingleStep(0.5)
+        paramLayout.addRow("浇道直径:", self.runnerDiameterSpinBox)
+
+        sprueSpec = moldSchema.get("sprueInletOffset", {})
+        self.sprueOffsetSpinBox = QDoubleSpinBox()
+        self.sprueOffsetSpinBox.setRange(sprueSpec.get("min", 0.0), sprueSpec.get("max", 100.0))
+        self.sprueOffsetSpinBox.setValue(
+            self.currentConfig.get("mold", {}).get("sprueInletOffset", sprueSpec.get("default", 2.0)))
+        self.sprueOffsetSpinBox.setSuffix(f" {sprueSpec.get('unit', 'mm')}")
+        self.sprueOffsetSpinBox.setDecimals(1)
+        paramLayout.addRow("浇口偏移:", self.sprueOffsetSpinBox)
+        layout.addLayout(paramLayout)
+
+        self.addGatingButton = QPushButton("添加浇道")
+        self.addGatingButton.setEnabled(False)
+        self.addGatingButton.clicked.connect(self.onAddGatingClick)
+        layout.addWidget(self.addGatingButton)
+
+        self.cavityVolumeGroup = QGroupBox("模腿体积估算")
+        self.cavityVolumeGroup.setVisible(False)
+        cavityLayout = QFormLayout()
+        cavityLayout.setContentsMargins(8, 8, 8, 8)
+        cavityLayout.setSpacing(6)
+
+        valueFont = QFont()
+        valueFont.setFamily("Courier New")
+        valueFont.setPointSize(9)
+
+        self.cavityVolumeLabel = QLabel("—")
+        self.cavityVolumeLabel.setFont(valueFont)
+        self.cavityVolumeLabel.setStyleSheet("color: #333333;")
+        cavityLayout.addRow("模腿体积:", self.cavityVolumeLabel)
+
+        self.cavityVolumeMassLabel = QLabel("—")
+        self.cavityVolumeMassLabel.setFont(valueFont)
+        self.cavityVolumeMassLabel.setStyleSheet("color: #555555;")
+        cavityLayout.addRow("预估质量 (ρ=6440):", self.cavityVolumeMassLabel)
+
+        hintLabel = QLabel("铸件 + 浇道 + 冒口之和")
+        hintLabel.setStyleSheet("color: #888888; font-size: 8pt;")
+        cavityLayout.addRow("来源:", hintLabel)
+
+        self.cavityVolumeGroup.setLayout(cavityLayout)
+        layout.addWidget(self.cavityVolumeGroup)
+
+        gatingGroup.setLayout(layout)
+        return gatingGroup
+
     def createMoldGenerationGroup(self) -> QGroupBox:
         group = QGroupBox("模具生成")
         layout = QVBoxLayout()
@@ -120,39 +181,6 @@ class MoldProcessPanel(QWidget):
         group.setLayout(layout)
         return group
 
-    def createAddGatingGroup(self) -> QGroupBox:
-        gatingGroup = QGroupBox("添加浇道")
-        layout = QVBoxLayout()
-        paramLayout = QFormLayout()
-        moldSchema = self.configManager.getParameterSchema("mold")
-
-        runnerSpec = moldSchema.get("runnerDiameter", {})
-        self.runnerDiameterSpinBox = QDoubleSpinBox()
-        self.runnerDiameterSpinBox.setRange(runnerSpec.get("min", 1.0), runnerSpec.get("max", 100.0))
-        self.runnerDiameterSpinBox.setValue(
-            self.currentConfig.get("mold", {}).get("runnerDiameter", runnerSpec.get("default", 6.0)))
-        self.runnerDiameterSpinBox.setSuffix(f" {runnerSpec.get('unit', 'mm')}")
-        self.runnerDiameterSpinBox.setDecimals(2)
-        self.runnerDiameterSpinBox.setSingleStep(0.5)
-        paramLayout.addRow("浇道直径:", self.runnerDiameterSpinBox)
-
-        sprueSpec = moldSchema.get("sprueInletOffset", {})
-        self.sprueOffsetSpinBox = QDoubleSpinBox()
-        self.sprueOffsetSpinBox.setRange(sprueSpec.get("min", 0.0), sprueSpec.get("max", 100.0))
-        self.sprueOffsetSpinBox.setValue(
-            self.currentConfig.get("mold", {}).get("sprueInletOffset", sprueSpec.get("default", 2.0)))
-        self.sprueOffsetSpinBox.setSuffix(f" {sprueSpec.get('unit', 'mm')}")
-        self.sprueOffsetSpinBox.setDecimals(1)
-        paramLayout.addRow("浇口偏移:", self.sprueOffsetSpinBox)
-        layout.addLayout(paramLayout)
-
-        self.addGatingButton = QPushButton("添加浇道")
-        self.addGatingButton.setEnabled(False)
-        self.addGatingButton.clicked.connect(self.onAddGatingClick)
-        layout.addWidget(self.addGatingButton)
-        gatingGroup.setLayout(layout)
-        return gatingGroup
-
     def createOrientationGroup(self) -> QGroupBox:
         orientationGroup = QGroupBox("方向优化")
         orientationLayout = QVBoxLayout()
@@ -162,10 +190,8 @@ class MoldProcessPanel(QWidget):
         self.millingRadio.setChecked(True)
         self.orientationButtonGroup.addButton(self.millingRadio, 0)
         self.orientationButtonGroup.addButton(self.printingRadio, 1)
-
         orientationLayout.addWidget(self.millingRadio)
         orientationLayout.addWidget(self.printingRadio)
-
         self.optimizeOrientationButton = QPushButton("执行优化")
         self.optimizeOrientationButton.setEnabled(False)
         self.optimizeOrientationButton.clicked.connect(self.onOptimizeOrientationClick)
@@ -185,7 +211,6 @@ class MoldProcessPanel(QWidget):
         self.surfaceOffsetSpinBox.setDecimals(2)
         offsetInputLayout.addWidget(self.surfaceOffsetSpinBox)
         surfaceOffsetLayout.addLayout(offsetInputLayout)
-
         self.adjustStructureButton = QPushButton("执行偏移")
         self.adjustStructureButton.setEnabled(False)
         self.adjustStructureButton.clicked.connect(self.onAdjustStructureClick)
@@ -213,6 +238,7 @@ class MoldProcessPanel(QWidget):
     def onAddGatingClick(self):
         self.addGatingButton.setEnabled(False)
         self.generateMoldButton.setEnabled(False)
+        self.cavityVolumeGroup.setVisible(False)
         self.statusMessageChanged.emit("正在添加浇道...")
         config = {
             "runnerDiameter": self.runnerDiameterSpinBox.value(),
@@ -238,6 +264,7 @@ class MoldProcessPanel(QWidget):
         self.statusFlags["molded"] = False
         self.statusFlags["gated"] = False
         self.moldBoundsGroup.setVisible(False)
+        self.cavityVolumeGroup.setVisible(False)
         self.generateMoldButton.setEnabled(True)
         self.addGatingButton.setEnabled(True)
         self.optimizeOrientationButton.setEnabled(False)
@@ -292,6 +319,15 @@ class MoldProcessPanel(QWidget):
         self.boundsYLabel.setText(yText)
         self.boundsZLabel.setText(zText)
         self.moldBoundsGroup.setVisible(True)
+
+    @pyqtSlot(float)
+    def onCavityVolumeReady(self, totalVolume: float):
+        volumeCm3 = totalVolume / 1000.0
+        self.cavityVolumeLabel.setText(f"{totalVolume:.2f} mm³  ({volumeCm3:.4f} cm³)")
+        densityGaIn = 6440.0
+        massG = volumeCm3 * densityGaIn
+        self.cavityVolumeMassLabel.setText(f"{massG:.3f} g")
+        self.cavityVolumeGroup.setVisible(True)
 
     def loadConfiguration(self, configDict):
         moldConfig = configDict.get("mold") or {}
