@@ -104,7 +104,7 @@ class MoldProcessPanel(QWidget):
         self.addGatingButton.clicked.connect(self.onAddGatingClick)
         layout.addWidget(self.addGatingButton)
 
-        self.cavityVolumeGroup = QGroupBox("模腿体积估算")
+        self.cavityVolumeGroup = QGroupBox("模腔体积估算")
         self.cavityVolumeGroup.setVisible(False)
         cavityLayout = QFormLayout()
         cavityLayout.setContentsMargins(8, 8, 8, 8)
@@ -117,7 +117,7 @@ class MoldProcessPanel(QWidget):
         self.cavityVolumeLabel = QLabel("—")
         self.cavityVolumeLabel.setFont(valueFont)
         self.cavityVolumeLabel.setStyleSheet("color: #333333;")
-        cavityLayout.addRow("模腿体积:", self.cavityVolumeLabel)
+        cavityLayout.addRow("模腔体积:", self.cavityVolumeLabel)
 
         self.cavityVolumeMassLabel = QLabel("—")
         self.cavityVolumeMassLabel.setFont(valueFont)
