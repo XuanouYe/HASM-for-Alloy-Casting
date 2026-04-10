@@ -66,7 +66,7 @@ parameterSchema = {
         "machineModel":             {"type": str,                               "default": "Default_5Axis_CNC",     "required": True,  "description": "机床型号"},
         "spindleSpeed":             {"type": int,   "min": 100,  "max": 60000,  "default": 5000,  "unit": "rpm",    "required": True,  "description": "主轴转速"},
         "feedRate":                 {"type": int,   "min": 1,    "max": 5000,   "default": 500,   "unit": "mm/min", "required": True,  "description": "进给速度"},
-        "toolDiameter":             {"type": float, "min": 0.1,  "max": 20.0,   "default": 8.0,   "unit": "mm",     "required": True,  "description": "刀具直径"},
+        "toolDiameter":             {"type": float, "min": 0.1,  "max": 20.0,   "default": 6.0,   "unit": "mm",     "required": True,  "description": "刀具直径"},
         "toolSafetyMargin":         {"type": float, "min": 0.01, "max": 5.0,    "default": 0.5,   "unit": "mm",     "required": True,  "description": "刀具安全余量"},
         "stepOver":                 {"type": float, "min": 0.01, "max": 10.0,   "default": 1.5,   "unit": "mm",     "required": True,  "description": "行距"},
         "layerStepDown":            {"type": float, "min": 0.01, "max": 10.0,   "default": 1.0,   "unit": "mm",     "required": True,  "description": "层切深"},
