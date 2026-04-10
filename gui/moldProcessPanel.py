@@ -320,7 +320,7 @@ class MoldProcessPanel(QWidget):
     def onCavityVolumeReady(self, totalVolume: float):
         volumeCm3 = totalVolume / 1000.0
         self.cavityVolumeLabel.setText(f"{totalVolume:.2f} mm³  ({volumeCm3:.4f} cm³)")
-        densityGaIn = 6440.0
+        densityGaIn = 6.440
         massG = volumeCm3 * densityGaIn
         self.cavityVolumeMassLabel.setText(f"{massG:.3f} g")
         self.cavityVolumeGroup.setVisible(True)
