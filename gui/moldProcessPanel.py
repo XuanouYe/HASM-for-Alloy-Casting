@@ -15,6 +15,7 @@ class MoldProcessPanel(QWidget):
     intentAddGating = pyqtSignal(dict)
     intentOptimizeOrientation = pyqtSignal(dict)
     intentAdjustStructure = pyqtSignal(dict)
+    intentExportMold = pyqtSignal(str)
     statusMessageChanged = pyqtSignal(str)
 
     def __init__(self, parent=None):
@@ -104,7 +105,7 @@ class MoldProcessPanel(QWidget):
         self.addGatingButton.clicked.connect(self.onAddGatingClick)
         layout.addWidget(self.addGatingButton)
 
-        self.cavityVolumeGroup = QGroupBox("模腔体积估算")
+        self.cavityVolumeGroup = QGroupBox("模腿体积估算")
         self.cavityVolumeGroup.setVisible(False)
         cavityLayout = QFormLayout()
         cavityLayout.setContentsMargins(8, 8, 8, 8)
@@ -117,12 +118,16 @@ class MoldProcessPanel(QWidget):
         self.cavityVolumeLabel = QLabel("—")
         self.cavityVolumeLabel.setFont(valueFont)
         self.cavityVolumeLabel.setStyleSheet("color: #333333;")
-        cavityLayout.addRow("模腔体积:", self.cavityVolumeLabel)
+        cavityLayout.addRow("模腿体积:", self.cavityVolumeLabel)
 
         self.cavityVolumeMassLabel = QLabel("—")
         self.cavityVolumeMassLabel.setFont(valueFont)
         self.cavityVolumeMassLabel.setStyleSheet("color: #555555;")
-        cavityLayout.addRow("预估质量:", self.cavityVolumeMassLabel)
+        cavityLayout.addRow("预估质量 (ρ=6440):", self.cavityVolumeMassLabel)
+
+        hintLabel = QLabel("铸件 + 浇道 + 冒口之和")
+        hintLabel.setStyleSheet("color: #888888; font-size: 8pt;")
+        cavityLayout.addRow("来源:", hintLabel)
 
         self.cavityVolumeGroup.setLayout(cavityLayout)
         layout.addWidget(self.cavityVolumeGroup)
@@ -150,6 +155,17 @@ class MoldProcessPanel(QWidget):
         self.generateMoldButton.setEnabled(False)
         self.generateMoldButton.clicked.connect(self.onGenerateMoldClick)
         layout.addWidget(self.generateMoldButton)
+
+        self.exportMoldButton = QPushButton("导出模具 STL...")
+        self.exportMoldButton.setEnabled(False)
+        self.exportMoldButton.clicked.connect(self.onExportMoldClick)
+        self.exportMoldButton.setStyleSheet(
+            "QPushButton { background-color: #107c10; }"
+            "QPushButton:hover { background-color: #0e6b0e; }"
+            "QPushButton:pressed { background-color: #0a550a; }"
+            "QPushButton:disabled { background-color: #cccccc; color: #888888; }"
+        )
+        layout.addWidget(self.exportMoldButton)
 
         self.moldBoundsGroup = QGroupBox("模具包围盒规模")
         self.moldBoundsGroup.setVisible(False)
@@ -223,6 +239,7 @@ class MoldProcessPanel(QWidget):
     def onGenerateMoldClick(self):
         self.generateMoldButton.setEnabled(False)
         self.addGatingButton.setEnabled(False)
+        self.exportMoldButton.setEnabled(False)
         self.moldBoundsGroup.setVisible(False)
         self.statusMessageChanged.emit("正在生成模具...")
         config = {
@@ -243,6 +260,13 @@ class MoldProcessPanel(QWidget):
         }
         self.intentAddGating.emit(config)
 
+    def onExportMoldClick(self):
+        filePath, _ = QFileDialog.getSaveFileName(
+            self, "导出模具STL", "mold.stl", "STL Files (*.stl);;All Files (*)"
+        )
+        if filePath:
+            self.intentExportMold.emit(filePath)
+
     def onOptimizeOrientationClick(self):
         self.optimizeOrientationButton.setEnabled(False)
         optType = "milling" if self.millingRadio.isChecked() else "printing"
@@ -261,6 +285,7 @@ class MoldProcessPanel(QWidget):
         self.statusFlags["gated"] = False
         self.moldBoundsGroup.setVisible(False)
         self.cavityVolumeGroup.setVisible(False)
+        self.exportMoldButton.setEnabled(False)
         self.generateMoldButton.setEnabled(True)
         self.addGatingButton.setEnabled(True)
         self.optimizeOrientationButton.setEnabled(False)
@@ -273,6 +298,7 @@ class MoldProcessPanel(QWidget):
         self.addGatingButton.setEnabled(True)
         self.optimizeOrientationButton.setEnabled(True)
         self.adjustStructureButton.setEnabled(True)
+        self.exportMoldButton.setEnabled(True)
         self.statusMessageChanged.emit(self._buildStatusText())
         QMessageBox.information(self, "成功", "模具生成完成")
 
@@ -303,6 +329,7 @@ class MoldProcessPanel(QWidget):
         if self.statusFlags["molded"]:
             self.optimizeOrientationButton.setEnabled(True)
             self.adjustStructureButton.setEnabled(True)
+            self.exportMoldButton.setEnabled(True)
         self.statusMessageChanged.emit(f"✗ {title}")
         QMessageBox.critical(self, title, f"{title}:\n{errMsg}")
 
@@ -320,7 +347,7 @@ class MoldProcessPanel(QWidget):
     def onCavityVolumeReady(self, totalVolume: float):
         volumeCm3 = totalVolume / 1000.0
         self.cavityVolumeLabel.setText(f"{totalVolume:.2f} mm³  ({volumeCm3:.4f} cm³)")
-        densityGaIn = 6.440
+        densityGaIn = 6440.0
         massG = volumeCm3 * densityGaIn
         self.cavityVolumeMassLabel.setText(f"{massG:.3f} g")
         self.cavityVolumeGroup.setVisible(True)

@@ -49,6 +49,8 @@ class MainController(QObject):
         self.moldController.moldGenerated.connect(self._onMoldGeneratedForCnc)
         self.moldController.moldBoundsReady.connect(self.mainWindow.moldProcessPanel.onMoldBoundsReady)
         self.moldController.cavityVolumeReady.connect(self.mainWindow.moldProcessPanel.onCavityVolumeReady)
+        self.moldController.moldExported.connect(self._onMoldExported)
+        self.mainWindow.moldProcessPanel.intentExportMold.connect(self.moldController.exportMoldMesh)
         self.mainWindow.moldProcessPanel.statusMessageChanged.connect(self.mainWindow.setStatusText)
 
     def _updateTimer(self):
@@ -97,6 +99,11 @@ class MainController(QObject):
 
     def _onMoldGeneratedForCnc(self):
         self.mainWindow.setCncButtonEnabled(True)
+
+    def _onMoldExported(self, filePath):
+        self.moldStlPath = filePath
+        self.mainWindow.setStatusText(f"模具已导出: {Path(filePath).name}")
+        self.mainWindow.showMessage("导出成功", f"模具STL已保存至:\n{filePath}")
 
     def handleLoadConfig(self, filePath):
         with open(filePath, "r", encoding="utf-8") as f:
@@ -255,3 +262,6 @@ class MainController(QObject):
             self.mainWindow.setCncButtonEnabled(True)
             self.mainWindow.setStatusText("生成失败")
         self.mainWindow.showMessage("错误", f"{title}:\n{errorMsg}", isError=True)
+
+
+from pathlib import Path

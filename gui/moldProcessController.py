@@ -1,7 +1,8 @@
 import trimesh
-from PyQt5.QtCore import QObject, pyqtSignal
+from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot
 from gui.workerThread import WorkerThread
 from mold.moldGenerator import MoldGenerator
+from geometryAdapters import exportMeshToStl
 
 
 class MoldProcessController(QObject):
@@ -16,6 +17,7 @@ class MoldProcessController(QObject):
     modelLoadedPath = pyqtSignal(str)
     moldBoundsReady = pyqtSignal(dict)
     cavityVolumeReady = pyqtSignal(float)
+    moldExported = pyqtSignal(str)
 
     def __init__(self):
         super().__init__()
@@ -100,6 +102,11 @@ class MoldProcessController(QObject):
         if self.currentRiserMesh is not None:
             totalVolume += float(self.currentRiserMesh.volume)
         self.cavityVolumeReady.emit(totalVolume)
+
+    @pyqtSlot(str)
+    def exportMoldMesh(self, filePath: str):
+        exportMeshToStl(self.currentMoldShell, filePath)
+        self.moldExported.emit(filePath)
 
     def handleOptimizeOrientation(self, config: dict):
         if self.currentMoldShell is None:
