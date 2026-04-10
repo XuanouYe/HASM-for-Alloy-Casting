@@ -152,7 +152,7 @@ class MoldProcessPanel(QWidget):
         self.generateMoldButton.clicked.connect(self.onGenerateMoldClick)
         layout.addWidget(self.generateMoldButton)
 
-        self.exportMoldButton = QPushButton("导出模具 STL...")
+        self.exportMoldButton = QPushButton("导出模具 STL")
         self.exportMoldButton.setEnabled(False)
         self.exportMoldButton.clicked.connect(self.onExportMoldClick)
         self.exportMoldButton.setStyleSheet(
