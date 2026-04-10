@@ -105,7 +105,7 @@ class MoldProcessPanel(QWidget):
         self.addGatingButton.clicked.connect(self.onAddGatingClick)
         layout.addWidget(self.addGatingButton)
 
-        self.cavityVolumeGroup = QGroupBox("模腿体积估算")
+        self.cavityVolumeGroup = QGroupBox("模腔体积估算")
         self.cavityVolumeGroup.setVisible(False)
         cavityLayout = QFormLayout()
         cavityLayout.setContentsMargins(8, 8, 8, 8)
@@ -118,12 +118,12 @@ class MoldProcessPanel(QWidget):
         self.cavityVolumeLabel = QLabel("—")
         self.cavityVolumeLabel.setFont(valueFont)
         self.cavityVolumeLabel.setStyleSheet("color: #333333;")
-        cavityLayout.addRow("模腿体积:", self.cavityVolumeLabel)
+        cavityLayout.addRow("模腔体积:", self.cavityVolumeLabel)
 
         self.cavityVolumeMassLabel = QLabel("—")
         self.cavityVolumeMassLabel.setFont(valueFont)
         self.cavityVolumeMassLabel.setStyleSheet("color: #555555;")
-        cavityLayout.addRow("预估质量 (ρ=6440):", self.cavityVolumeMassLabel)
+        cavityLayout.addRow("预估质量:", self.cavityVolumeMassLabel)
 
         hintLabel = QLabel("铸件 + 浇道 + 冒口之和")
         hintLabel.setStyleSheet("color: #888888; font-size: 8pt;")
@@ -347,7 +347,7 @@ class MoldProcessPanel(QWidget):
     def onCavityVolumeReady(self, totalVolume: float):
         volumeCm3 = totalVolume / 1000.0
         self.cavityVolumeLabel.setText(f"{totalVolume:.2f} mm³  ({volumeCm3:.4f} cm³)")
-        densityGaIn = 6440.0
+        densityGaIn = 6.440
         massG = volumeCm3 * densityGaIn
         self.cavityVolumeMassLabel.setText(f"{massG:.3f} g")
         self.cavityVolumeGroup.setVisible(True)
