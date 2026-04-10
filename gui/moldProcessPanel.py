@@ -125,10 +125,6 @@ class MoldProcessPanel(QWidget):
         self.cavityVolumeMassLabel.setStyleSheet("color: #555555;")
         cavityLayout.addRow("预估质量:", self.cavityVolumeMassLabel)
 
-        hintLabel = QLabel("铸件 + 浇道 + 冒口之和")
-        hintLabel.setStyleSheet("color: #888888; font-size: 8pt;")
-        cavityLayout.addRow("来源:", hintLabel)
-
         self.cavityVolumeGroup.setLayout(cavityLayout)
         layout.addWidget(self.cavityVolumeGroup)
 
