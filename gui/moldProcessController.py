@@ -14,12 +14,12 @@ class MoldProcessController(QObject):
     updateCastingView = pyqtSignal(object)
     updateMoldView = pyqtSignal(object)
     modelLoadedPath = pyqtSignal(str)
+    moldBoundsReady = pyqtSignal(dict)
 
     def __init__(self):
         super().__init__()
         self.currentCastingMesh = None
         self.currentMoldShell = None
-        # 增加这两个属性来缓存分离出的浇道与冒口几何特征
         self.currentGateMesh = None
         self.currentRiserMesh = None
         self.currentWorker = None
@@ -51,6 +51,16 @@ class MoldProcessController(QObject):
         self.currentMoldShell = moldShell
         self.moldGenerated.emit()
         self.updateMoldView.emit(self.currentMoldShell)
+        bounds = self.currentMoldShell.bounds
+        minPt, maxPt = bounds[0], bounds[1]
+        self.moldBoundsReady.emit({
+            "xMin": float(minPt[0]), "xMax": float(maxPt[0]),
+            "yMin": float(minPt[1]), "yMax": float(maxPt[1]),
+            "zMin": float(minPt[2]), "zMax": float(maxPt[2]),
+            "xSize": float(maxPt[0] - minPt[0]),
+            "ySize": float(maxPt[1] - minPt[1]),
+            "zSize": float(maxPt[2] - minPt[2]),
+        })
 
     def handleAddGating(self, config: dict):
         if self.currentCastingMesh is None:
@@ -60,7 +70,6 @@ class MoldProcessController(QObject):
         def task():
             moldGen = MoldGenerator(config=config)
             gatingComponents = moldGen.generateGating(self.currentCastingMesh)
-            # 修改返回值，将生成的复合铸件与分离好的浇道冒口作为字典一并传回主线程
             return {
                 "combined": gatingComponents.castingWithSystemMesh,
                 "gate": gatingComponents.gateMesh,
@@ -74,11 +83,9 @@ class MoldProcessController(QObject):
 
     def _onGatingAdded(self, result):
         data = result.get("result") if isinstance(result, dict) and "result" in result else result
-        # 妥善接收并挂载至类属性
         self.currentCastingMesh = data["combined"]
         self.currentGateMesh = data["gate"]
         self.currentRiserMesh = data["riser"]
-
         self.gatingAdded.emit()
         self.updateCastingView.emit(self.currentCastingMesh)
 

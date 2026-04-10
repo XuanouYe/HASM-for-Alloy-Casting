@@ -1,5 +1,5 @@
 from pathlib import Path
-from PyQt5.QtCore import pyqtSignal
+from PyQt5.QtCore import pyqtSignal, pyqtSlot
 from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
@@ -93,6 +93,30 @@ class MoldProcessPanel(QWidget):
         self.generateMoldButton.setEnabled(False)
         self.generateMoldButton.clicked.connect(self.onGenerateMoldClick)
         layout.addWidget(self.generateMoldButton)
+
+        self.moldBoundsGroup = QGroupBox("模具包围盒规模")
+        self.moldBoundsGroup.setVisible(False)
+        boundsLayout = QFormLayout()
+        boundsLayout.setContentsMargins(8, 8, 8, 8)
+        boundsLayout.setSpacing(4)
+
+        boundsLabelFont = QFont()
+        boundsLabelFont.setFamily("Courier New")
+        boundsLabelFont.setPointSize(9)
+
+        self.boundsXLabel = QLabel("—")
+        self.boundsYLabel = QLabel("—")
+        self.boundsZLabel = QLabel("—")
+        for lbl in (self.boundsXLabel, self.boundsYLabel, self.boundsZLabel):
+            lbl.setFont(boundsLabelFont)
+            lbl.setStyleSheet("color: #333333;")
+
+        boundsLayout.addRow("X:", self.boundsXLabel)
+        boundsLayout.addRow("Y:", self.boundsYLabel)
+        boundsLayout.addRow("Z:", self.boundsZLabel)
+        self.moldBoundsGroup.setLayout(boundsLayout)
+        layout.addWidget(self.moldBoundsGroup)
+
         group.setLayout(layout)
         return group
 
@@ -178,6 +202,7 @@ class MoldProcessPanel(QWidget):
     def onGenerateMoldClick(self):
         self.generateMoldButton.setEnabled(False)
         self.addGatingButton.setEnabled(False)
+        self.moldBoundsGroup.setVisible(False)
         self.statusMessageChanged.emit("正在生成模具...")
         config = {
             "boundingBoxOffset": self.boundingBoxOffsetSpinBox.value(),
@@ -212,6 +237,7 @@ class MoldProcessPanel(QWidget):
         self.statusFlags["loaded"] = True
         self.statusFlags["molded"] = False
         self.statusFlags["gated"] = False
+        self.moldBoundsGroup.setVisible(False)
         self.generateMoldButton.setEnabled(True)
         self.addGatingButton.setEnabled(True)
         self.optimizeOrientationButton.setEnabled(False)
@@ -256,6 +282,16 @@ class MoldProcessPanel(QWidget):
             self.adjustStructureButton.setEnabled(True)
         self.statusMessageChanged.emit(f"✗ {title}")
         QMessageBox.critical(self, title, f"{title}:\n{errMsg}")
+
+    @pyqtSlot(dict)
+    def onMoldBoundsReady(self, boundsData: dict):
+        xText = f"[{boundsData['xMin']:.2f}, {boundsData['xMax']:.2f}]  Δ {boundsData['xSize']:.2f} mm"
+        yText = f"[{boundsData['yMin']:.2f}, {boundsData['yMax']:.2f}]  Δ {boundsData['ySize']:.2f} mm"
+        zText = f"[{boundsData['zMin']:.2f}, {boundsData['zMax']:.2f}]  Δ {boundsData['zSize']:.2f} mm"
+        self.boundsXLabel.setText(xText)
+        self.boundsYLabel.setText(yText)
+        self.boundsZLabel.setText(zText)
+        self.moldBoundsGroup.setVisible(True)
 
     def loadConfiguration(self, configDict):
         moldConfig = configDict.get("mold") or {}
