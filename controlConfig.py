@@ -131,7 +131,36 @@ parameterSchema = {
                 "workOffsetZ": 0,
                 "aAxisOffsetY": 0.0,
                 "aAxisOffsetZ": 90.0383,
-                "singularityEps": 0.01
+                "singularityEps": 0.01,
+                "errorCompensation": {
+                    "enabled": False,
+                    "linearAxisErrors": {
+                        "xTable": [],
+                        "yTable": [],
+                        "zTable": []
+                    },
+                    "rotaryAxisErrors": {
+                        "cEpsilonXTable": [],
+                        "cEpsilonYTable": [],
+                        "cEpsilonZTable": [],
+                        "aEpsilonXTable": [],
+                        "aEpsilonYTable": [],
+                        "aEpsilonZTable": []
+                    },
+                    "positionErrors": {
+                        "ocx": -1.36e-05,
+                        "ocy":  5.61e-05,
+                        "oax":  3.41521e-02,
+                        "oay":  1.35176e-02,
+                        "oza":  0.0
+                    },
+                    "squarenessErrors": {
+                        "scx": 4.763e-07,
+                        "scy": 4.87e-08,
+                        "sax": 2.915e-07,
+                        "say": 4.87e-08
+                    }
+                }
             },
             "required": False, "description": "运动学配置"
         },
