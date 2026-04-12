@@ -84,6 +84,13 @@ class XyzacTrtKinematics:
         self.prevA: Optional[float] = None
         self.prevC: Optional[float] = None
 
+        errorCfg = kinematicsCfg.get("errorCompensation", {})
+        if errorCfg:
+            from cnc.errorCompensator import GeometricErrorCompensator
+            self.errorCompensator: Optional[object] = GeometricErrorCompensator(errorCfg)
+        else:
+            self.errorCompensator = None
+
     def buildTranslationFromVec(self, vec: Tuple[float, float, float]) -> List[List[float]]:
         return buildTranslation(vec[0], vec[1], vec[2])
 
@@ -168,6 +175,8 @@ class XyzacTrtKinematics:
         newA, newC = self.solveRotaryAngles(toolAxisVec)
         optA, optC = self.minimizeAngularJump(self.prevA, self.prevC, newA, newC)
         px, py, pz = self.solveLinearAxes(tipPositionWcs, optA, optC)
+        if self.errorCompensator is not None:
+            px, py, pz = self.errorCompensator.applyCompensation(px, py, pz, optA, optC)
         self.prevA = optA
         self.prevC = optC
         return px, py, pz, optA, optC
