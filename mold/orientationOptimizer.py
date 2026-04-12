@@ -4,9 +4,9 @@ from dataclasses import dataclass
 from typing import Dict, Tuple, Optional, List, Union
 import numpy as np
 import trimesh
-from moldGenerator import MoldGenerator
-from supportRegionDetector import SupportRegionDetector
-from machiningRegionDetector import AccessibilityAnalyzer
+from mold.moldGenerator import MoldGenerator
+from mold.supportRegionDetector import SupportRegionDetector
+from mold.machiningRegionDetector import AccessibilityAnalyzer
 
 
 @dataclass
