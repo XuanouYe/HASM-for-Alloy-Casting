@@ -29,6 +29,11 @@ class MoldProcessController(QObject):
         self.currentRiserMesh = None
         self.currentWorker = None
 
+    def _unwrapResult(self, result):
+        if isinstance(result, dict) and "result" in result:
+            return result["result"]
+        return result
+
     def handleLoadModel(self, filePath: str):
         self.currentCastingMesh = trimesh.load(filePath)
         self.currentGateMesh = None
@@ -52,7 +57,10 @@ class MoldProcessController(QObject):
         self.currentWorker.start()
 
     def _onMoldGenerated(self, result):
-        moldShell = result.get("result") if isinstance(result, dict) else result
+        moldShell = self._unwrapResult(result)
+        if not isinstance(moldShell, trimesh.Trimesh):
+            self.processError.emit("模具生成失败", f"返回值类型异常: {type(moldShell)}")
+            return
         self.currentMoldShell = moldShell
         self.moldGenerated.emit()
         self.updateMoldView.emit(self.currentMoldShell)
@@ -87,7 +95,10 @@ class MoldProcessController(QObject):
         self.currentWorker.start()
 
     def _onGatingAdded(self, result):
-        data = result.get("result") if isinstance(result, dict) and "result" in result else result
+        data = self._unwrapResult(result)
+        if not isinstance(data, dict):
+            self.processError.emit("浇道添加失败", f"返回值类型异常: {type(data)}")
+            return
         self.currentCastingMesh = data["combined"]
         self.currentGateMesh = data["gate"]
         self.currentRiserMesh = data["riser"]
@@ -147,12 +158,13 @@ class MoldProcessController(QObject):
         self.currentWorker.start()
 
     def _onOrientationOptimized(self, result):
-        optimizedMesh = result.get("bestMesh") if isinstance(result, dict) else result
+        data = self._unwrapResult(result)
+        optimizedMesh = data.get("bestMesh") if isinstance(data, dict) else data
         if isinstance(optimizedMesh, trimesh.Scene):
             optimizedMesh = optimizedMesh.dump(concatenate=True)
         self.currentCastingMesh = optimizedMesh
-        bestAlpha = result.get("bestAlpha", 0.0) if isinstance(result, dict) else 0.0
-        bestBeta = result.get("bestBeta", 0.0) if isinstance(result, dict) else 0.0
+        bestAlpha = data.get("bestAlpha", 0.0) if isinstance(data, dict) else 0.0
+        bestBeta = data.get("bestBeta", 0.0) if isinstance(data, dict) else 0.0
         summaryMsg = f"alpha={bestAlpha:.2f}° beta={bestBeta:.2f}°"
         self.orientationOptimized.emit(summaryMsg)
         self.updateCastingView.emit(self.currentCastingMesh)
@@ -174,7 +186,10 @@ class MoldProcessController(QObject):
         self.currentWorker.start()
 
     def _onStructureAdjusted(self, result, offsetVal):
-        shell = result.get("result") if isinstance(result, dict) else result
+        shell = self._unwrapResult(result)
+        if not isinstance(shell, trimesh.Trimesh):
+            self.processError.emit("表面偏移失败", f"返回值类型异常: {type(shell)}")
+            return
         self.currentMoldShell = shell
         self.structureAdjusted.emit(offsetVal)
         self.updateMoldView.emit(self.currentMoldShell)
