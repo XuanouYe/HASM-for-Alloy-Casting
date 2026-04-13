@@ -4,9 +4,9 @@ import tempfile
 from datetime import timedelta
 import trimesh
 from PyQt5.QtCore import QObject, QTimer
+from pathlib import Path
 
-from .workerThread import WorkerThread
-
+from gui.workerThread import WorkerThread
 from cnc.gcodeProcessor import generateCncGcodeInterface
 
 from fdmExecutor import generateGcodeInterface
@@ -262,6 +262,3 @@ class MainController(QObject):
             self.mainWindow.setCncButtonEnabled(True)
             self.mainWindow.setStatusText("生成失败")
         self.mainWindow.showMessage("错误", f"{title}:\n{errorMsg}", isError=True)
-
-
-from pathlib import Path
