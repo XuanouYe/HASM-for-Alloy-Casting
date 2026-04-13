@@ -8,7 +8,6 @@ from gui.mainWindow import MainWindow
 from gui.mainController import MainController
 from gui.moldProcessController import MoldProcessController
 
-
 def main():
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
@@ -28,13 +27,14 @@ def main():
     moldController.orientationOptimized.connect(moldProcessPanel.onOrientationOptimizedSuccess)
     moldController.structureAdjusted.connect(moldProcessPanel.onStructureAdjustedSuccess)
     moldController.processError.connect(moldProcessPanel.onProcessError)
+    moldController.moldBoundsReady.connect(moldProcessPanel.onMoldBoundsReady)
+    moldController.cavityVolumeReady.connect(moldProcessPanel.onCavityVolumeReady)
     moldController.updateCastingView.connect(viewer.loadCastingMesh, type=Qt.QueuedConnection)
     moldController.updateMoldView.connect(viewer.loadMoldMesh, type=Qt.QueuedConnection)
     viewer.viewError.connect(lambda err: moldProcessPanel.onProcessError("渲染错误", err))
     mainController = MainController(mainWindow, moldController, parameterPanel)
     mainWindow.show()
     sys.exit(app.exec_())
-
 
 if __name__ == "__main__":
     main()
