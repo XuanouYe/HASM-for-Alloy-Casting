@@ -156,3 +156,43 @@ class SweptVolumeCollisionEngine:
                 localSeg = applyRotation(np.asarray(currentSafe, dtype=float), rotInv)
                 safePaths.append(localSeg)
         return safePaths
+
+    def recheckAndRepairLinks(self, clPoints: List[dict],
+                              globalClearanceZ: float,
+                              linkFeedRate: float,
+                              tol: float) -> List[dict]:
+        from copy import deepcopy
+        repairedPoints: List[dict] = []
+        i = 0
+        while i < len(clPoints):
+            pt = clPoints[i]
+            repairedPoints.append(deepcopy(pt))
+            if i + 1 < len(clPoints):
+                nxt = clPoints[i + 1]
+                p0 = np.asarray(pt["position"], dtype=float)
+                p1 = np.asarray(nxt["position"], dtype=float)
+                a0 = np.asarray(pt.get("toolAxis", [0.0, 0.0, 1.0]), dtype=float)
+                n0 = np.linalg.norm(a0)
+                a0 = a0 / n0 if n0 > 1e-9 else np.array([0.0, 0.0, 1.0])
+                a1 = np.asarray(nxt.get("toolAxis", [0.0, 0.0, 1.0]), dtype=float)
+                n1 = np.linalg.norm(a1)
+                a1 = a1 / n1 if n1 > 1e-9 else np.array([0.0, 0.0, 1.0])
+                if self.checkSegment(p0, a0, p1, a1, tol):
+                    retractPt = {"pointId": 0,
+                                 "position": [float(p0[0]), float(p0[1]), float(globalClearanceZ)],
+                                 "toolAxis": [float(a0[0]), float(a0[1]), float(a0[2])],
+                                 "feedrate": float(linkFeedRate),
+                                 "segmentId": -1,
+                                 "motionType": "retract"}
+                    rapidPt  = {"pointId": 0,
+                                "position": [float(p1[0]), float(p1[1]), float(globalClearanceZ)],
+                                "toolAxis": [float(a1[0]), float(a1[1]), float(a1[2])],
+                                "feedrate": float(linkFeedRate),
+                                "segmentId": -1,
+                                "motionType": "rapid"}
+                    repairedPoints.append(retractPt)
+                    repairedPoints.append(rapidPt)
+            i += 1
+        for idx, ptItem in enumerate(repairedPoints, start=1):
+            ptItem["pointId"] = idx
+        return repairedPoints

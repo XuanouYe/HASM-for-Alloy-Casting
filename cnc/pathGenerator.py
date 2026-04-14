@@ -264,7 +264,7 @@ class FiveAxisCncPathGenerator:
         for sid, indexedPts in segMap.items():
             currentRun = []
             for origIdx, pt in indexedPts:
-                if float(sdVals[origIdx]) >= toolRadius if (toolRadius := 0.0) else float(sdVals[origIdx]) >= -safeClearance:
+                if float(sdVals[origIdx]) >= -safeClearance:
                     currentRun.append(pt)
                 else:
                     if len(currentRun) >= 2:
@@ -385,7 +385,8 @@ class FiveAxisCncPathGenerator:
                                safeClearance: float,
                                globalMinZ: float,
                                safetyMargin: float,
-                               worldSafeZ: float) -> Dict[str, Any]:
+                               worldSafeZ: float,
+                               collisionEngine: Optional[SweptVolumeCollisionEngine] = None) -> Dict[str, Any]:
         toolRadius = float(toolParams.get("diameter", 6.0)) * 0.5
         feedrate = float(stepParam.get("feedrate", 500.0))
         platformSafeZ = float(globalMinZ + toolRadius + safetyMargin)
@@ -400,9 +401,14 @@ class FiveAxisCncPathGenerator:
         axisUnit = np.array([0.0, 0.0, 1.0], dtype=float)
         rotToToolFrame = buildRotationFromTo(axisUnit, axisUnit)
         rotBack = rotToToolFrame.T
+        sweepTol = float(stepParam.get("sweepTol", toolRadius * 0.1))
         rawPathsLocal = strategy.generate(
             targetMesh, trimesh.Trimesh(), toolRadius, removalParams, safetyMargin)
-        rawPathsLocal = [np.asarray(p, dtype=float) for p in rawPathsLocal if len(p) >= 2]
+        if collisionEngine is not None:
+            rawPathsLocal = collisionEngine.filterPaths(
+                rawPathsLocal, axisUnit, rotBack, sweepTol)
+        else:
+            rawPathsLocal = [np.asarray(p, dtype=float) for p in rawPathsLocal if len(p) >= 2]
         rawPathsWcs = [applyRotation(np.asarray(p, dtype=float), rotBack)
                        for p in rawPathsLocal if len(p) >= 2]
         clippedWcs = self.toolpathEngine.clipWcsPathsByZ(rawPathsWcs, effectiveWorldSafeZ)
@@ -515,6 +521,8 @@ class FiveAxisCncPathGenerator:
         meshList = [partMesh, moldMesh, gateMesh, riserMesh]
         globalMinZ = min(
             float(m.bounds[0, 2]) for m in meshList if m is not None and not m.is_empty)
+        globalMaxZ = max(
+            float(m.bounds[1, 2]) for m in meshList if m is not None and not m.is_empty)
         candidateAxesRaw = axisStrategyParams.get("candidateAxes", [[0.0, 0.0, 1.0]])
         candidateAxes = [normalizeVector(np.asarray(a, dtype=float))
                          for a in candidateAxesRaw]
@@ -529,6 +537,7 @@ class FiveAxisCncPathGenerator:
         sweptRingCount = int(toolParams.get("sweptRingCount", 6))
         sweptSafeBuffer = float(toolParams.get("sweptSafeBuffer", 2.0))
         worldSafeZ = globalMinZ + bottomSafeOffset
+        globalClearanceZ = globalMaxZ + float(toolParams.get("globalRetractHeight", 10.0))
         enableStep1 = bool(axisStrategyParams.get("enableStep1ShellRemoval", True))
         enableStep2 = bool(axisStrategyParams.get("enableStep2RiserRemoval", True))
         enableStep3 = bool(axisStrategyParams.get("enableStep3PartFinishing", True))
@@ -555,17 +564,19 @@ class FiveAxisCncPathGenerator:
             step1 = self._emptyStep(1, "shellRemoval", toolParams)
 
         if enableStep2:
+            engineStep2 = buildEngine([partMesh], [sweptClearance])
             step2 = self.generateRiserGateStep(
                 2, "riserRemoval", riserMesh, toolParams, stepParams[1],
-                partSdf, stepSafeClearance, globalMinZ, safetyMargin, worldSafeZ)
+                partSdf, stepSafeClearance, globalMinZ, safetyMargin, worldSafeZ,
+                collisionEngine=engineStep2)
         else:
             step2 = self._emptyStep(2, "riserRemoval", toolParams)
 
         if enableStep3:
             finishStock = float(stepParams[2].get("finishStock", 0.03))
-            partInnerSdf = buildOffsetSdf(partMesh, finishStock, voxelSize, backendName)
+            partOuterSdf = buildOffsetSdf(partMesh, -finishStock, voxelSize, backendName)
             engine3 = SweptVolumeCollisionEngine(
-                flatTool, [partInnerSdf], [sweptClearance],
+                flatTool, [partOuterSdf], [0.0],
                 diskCount=sweptDiskCount, ringCount=sweptRingCount,
                 safeBuffer=sweptSafeBuffer)
             step3Axes = self.selectAxesGreedyCoverage(
@@ -592,15 +603,18 @@ class FiveAxisCncPathGenerator:
             step3 = self._emptyStep(3, "partFinishing", toolParams)
 
         if enableStep4:
+            engineStep4 = buildEngine([partMesh], [sweptClearance])
             step4 = self.generateRiserGateStep(
                 4, "gateRemoval", gateMesh, toolParams, stepParams[3],
-                partSdf, gateSafeClearance, globalMinZ, safetyMargin, worldSafeZ)
+                partSdf, gateSafeClearance, globalMinZ, safetyMargin, worldSafeZ,
+                collisionEngine=engineStep4)
         else:
             step4 = self._emptyStep(4, "gateRemoval", toolParams)
 
         outputData = {
             "version": self.version,
             "wcsId": str(wcsId),
+            "globalClearanceZ": float(globalClearanceZ),
             "steps": [step1, step2, step3, step4]
         }
         if jobId is not None:
