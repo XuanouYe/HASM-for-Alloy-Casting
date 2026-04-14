@@ -46,7 +46,8 @@ class MoldGenerator:
         gatingConfig = {
             "targetFillTime": self.config.get("targetFillTime", 5.0),
             "sprueInletOffset": self.config.get("sprueInletOffset", 5.0),
-            "boundingBoxOffset": self.boundingBoxOffset
+            "boundingBoxOffset": self.boundingBoxOffset,
+            "runnerDiameter": self.config.get("runnerDiameter", 6.0)
         }
         return createGatingSystem(castingMesh=castingMesh, config=gatingConfig)
 
@@ -136,4 +137,3 @@ if __name__ == '__main__':
         addGating=True,
         surfaceOffset=False,
     )
-
