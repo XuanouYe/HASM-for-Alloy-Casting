@@ -92,6 +92,8 @@ class SweptVolumeCollisionEngine:
         endpointMin = self._minSdfSegEndpoints(p0, a0, p1, a1)
         if endpointMin > self.safeBuffer:
             return False
+        if endpointMin < 0.0:
+            return True
 
         stack = [(0.0, 1.0, 0, endpointMin)]
         while stack:
