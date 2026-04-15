@@ -131,6 +131,13 @@ class FiveAxisCncPathGenerator:
             axes.append(normalizeVector(tiltDirs[i]))
         return axes
 
+    def _filterByKeepOutSdfList(self, stepData: Dict[str, Any],
+                                 keepOutSdfList: List[SdfVolume],
+                                 safeClearance: float) -> Dict[str, Any]:
+        for keepOutSdf in keepOutSdfList:
+            stepData = self._filterClPointsByPartSdf(stepData, keepOutSdf, safeClearance)
+        return stepData
+
     def _filterStep1ByPartSdf(self, stepData: Dict[str, Any],
                                partSdf: SdfVolume,
                                safeClearance: float) -> Dict[str, Any]:
@@ -444,7 +451,9 @@ class FiveAxisCncPathGenerator:
     def generateStep1ShellRemoval(self, toolParams: Dict[str, Any],
                                    stepParam: Dict[str, Any],
                                    moldMesh: trimesh.Trimesh,
+                                   keepOutMesh: trimesh.Trimesh,
                                    partSdf: SdfVolume,
+                                   keepOutSdfList: List[SdfVolume],
                                    step1Axes: List[np.ndarray],
                                    globalMinZ: float,
                                    safetyMargin: float,
@@ -478,8 +487,9 @@ class FiveAxisCncPathGenerator:
                 axisUnit, np.array([0.0, 0.0, 1.0], dtype=float))
             rotBack = rotToToolFrame.T
             rotatedMold = self.rotateMesh(moldMesh, rotToToolFrame)
+            rotatedKeepOut = self.rotateMesh(keepOutMesh, rotToToolFrame)
             rawPathsLocal = strategy.generate(
-                rotatedMold, trimesh.Trimesh(), toolRadius, coarseParams, safetyMargin)
+                rotatedMold, rotatedKeepOut, toolRadius, coarseParams, safetyMargin)
             rawPathsLocal = [np.asarray(p, dtype=float) for p in rawPathsLocal if len(p) >= 2]
             rawPathsWcs = [applyRotation(np.asarray(p, dtype=float), rotBack)
                            for p in rawPathsLocal if len(p) >= 2]
@@ -508,7 +518,9 @@ class FiveAxisCncPathGenerator:
             "segments": segments,
             "clPoints": allClPoints
         }
-        return self._filterStep1ByPartSdf(stepData, partSdf, step1SafeClearance)
+        stepData = self._filterStep1ByPartSdf(stepData, partSdf, step1SafeClearance)
+        stepData = self._filterByKeepOutSdfList(stepData, keepOutSdfList, step1SafeClearance)
+        return stepData
 
     def generateJob(self, partStl: str, moldStl: str, gateStl: str, riserStl: str,
                     toolParams: Dict[str, Any], stepParams: List[Dict[str, Any]],
@@ -557,8 +569,17 @@ class FiveAxisCncPathGenerator:
 
         if enableStep1:
             step1Axes = self._selectStep1Axes(axisStrategyParams)
+            gateRiserMeshList = [m for m in [gateMesh, riserMesh]
+                                 if m is not None and not m.is_empty]
+            gateRiserKeepOut = (concatenateMeshes(gateRiserMeshList)
+                                if gateRiserMeshList else trimesh.Trimesh())
+            gateRiserSdfList = [buildSdfVolume(m, voxelSize, backendName)
+                                for m in gateRiserMeshList]
             step1 = self.generateStep1ShellRemoval(
-                toolParams, stepParams[0], moldMesh, partSdf,
+                toolParams, stepParams[0], moldMesh,
+                gateRiserKeepOut,
+                partSdf,
+                gateRiserSdfList,
                 step1Axes, globalMinZ, safetyMargin, worldSafeZ)
         else:
             step1 = self._emptyStep(1, "shellRemoval", toolParams)

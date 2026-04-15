@@ -354,6 +354,7 @@ def generateDropCutterPaths(targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Tr
 
 
 def generateShellRemovalPaths(targetMesh: trimesh.Trimesh,
+                               keepOutMesh: trimesh.Trimesh,
                                toolRadius: float,
                                params: Dict[str, Any],
                                safetyMargin: float) -> List[np.ndarray]:
@@ -400,9 +401,21 @@ def generateShellRemovalPaths(targetMesh: trimesh.Trimesh,
         if outerUnion.is_empty:
             continue
 
+        keepOutPoly = MultiPolygon()
+        if keepOutMesh is not None and not keepOutMesh.is_empty:
+            keepOutPolys = robustSection(keepOutMesh, zValue)
+            if keepOutPolys:
+                keepOutPoly = cleanPolygon(keepOutPolys).buffer(
+                    toolRadius + safetyMargin)
+
         fillablePoly = outerUnion.buffer(-(toolRadius + roughStock))
         if fillablePoly.is_empty:
             continue
+
+        if not keepOutPoly.is_empty:
+            fillablePoly = fillablePoly.difference(keepOutPoly)
+            if fillablePoly.is_empty:
+                continue
 
         if useContour:
             for passIdx in range(contourPasses):
@@ -410,6 +423,10 @@ def generateShellRemovalPaths(targetMesh: trimesh.Trimesh,
                 contourRing = outerUnion.buffer(-offsetDist)
                 if contourRing.is_empty:
                     break
+                if not keepOutPoly.is_empty:
+                    contourRing = contourRing.difference(keepOutPoly)
+                    if contourRing.is_empty:
+                        break
                 boundary = contourRing.boundary
                 if boundary is None or boundary.is_empty:
                     break
@@ -472,7 +489,8 @@ class ShellRemovalRoughingStrategy(IToolpathStrategy):
     def generate(self, targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh,
                  toolRadius: float, params: Dict[str, Any],
                  safetyMargin: float) -> List[np.ndarray]:
-        return generateShellRemovalPaths(targetMesh, toolRadius, params, safetyMargin)
+        return generateShellRemovalPaths(
+            targetMesh, keepOutMesh, toolRadius, params, safetyMargin)
 
 
 class ToolpathStrategyFactory:
