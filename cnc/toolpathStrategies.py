@@ -4,7 +4,7 @@ import numpy as np
 import scipy.ndimage as nd
 import trimesh
 from shapely.geometry import LineString, MultiPolygon, Polygon
-from shapely.ops import unary_union
+from shapely.ops import unary_union, polygonize
 from shapely.validation import make_valid
 
 
@@ -51,6 +51,45 @@ def robustSection(mesh: trimesh.Trimesh, zValue: float, tolerance: float = 0.05)
     if result is not None:
         return result
     return trySection(zValue + tolerance)
+
+
+def robustSectionIn2d(mesh: trimesh.Trimesh, zValue: float,
+                      to3dMat: np.ndarray, tolerance: float = 0.05) -> Any:
+    invMat = np.linalg.inv(to3dMat)
+
+    def trySectionIn2d(zVal: float):
+        try:
+            sec = mesh.section(
+                plane_origin=[0.0, 0.0, zVal],
+                plane_normal=[0.0, 0.0, 1.0])
+            if sec is None:
+                return None
+            verts3d = np.asarray(sec.vertices, dtype=float)
+            if len(verts3d) == 0:
+                return None
+            hom = np.column_stack([verts3d, np.ones(len(verts3d))])
+            verts2d = (invMat @ hom.T).T[:, :2]
+            lineList = []
+            for entity in sec.entities:
+                pts = entity.points
+                for k in range(len(pts) - 1):
+                    lineList.append([verts2d[pts[k]].tolist(),
+                                     verts2d[pts[k + 1]].tolist()])
+            if not lineList:
+                return None
+            mls = unary_union([LineString(seg) for seg in lineList])
+            polys = list(polygonize(mls))
+            return polys if polys else None
+        except Exception:
+            return None
+
+    result = trySectionIn2d(zValue)
+    if result is not None:
+        return result
+    result = trySectionIn2d(zValue - tolerance)
+    if result is not None:
+        return result
+    return trySectionIn2d(zValue + tolerance)
 
 
 def extractLineStrings(geomValue: Any) -> List[Any]:
@@ -403,9 +442,9 @@ def generateShellRemovalPaths(targetMesh: trimesh.Trimesh,
 
         keepOutPoly = MultiPolygon()
         if keepOutMesh is not None and not keepOutMesh.is_empty:
-            keepOutPolys = robustSection(keepOutMesh, zValue)
-            if keepOutPolys:
-                keepOutPoly = cleanPolygon(keepOutPolys).buffer(
+            keepOutPolys2d = robustSectionIn2d(keepOutMesh, zValue, to3dMat)
+            if keepOutPolys2d:
+                keepOutPoly = cleanPolygon(keepOutPolys2d).buffer(
                     toolRadius + safetyMargin)
 
         fillablePoly = outerUnion.buffer(-(toolRadius + roughStock))
