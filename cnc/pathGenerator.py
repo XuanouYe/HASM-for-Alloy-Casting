@@ -385,8 +385,7 @@ class FiveAxisCncPathGenerator:
                                safeClearance: float,
                                globalMinZ: float,
                                safetyMargin: float,
-                               worldSafeZ: float,
-                               collisionEngine: Optional[SweptVolumeCollisionEngine] = None) -> Dict[str, Any]:
+                               worldSafeZ: float) -> Dict[str, Any]:
         toolRadius = float(toolParams.get("diameter", 6.0)) * 0.5
         feedrate = float(stepParam.get("feedrate", 500.0))
         platformSafeZ = float(globalMinZ + toolRadius + safetyMargin)
@@ -399,21 +398,15 @@ class FiveAxisCncPathGenerator:
         removalParams["bottomClearance"] = float(toolParams.get("bottomClearance", 0.0))
         strategy = ToolpathStrategyFactory.getStrategy("risergateremoval")
         axisUnit = np.array([0.0, 0.0, 1.0], dtype=float)
-        rotToToolFrame = buildRotationFromTo(axisUnit, axisUnit)
-        rotBack = rotToToolFrame.T
-        sweepTol = float(stepParam.get("sweepTol", toolRadius * 0.1))
         rawPathsLocal = strategy.generate(
             targetMesh, trimesh.Trimesh(), toolRadius, removalParams, safetyMargin)
-        if collisionEngine is not None:
-            rawPathsLocal = collisionEngine.filterPaths(
-                rawPathsLocal, axisUnit, rotBack, sweepTol)
-        else:
-            rawPathsLocal = [np.asarray(p, dtype=float) for p in rawPathsLocal if len(p) >= 2]
+        rawPathsLocal = [np.asarray(p, dtype=float) for p in rawPathsLocal if len(p) >= 2]
+        rotToToolFrame = np.eye(3, dtype=float)
+        rotBack = np.eye(3, dtype=float)
         rawPathsWcs = [applyRotation(np.asarray(p, dtype=float), rotBack)
-                       for p in rawPathsLocal if len(p) >= 2]
+                       for p in rawPathsLocal]
         clippedWcs = self.toolpathEngine.clipWcsPathsByZ(rawPathsWcs, effectiveWorldSafeZ)
-        rotInv = rotToToolFrame
-        validPathsLocal = [applyRotation(pw, rotInv) for pw in clippedWcs if len(pw) >= 2]
+        validPathsLocal = [applyRotation(pw, rotToToolFrame) for pw in clippedWcs if len(pw) >= 2]
         reClipped = []
         for pathLocal in validPathsLocal:
             reClipped.extend(
@@ -588,11 +581,9 @@ class FiveAxisCncPathGenerator:
             step1 = self._emptyStep(1, "shellRemoval", toolParams)
 
         if enableStep2:
-            engineStep2 = buildEngine([partMesh], [sweptClearance])
             step2 = self.generateRiserGateStep(
                 2, "riserRemoval", riserMesh, toolParams, stepParams[1],
-                partSdf, stepSafeClearance, globalMinZ, safetyMargin, worldSafeZ,
-                collisionEngine=engineStep2)
+                partSdf, stepSafeClearance, globalMinZ, safetyMargin, worldSafeZ)
         else:
             step2 = self._emptyStep(2, "riserRemoval", toolParams)
 
@@ -627,11 +618,9 @@ class FiveAxisCncPathGenerator:
             step3 = self._emptyStep(3, "partFinishing", toolParams)
 
         if enableStep4:
-            engineStep4 = buildEngine([partMesh], [sweptClearance])
             step4 = self.generateRiserGateStep(
                 4, "gateRemoval", gateMesh, toolParams, stepParams[3],
-                partSdf, gateSafeClearance, globalMinZ, safetyMargin, worldSafeZ,
-                collisionEngine=engineStep4)
+                partSdf, gateSafeClearance, globalMinZ, safetyMargin, worldSafeZ)
         else:
             step4 = self._emptyStep(4, "gateRemoval", toolParams)
 
