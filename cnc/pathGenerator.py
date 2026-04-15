@@ -133,58 +133,86 @@ class FiveAxisCncPathGenerator:
             axes.append(normalizeVector(tiltDirs[i]))
         return axes
 
-    def _filterClPointsByKeepOutSdf(self, stepData: Dict[str, Any],
-                                     keepOutSdf: SdfVolume,
-                                     safeClearance: float) -> Dict[str, Any]:
-        clPoints = stepData.get("clPoints", [])
-        if not clPoints or keepOutSdf.isEmpty:
-            return stepData
-        sortedPts = sorted(clPoints, key=lambda p: int(p.get("pointId", 0)))
-        positions = np.array([p["position"] for p in sortedPts], dtype=float)
-        sdVals = keepOutSdf.query(positions)
-        segMap: Dict[int, List] = {}
-        for i, pt in enumerate(sortedPts):
+    def _rebuildStepData(self, clPoints: List[Dict[str, Any]]) -> Dict[str, Any]:
+        segMap: Dict[int, List[Dict]] = {}
+        for pt in clPoints:
             sid = int(pt.get("segmentId", -1))
-            segMap.setdefault(sid, []).append((i, pt))
-        newClPoints = []
-        newSegments = []
+            segMap.setdefault(sid, []).append(pt)
         newPointId = 0
         newSegId = 0
-        for sid, indexedPts in segMap.items():
+        newClPoints = []
+        newSegments = []
+        for sid in sorted(segMap.keys()):
+            pts = segMap[sid]
+            if len(pts) < 2:
+                continue
+            axisIndex = int(pts[0].get("axisIndex", 0))
+            toolAxis = pts[0].get("toolAxis", [0.0, 0.0, 1.0])
+            feedrate = float(pts[0].get("feedrate", 500.0))
+            for pt in pts:
+                newPt = dict(pt)
+                newPt["pointId"] = newPointId
+                newPt["segmentId"] = newSegId
+                newClPoints.append(newPt)
+                newPointId += 1
+            newSegments.append({
+                "segmentId": newSegId,
+                "axisIndex": axisIndex,
+                "toolAxis": toolAxis,
+                "feedrate": feedrate,
+                "pointCount": len(pts)
+            })
+            newSegId += 1
+        return {"clPoints": newClPoints, "segments": newSegments}
+
+    def _filterClPointsBySdf(self, clPoints: List[Dict[str, Any]],
+                              sdf: SdfVolume,
+                              keepCondition) -> List[Dict[str, Any]]:
+        if not clPoints or sdf.isEmpty:
+            return clPoints
+        positions = np.array([p["position"] for p in clPoints], dtype=float)
+        sdVals = sdf.query(positions)
+        segMap: Dict[int, List] = {}
+        for i, pt in enumerate(clPoints):
+            sid = int(pt.get("segmentId", -1))
+            segMap.setdefault(sid, []).append((i, pt))
+        survivingPts = []
+        for sid in sorted(segMap.keys()):
+            indexedPts = segMap[sid]
             currentRun = []
             for origIdx, pt in indexedPts:
-                if float(sdVals[origIdx]) >= safeClearance:
+                if keepCondition(float(sdVals[origIdx])):
                     currentRun.append(pt)
                 else:
                     if len(currentRun) >= 2:
-                        for p in currentRun:
-                            p["pointId"] = newPointId
-                            p["segmentId"] = newSegId
-                            newPointId += 1
-                        newClPoints.extend(currentRun)
-                        newSegments.append({
-                            "segmentId": newSegId,
-                            "axisIndex": currentRun[0].get("axisIndex", 0),
-                            "toolAxis": currentRun[0].get("toolAxis", [0.0, 0.0, 1.0]),
-                            "pointCount": len(currentRun)
-                        })
-                        newSegId += 1
+                        survivingPts.extend(currentRun)
                     currentRun = []
             if len(currentRun) >= 2:
-                for p in currentRun:
-                    p["pointId"] = newPointId
-                    p["segmentId"] = newSegId
-                    newPointId += 1
-                newClPoints.extend(currentRun)
-                newSegments.append({
-                    "segmentId": newSegId,
-                    "axisIndex": currentRun[0].get("axisIndex", 0),
-                    "toolAxis": currentRun[0].get("toolAxis", [0.0, 0.0, 1.0]),
-                    "pointCount": len(currentRun)
-                })
-                newSegId += 1
-        stepData["clPoints"] = newClPoints
-        stepData["segments"] = newSegments
+                survivingPts.extend(currentRun)
+        return survivingPts
+
+    def _filterStep1ByPartSdf(self, stepData: Dict[str, Any],
+                               partSdf: SdfVolume,
+                               safeClearance: float) -> Dict[str, Any]:
+        survived = self._filterClPointsBySdf(
+            stepData.get("clPoints", []),
+            partSdf,
+            lambda v: v >= -safeClearance)
+        rebuilt = self._rebuildStepData(survived)
+        stepData["clPoints"] = rebuilt["clPoints"]
+        stepData["segments"] = rebuilt["segments"]
+        return stepData
+
+    def _filterClPointsByKeepOutSdf(self, stepData: Dict[str, Any],
+                                     keepOutSdf: SdfVolume,
+                                     safeClearance: float) -> Dict[str, Any]:
+        survived = self._filterClPointsBySdf(
+            stepData.get("clPoints", []),
+            keepOutSdf,
+            lambda v: v >= safeClearance)
+        rebuilt = self._rebuildStepData(survived)
+        stepData["clPoints"] = rebuilt["clPoints"]
+        stepData["segments"] = rebuilt["segments"]
         return stepData
 
     def _filterByKeepOutSdfList(self, stepData: Dict[str, Any],
@@ -194,58 +222,16 @@ class FiveAxisCncPathGenerator:
             stepData = self._filterClPointsByKeepOutSdf(stepData, keepOutSdf, safeClearance)
         return stepData
 
-    def _filterStep1ByPartSdf(self, stepData: Dict[str, Any],
-                               partSdf: SdfVolume,
-                               safeClearance: float) -> Dict[str, Any]:
-        clPoints = stepData.get("clPoints", [])
-        if not clPoints or partSdf.isEmpty:
-            return stepData
-        sortedPts = sorted(clPoints, key=lambda p: int(p.get("pointId", 0)))
-        positions = np.array([p["position"] for p in sortedPts], dtype=float)
-        sdVals = partSdf.query(positions)
-        segMap: Dict[int, List] = {}
-        for i, pt in enumerate(sortedPts):
-            sid = int(pt.get("segmentId", -1))
-            segMap.setdefault(sid, []).append((i, pt))
-        newClPoints = []
-        newSegments = []
-        newPointId = 0
-        newSegId = 0
-        for sid, indexedPts in segMap.items():
-            currentRun = []
-            for origIdx, pt in indexedPts:
-                if float(sdVals[origIdx]) >= -safeClearance:
-                    currentRun.append(pt)
-                else:
-                    if len(currentRun) >= 2:
-                        for p in currentRun:
-                            p["pointId"] = newPointId
-                            p["segmentId"] = newSegId
-                            newPointId += 1
-                        newClPoints.extend(currentRun)
-                        newSegments.append({
-                            "segmentId": newSegId,
-                            "axisIndex": currentRun[0].get("axisIndex", 0),
-                            "toolAxis": currentRun[0].get("toolAxis", [0.0, 0.0, 1.0]),
-                            "pointCount": len(currentRun)
-                        })
-                        newSegId += 1
-                    currentRun = []
-            if len(currentRun) >= 2:
-                for p in currentRun:
-                    p["pointId"] = newPointId
-                    p["segmentId"] = newSegId
-                    newPointId += 1
-                newClPoints.extend(currentRun)
-                newSegments.append({
-                    "segmentId": newSegId,
-                    "axisIndex": currentRun[0].get("axisIndex", 0),
-                    "toolAxis": currentRun[0].get("toolAxis", [0.0, 0.0, 1.0]),
-                    "pointCount": len(currentRun)
-                })
-                newSegId += 1
-        stepData["clPoints"] = newClPoints
-        stepData["segments"] = newSegments
+    def _filterClPointsByPartSdf(self, stepData: Dict[str, Any],
+                                  partSdf: SdfVolume,
+                                  safeClearance: float) -> Dict[str, Any]:
+        survived = self._filterClPointsBySdf(
+            stepData.get("clPoints", []),
+            partSdf,
+            lambda v: v >= -safeClearance)
+        rebuilt = self._rebuildStepData(survived)
+        stepData["clPoints"] = rebuilt["clPoints"]
+        stepData["segments"] = rebuilt["segments"]
         return stepData
 
     def _emitSegments(self, localPaths: List[np.ndarray], axisUnit: np.ndarray,
@@ -269,12 +255,15 @@ class FiveAxisCncPathGenerator:
                         runWcs = finalWcsPath[currentRun]
                         clPts = self.buildClPointDicts(
                             runWcs, axisUnit, feedrate, outputSegmentId, pointId)
+                        for cp in clPts:
+                            cp["axisIndex"] = int(axisIndex)
                         pointId += len(clPts)
                         segments.append({
                             "segmentId": int(outputSegmentId),
                             "axisIndex": int(axisIndex),
                             "toolAxis": [float(axisUnit[0]), float(axisUnit[1]),
                                          float(axisUnit[2])],
+                            "feedrate": float(feedrate),
                             "pointCount": int(len(clPts))
                         })
                         allClPoints.extend(clPts)
@@ -284,12 +273,15 @@ class FiveAxisCncPathGenerator:
                 runWcs = finalWcsPath[currentRun]
                 clPts = self.buildClPointDicts(
                     runWcs, axisUnit, feedrate, outputSegmentId, pointId)
+                for cp in clPts:
+                    cp["axisIndex"] = int(axisIndex)
                 pointId += len(clPts)
                 segments.append({
                     "segmentId": int(outputSegmentId),
                     "axisIndex": int(axisIndex),
                     "toolAxis": [float(axisUnit[0]), float(axisUnit[1]),
                                  float(axisUnit[2])],
+                    "feedrate": float(feedrate),
                     "pointCount": int(len(clPts))
                 })
                 allClPoints.extend(clPts)
@@ -306,60 +298,6 @@ class FiveAxisCncPathGenerator:
             "segments": [],
             "clPoints": []
         }
-
-    def _filterClPointsByPartSdf(self, stepData: Dict[str, Any],
-                                  partSdf: SdfVolume,
-                                  safeClearance: float) -> Dict[str, Any]:
-        clPoints = stepData.get("clPoints", [])
-        if not clPoints or partSdf.isEmpty:
-            return stepData
-        sortedPts = sorted(clPoints, key=lambda p: int(p.get("pointId", 0)))
-        positions = np.array([p["position"] for p in sortedPts], dtype=float)
-        sdVals = partSdf.query(positions)
-        segMap: Dict[int, List] = {}
-        for i, pt in enumerate(sortedPts):
-            sid = int(pt.get("segmentId", -1))
-            segMap.setdefault(sid, []).append((i, pt))
-        newClPoints = []
-        newSegments = []
-        newPointId = 0
-        newSegId = 0
-        for sid, indexedPts in segMap.items():
-            currentRun = []
-            for origIdx, pt in indexedPts:
-                if float(sdVals[origIdx]) >= -safeClearance:
-                    currentRun.append(pt)
-                else:
-                    if len(currentRun) >= 2:
-                        for p in currentRun:
-                            p["pointId"] = newPointId
-                            p["segmentId"] = newSegId
-                            newPointId += 1
-                        newClPoints.extend(currentRun)
-                        newSegments.append({
-                            "segmentId": newSegId,
-                            "axisIndex": currentRun[0].get("axisIndex", 0),
-                            "toolAxis": currentRun[0].get("toolAxis", [0.0, 0.0, 1.0]),
-                            "pointCount": len(currentRun)
-                        })
-                        newSegId += 1
-                    currentRun = []
-            if len(currentRun) >= 2:
-                for p in currentRun:
-                    p["pointId"] = newPointId
-                    p["segmentId"] = newSegId
-                    newPointId += 1
-                newClPoints.extend(currentRun)
-                newSegments.append({
-                    "segmentId": newSegId,
-                    "axisIndex": currentRun[0].get("axisIndex", 0),
-                    "toolAxis": currentRun[0].get("toolAxis", [0.0, 0.0, 1.0]),
-                    "pointCount": len(currentRun)
-                })
-                newSegId += 1
-        stepData["clPoints"] = newClPoints
-        stepData["segments"] = newSegments
-        return stepData
 
     def generateStepWithAxes(self, stepId: int, stepType: str,
                               targetMesh: trimesh.Trimesh,
