@@ -450,7 +450,8 @@ class FiveAxisCncPathGenerator:
                                    step1Axes: List[np.ndarray],
                                    globalMinZ: float,
                                    safetyMargin: float,
-                                   worldSafeZ: float) -> Dict[str, Any]:
+                                   worldSafeZ: float,
+                                   keepOutCollisionEngine: Optional[SweptVolumeCollisionEngine] = None) -> Dict[str, Any]:
         toolRadius = float(toolParams.get("diameter", 6.0)) * 0.5
         feedrate = float(stepParam.get("feedrate", 500.0))
         coarseStepOver = float(stepParam.get("step1StepOver",
@@ -469,6 +470,7 @@ class FiveAxisCncPathGenerator:
         coarseParams["step1ContourPasses"] = int(stepParam.get("step1ContourPasses", 2))
         coarseParams["_toolpathEngine"] = self.toolpathEngine
         coarseParams["bottomClearance"] = float(toolParams.get("bottomClearance", 0.0))
+        sweepTol = float(stepParam.get("sweepTol", toolRadius * 0.1))
         strategy = ToolpathStrategyFactory.getStrategy("shellRemovalRoughing")
         segments = []
         allClPoints = []
@@ -483,7 +485,11 @@ class FiveAxisCncPathGenerator:
             rotatedKeepOut = self.rotateMesh(keepOutMesh, rotToToolFrame)
             rawPathsLocal = strategy.generate(
                 rotatedMold, rotatedKeepOut, toolRadius, coarseParams, safetyMargin)
-            rawPathsLocal = [np.asarray(p, dtype=float) for p in rawPathsLocal if len(p) >= 2]
+            if keepOutCollisionEngine is not None:
+                rawPathsLocal = keepOutCollisionEngine.filterPaths(
+                    rawPathsLocal, axisUnit, rotBack, sweepTol)
+            else:
+                rawPathsLocal = [np.asarray(p, dtype=float) for p in rawPathsLocal if len(p) >= 2]
             rawPathsWcs = [applyRotation(np.asarray(p, dtype=float), rotBack)
                            for p in rawPathsLocal if len(p) >= 2]
             clippedWcs = self.toolpathEngine.clipWcsPathsByZ(rawPathsWcs, effectiveWorldSafeZ)
@@ -568,12 +574,16 @@ class FiveAxisCncPathGenerator:
                                 if gateRiserMeshList else trimesh.Trimesh())
             gateRiserSdfList = [buildSdfVolume(m, voxelSize, backendName)
                                 for m in gateRiserMeshList]
+            keepOutClearances = [sweptClearance] * len(gateRiserMeshList)
+            keepOutEngine = (buildEngine(gateRiserMeshList, keepOutClearances)
+                             if gateRiserMeshList else None)
             step1 = self.generateStep1ShellRemoval(
                 toolParams, stepParams[0], moldMesh,
                 gateRiserKeepOut,
                 partSdf,
                 gateRiserSdfList,
-                step1Axes, globalMinZ, safetyMargin, worldSafeZ)
+                step1Axes, globalMinZ, safetyMargin, worldSafeZ,
+                keepOutCollisionEngine=keepOutEngine)
         else:
             step1 = self._emptyStep(1, "shellRemoval", toolParams)
 

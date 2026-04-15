@@ -71,13 +71,14 @@ class SweptVolumeCollisionEngine:
         sinA = np.sin(angle)
         return (np.sin((1.0 - t) * angle) / sinA) * a0 + (np.sin(t * angle) / sinA) * a1
 
-    def _minSdfSegEndpoints(self, p0: np.ndarray, a0: np.ndarray,
-                             p1: np.ndarray, a1: np.ndarray) -> float:
-        r0 = _buildRotMatFromAxis(a0)
-        r1 = _buildRotMatFromAxis(a1)
-        centers = np.stack([p0, p1], axis=0)
-        rots = np.stack([r0, r1], axis=0)
-        dists = self._checkPoseBatch(centers, rots)
+    def _minSdfAlongSeg(self, p0: np.ndarray, a0: np.ndarray,
+                        p1: np.ndarray, a1: np.ndarray,
+                        quickSamples: int = 5) -> float:
+        tVals = np.linspace(0.0, 1.0, quickSamples + 2)
+        tipCenters = np.array([(1.0 - t) * p0 + t * p1 for t in tVals], dtype=float)
+        axisVecs = np.array([self._slerpAxis(a0, a1, t) for t in tVals], dtype=float)
+        rotMats = np.stack([_buildRotMatFromAxis(av) for av in axisVecs], axis=0)
+        dists = self._checkPoseBatch(tipCenters, rotMats)
         return float(np.min(dists))
 
     def checkSegment(self, p0: np.ndarray, a0: np.ndarray, p1: np.ndarray, a1: np.ndarray,
@@ -89,11 +90,14 @@ class SweptVolumeCollisionEngine:
         a1 = np.asarray(a1, dtype=float)
         a1 /= np.linalg.norm(a1)
 
-        endpointMin = self._minSdfSegEndpoints(p0, a0, p1, a1)
-        if endpointMin > self.safeBuffer:
+        segMinDist = self._minSdfAlongSeg(p0, a0, p1, a1, quickSamples=5)
+        if segMinDist > self.safeBuffer:
             return False
 
-        stack = [(0.0, 1.0, 0, endpointMin)]
+        if segMinDist < 0.0:
+            return True
+
+        stack = [(0.0, 1.0, 0, segMinDist)]
         while stack:
             tStart, tEnd, depth, parentMinDist = stack.pop()
 
@@ -106,8 +110,8 @@ class SweptVolumeCollisionEngine:
             rotMats = np.stack([_buildRotMatFromAxis(av) for av in axisVecs], axis=0)
             batchDists = self._checkPoseBatch(tipCenters, rotMats)
 
-            segMinDist = float(np.min(batchDists))
-            if segMinDist < 0.0:
+            localMin = float(np.min(batchDists))
+            if localMin < 0.0:
                 return True
 
             if depth >= maxSubdivDepth:
@@ -121,12 +125,12 @@ class SweptVolumeCollisionEngine:
             if segLen <= tol and axisAngle <= np.radians(3.0):
                 continue
 
-            if segMinDist > self.safeBuffer:
+            if localMin > self.safeBuffer:
                 continue
 
             tMid = (tStart + tEnd) * 0.5
-            stack.append((tMid, tEnd, depth + 1, segMinDist))
-            stack.append((tStart, tMid, depth + 1, segMinDist))
+            stack.append((tMid, tEnd, depth + 1, localMin))
+            stack.append((tStart, tMid, depth + 1, localMin))
 
         return False
 
