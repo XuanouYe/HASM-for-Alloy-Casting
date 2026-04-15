@@ -550,15 +550,6 @@ class FiveAxisCncPathGenerator:
         sweptClearance = safetyMargin
         partSdf = buildSdfVolume(partMesh, voxelSize, backendName)
 
-        def buildEngine(protectMeshes, clearances):
-            sdfList = [buildSdfVolume(m, voxelSize, backendName)
-                       for m in protectMeshes]
-            return SweptVolumeCollisionEngine(
-                flatTool, sdfList, clearances,
-                diskCount=sweptDiskCount,
-                ringCount=sweptRingCount,
-                safeBuffer=sweptSafeBuffer)
-
         if enableStep1:
             step1Axes = self._selectStep1Axes(axisStrategyParams)
             gateRiserMeshList = [m for m in [gateMesh, riserMesh]
@@ -568,7 +559,11 @@ class FiveAxisCncPathGenerator:
             gateRiserSdfList = [buildSdfVolume(m, voxelSize, backendName)
                                 for m in gateRiserMeshList]
             keepOutClearances = [sweptClearance] * len(gateRiserMeshList)
-            keepOutEngine = (buildEngine(gateRiserMeshList, keepOutClearances)
+            keepOutEngine = (SweptVolumeCollisionEngine(
+                                 flatTool, gateRiserSdfList, keepOutClearances,
+                                 diskCount=sweptDiskCount,
+                                 ringCount=sweptRingCount,
+                                 safeBuffer=sweptSafeBuffer)
                              if gateRiserMeshList else None)
             step1 = self.generateStep1ShellRemoval(
                 toolParams, stepParams[0], moldMesh,
