@@ -41,20 +41,16 @@ class _PysdfSdfBackend:
 
 class _LegacySdfBackend:
     def __init__(self, mesh: trimesh.Trimesh, voxelSize: float):
-        from scipy.spatial import cKDTree
         self.mesh = mesh
-        sampleCount = max(20000, int(float(mesh.area) / (voxelSize * voxelSize) * 4))
-        sampleCount = min(sampleCount, 500000)
-        pts, _ = trimesh.sample.sample_surface(mesh, sampleCount)
-        self._samples = np.asarray(pts, dtype=float)
-        self._tree = cKDTree(self._samples)
 
     def query(self, points: np.ndarray) -> np.ndarray:
         pts = np.asarray(points, dtype=float)
-        dists, _ = self._tree.query(pts, k=1)
-        insideMask = self.mesh.contains(pts)
+        closestPts, dists, faceIds = trimesh.proximity.closest_point(self.mesh, pts)
+        faceNormals = self.mesh.face_normals[faceIds]
+        dirs = pts - closestPts
+        dotVals = np.einsum('ij,ij->i', dirs, faceNormals)
         signed = np.asarray(dists, dtype=float)
-        signed[insideMask] *= -1.0
+        signed[dotVals < 0] *= -1.0
         return signed
 
 
