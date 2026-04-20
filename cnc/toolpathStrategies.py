@@ -414,7 +414,9 @@ def generateShellRemovalPaths(targetMesh: trimesh.Trimesh,
     localSafeZ = zMin + bottomClearance if bottomClearance > 0.0 else -np.inf
 
     zLevels = np.arange(zMax, zMin - layerStep * 0.1, -layerStep, dtype=float)
-    if len(zLevels) == 0 or zLevels[-1] > zMin + layerStep * 0.1:
+    if len(zLevels) == 0:
+        zLevels = np.array([zMax, zMin], dtype=float)
+    elif zLevels[-1] > zMin + layerStep * 0.5:
         zLevels = np.append(zLevels, zMin)
 
     allPaths = []
@@ -425,17 +427,16 @@ def generateShellRemovalPaths(targetMesh: trimesh.Trimesh,
         if zValue < localSafeZ:
             continue
 
-        targetPolys = robustSection(targetMesh, zValue)
-        if not targetPolys:
-            continue
-
         try:
             targetSlice = targetMesh.section(
                 plane_origin=[0.0, 0.0, zValue],
                 plane_normal=[0.0, 0.0, 1.0])
             if targetSlice is None:
                 continue
-            _, to3dMat = targetSlice.to_2D()
+            slice2d, to3dMat = targetSlice.to_2D()
+            targetPolys = slice2d.polygons_full
+            if not targetPolys:
+                continue
         except Exception:
             continue
 
