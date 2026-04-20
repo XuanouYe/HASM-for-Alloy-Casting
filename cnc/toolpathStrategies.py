@@ -53,6 +53,32 @@ def robustSection(mesh: trimesh.Trimesh, zValue: float, tolerance: float = 0.05)
     return trySection(zValue + tolerance)
 
 
+def robustSectionWithMat(mesh: trimesh.Trimesh, zValue: float,
+                         tolerance: float = 0.05) -> Any:
+    def trySectionWithMat(zVal: float):
+        try:
+            sectionResult = mesh.section(
+                plane_origin=[0.0, 0.0, zVal],
+                plane_normal=[0.0, 0.0, 1.0])
+            if sectionResult is None:
+                return None, None
+            slice2d, to3dMat = sectionResult.to_2D()
+            polys = slice2d.polygons_full
+            if not polys:
+                return None, None
+            return polys, to3dMat
+        except Exception:
+            return None, None
+
+    polys, to3dMat = trySectionWithMat(zValue)
+    if polys is not None:
+        return polys, to3dMat
+    polys, to3dMat = trySectionWithMat(zValue - tolerance)
+    if polys is not None:
+        return polys, to3dMat
+    return trySectionWithMat(zValue + tolerance)
+
+
 def robustSectionIn2d(mesh: trimesh.Trimesh, zValue: float,
                       to3dMat: np.ndarray, tolerance: float = 0.05) -> Any:
     invMat = np.linalg.inv(to3dMat)
@@ -414,27 +440,21 @@ def generateShellRemovalPaths(targetMesh: trimesh.Trimesh,
     localSafeZ = zMin + bottomClearance if bottomClearance > 0.0 else -np.inf
 
     zLevels = np.arange(zMax, zMin - layerStep * 0.1, -layerStep, dtype=float)
-    if len(zLevels) == 0 or zLevels[-1] > zMin + layerStep * 0.1:
+    if len(zLevels) == 0:
+        zLevels = np.array([zMax, zMin], dtype=float)
+    elif zLevels[-1] > zMin + layerStep * 0.5:
         zLevels = np.append(zLevels, zMin)
 
     allPaths = []
+    contourOffset = toolRadius
+    rasterOffset = toolRadius + roughStock
 
     for zValue in zLevels:
         if zValue < localSafeZ:
             continue
 
-        targetPolys = robustSection(targetMesh, zValue)
-        if not targetPolys:
-            continue
-
-        try:
-            targetSlice = targetMesh.section(
-                plane_origin=[0.0, 0.0, zValue],
-                plane_normal=[0.0, 0.0, 1.0])
-            if targetSlice is None:
-                continue
-            _, to3dMat = targetSlice.to_2D()
-        except Exception:
+        targetPolys, to3dMat = robustSectionWithMat(targetMesh, zValue)
+        if not targetPolys or to3dMat is None:
             continue
 
         outerUnion = cleanPolygon(targetPolys)
@@ -448,7 +468,9 @@ def generateShellRemovalPaths(targetMesh: trimesh.Trimesh,
                 keepOutPoly = cleanPolygon(keepOutPolys2d).buffer(
                     toolRadius + safetyMargin)
 
-        fillablePoly = outerUnion.buffer(-(toolRadius + roughStock))
+        fillablePoly = outerUnion.buffer(-rasterOffset)
+        if fillablePoly.is_empty:
+            fillablePoly = outerUnion.buffer(-contourOffset)
         if fillablePoly.is_empty:
             continue
 
@@ -459,28 +481,29 @@ def generateShellRemovalPaths(targetMesh: trimesh.Trimesh,
 
         if useContour:
             for passIdx in range(contourPasses):
-                offsetDist = toolRadius + roughStock + passIdx * stepOver
-                contourRing = outerUnion.buffer(-offsetDist)
-                if contourRing.is_empty:
+                offsetDist = contourOffset + passIdx * stepOver
+                contourRegion = outerUnion.buffer(-offsetDist)
+                if contourRegion.is_empty:
                     break
                 if not keepOutPoly.is_empty:
-                    contourRing = contourRing.difference(keepOutPoly)
-                    if contourRing.is_empty:
+                    contourRegion = contourRegion.difference(keepOutPoly)
+                    if contourRegion.is_empty:
                         break
-                boundary = contourRing.boundary
-                if boundary is None or boundary.is_empty:
+                if contourRegion.geom_type == 'MultiPolygon':
+                    contourPolys = list(contourRegion.geoms)
+                elif contourRegion.geom_type == 'Polygon':
+                    contourPolys = [contourRegion]
+                elif contourRegion.geom_type == 'GeometryCollection':
+                    contourPolys = [g for g in contourRegion.geoms
+                                    if g.geom_type == 'Polygon']
+                else:
+                    contourPolys = []
+                if not contourPolys:
                     break
-                geomType = boundary.geom_type
-                lineGeoms = []
-                if geomType == 'LineString':
-                    lineGeoms = [boundary]
-                elif geomType == 'MultiLineString':
-                    lineGeoms = list(boundary.geoms)
-                elif geomType == 'GeometryCollection':
-                    lineGeoms = [g for g in boundary.geoms
-                                 if g.geom_type in ('LineString', 'LinearRing')]
-                for lineGeom in lineGeoms:
-                    coords2d = np.asarray(lineGeom.coords, dtype=float)
+                for contourPoly in contourPolys:
+                    if contourPoly.is_empty:
+                        continue
+                    coords2d = np.asarray(contourPoly.exterior.coords, dtype=float)
                     if len(coords2d) < 2:
                         continue
                     coordHomo = np.column_stack(
