@@ -323,12 +323,11 @@ class ClPathLinker:
                 level = self.classifyLink(
                     segEndPt, ptCopy, segEndAxis, startAxis,
                     allowDirect and not crossSegment, crossSegment)
-                if level == 0:
-                    pass
-                elif level == 1:
+                if level == 1:
                     localSafeZ = (max(float(segEndPt["position"][2]),
                                       float(ptCopy["position"][2]))
                                   + self.safeHeight)
+                    localSafeZ = max(localSafeZ, effectiveClearZ)
                     mergedPoints.extend(self.buildLevel1Link(
                         segEndPt, ptCopy, segEndAxis, startAxis,
                         localSafeZ, linkTol, currentLinkSegId))
