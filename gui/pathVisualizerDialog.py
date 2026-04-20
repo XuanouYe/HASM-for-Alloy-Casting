@@ -18,6 +18,8 @@ CUT_LINE_WIDTH = 2.0
 LINK_LINE_WIDTH = 0.8
 LINK_LINE_OPACITY = 0.6
 
+NON_CUT_TYPES = {"retract", "rapid", "approach"}
+
 
 class PathVisualizationDialog(QDialog):
     def __init__(self, targetMesh: trimesh.Trimesh, clData: dict,
@@ -111,17 +113,21 @@ class PathVisualizationDialog(QDialog):
             for ptIdx in range(len(sortedPts) - 1):
                 pt0 = sortedPts[ptIdx]
                 pt1 = sortedPts[ptIdx + 1]
-                motionType = str(pt0.get("motionType", "cut")).lower()
-                segId = pt0.get("segmentId", 0)
+                mt0 = str(pt0.get("motionType", "cut")).lower()
+                mt1 = str(pt1.get("motionType", "cut")).lower()
+                isLinkSegment = (mt0 in NON_CUT_TYPES) or (mt1 in NON_CUT_TYPES)
                 pos0 = list(pt0["position"])
                 pos1 = list(pt1["position"])
-                if motionType == "cut":
+                if isLinkSegment:
+                    linkLines.extend([pos0, pos1])
+                else:
+                    segId = pt0.get("segmentId", 0)
+                    if int(segId) < 0:
+                        continue
                     cutSegments.setdefault(segId, [])
                     if not cutSegments[segId]:
                         cutSegments[segId].append(pos0)
                     cutSegments[segId].append(pos1)
-                else:
-                    linkLines.extend([pos0, pos1])
 
             normalLines = []
             for segId, segPositions in cutSegments.items():

@@ -17,15 +17,20 @@ class VtkInteractorStyle(vtk.vtkInteractorStyleTrackballCamera):
         elif keyValue in ['c', 'C']:
             self.visualizer.toggleCollisionVisibility()
             self.GetInteractor().GetRenderWindow().Render()
+        elif keyValue in ['l', 'L']:
+            self.visualizer.toggleLinkVisibility()
+            self.GetInteractor().GetRenderWindow().Render()
 
 
 class PathVisualizer:
     def __init__(self):
         self.windowSize = (1200, 800)
         self.stepActors = []
+        self.stepLinkActors = []
         self.stepCollisionActors = []
         self.currentVisibleStep = 0
         self.collisionVisible = False
+        self.linkVisible = False
         self.legendActor = None
 
     def buildPolyData(self, mesh: trimesh.Trimesh) -> vtk.vtkPolyData:
@@ -94,12 +99,33 @@ class PathVisualizer:
                 normalLines.append((pointA, pointB))
         return normalLines, collisionLines
 
-    def buildSegmentPointMap(self, stepItem: Dict) -> Dict[int, List[List[float]]]:
+    def buildCutSegmentPointMap(self, stepItem: Dict) -> Dict[int, List[List[float]]]:
         segmentPointMap = {}
-        sortedPoints = sorted(stepItem.get('clPoints', []), key=lambda pointItem: int(pointItem.get('pointId', 0)))
+        sortedPoints = sorted(
+            stepItem.get('clPoints', []),
+            key=lambda pointItem: int(pointItem.get('pointId', 0)))
         for pointItem in sortedPoints:
+            if str(pointItem.get('motionType', 'cut')) != 'cut':
+                continue
             segmentId = int(pointItem.get('segmentId', -1))
-            segmentPointMap.setdefault(segmentId, []).append(pointItem.get('position', [0.0, 0.0, 0.0]))
+            if segmentId < 0:
+                continue
+            segmentPointMap.setdefault(segmentId, []).append(
+                pointItem.get('position', [0.0, 0.0, 0.0]))
+        return segmentPointMap
+
+    def buildLinkSegmentPointMap(self, stepItem: Dict) -> Dict[int, List[List[float]]]:
+        segmentPointMap = {}
+        sortedPoints = sorted(
+            stepItem.get('clPoints', []),
+            key=lambda pointItem: int(pointItem.get('pointId', 0)))
+        for pointItem in sortedPoints:
+            motionType = str(pointItem.get('motionType', 'cut'))
+            if motionType == 'cut':
+                continue
+            segmentId = int(pointItem.get('segmentId', -1))
+            segmentPointMap.setdefault(segmentId, []).append(
+                pointItem.get('position', [0.0, 0.0, 0.0]))
         return segmentPointMap
 
     def createLinesActor(self, lines: List[Tuple[List[float], List[float]]], colorValue: Tuple[float, float, float],
@@ -129,7 +155,7 @@ class PathVisualizer:
         return actor
 
     def createLegendActor(self, clData: Dict) -> vtk.vtkTextActor:
-        legendLines = ['0: show all', '1-9: show step', 'C: toggle collision']
+        legendLines = ['0: show all', '1-9: show step', 'C: toggle collision', 'L: toggle links']
         for stepIndex, stepItem in enumerate(clData.get('steps', []), start=1):
             legendLines.append(f'{stepIndex}: {stepItem.get("stepType", "unknown")}')
         textActor = vtk.vtkTextActor()
@@ -146,6 +172,11 @@ class PathVisualizer:
         showAll = self.currentVisibleStep == 0
         for actorIndex, actorItem in enumerate(self.stepActors):
             actorItem.SetVisibility(1 if showAll or actorIndex == self.currentVisibleStep - 1 else 0)
+        for actorIndex, actorItem in enumerate(self.stepLinkActors):
+            if actorItem is None:
+                continue
+            shouldShow = self.linkVisible and (showAll or actorIndex == self.currentVisibleStep - 1)
+            actorItem.SetVisibility(1 if shouldShow else 0)
         for actorIndex, actorItem in enumerate(self.stepCollisionActors):
             if actorItem is None:
                 continue
@@ -158,6 +189,10 @@ class PathVisualizer:
 
     def toggleCollisionVisibility(self) -> None:
         self.collisionVisible = not self.collisionVisible
+        self.updateActorsVisibility()
+
+    def toggleLinkVisibility(self) -> None:
+        self.linkVisible = not self.linkVisible
         self.updateActorsVisibility()
 
     def visualize(self, targetMesh: trimesh.Trimesh, clData: Dict,
@@ -181,6 +216,7 @@ class PathVisualizer:
 
             normalLinesAll = []
             collisionLinesAll = []
+            linkLinesAll = []
 
             checkCollision = False
             distanceFunc = None
@@ -191,10 +227,9 @@ class PathVisualizer:
                         checkCollision = True
                         distanceFunc = self.buildImplicitDistance(stepMesh)
 
-            segmentPointMap = self.buildSegmentPointMap(stepItem)
-
-            for segmentId in sorted(segmentPointMap.keys()):
-                segmentPoints = segmentPointMap[segmentId]
+            cutSegmentPointMap = self.buildCutSegmentPointMap(stepItem)
+            for segmentId in sorted(cutSegmentPointMap.keys()):
+                segmentPoints = cutSegmentPointMap[segmentId]
                 if checkCollision and distanceFunc is not None:
                     nLines, cLines = self.evaluatePointCollisions(segmentPoints, distanceFunc, 0.4)
                     normalLinesAll.extend(nLines)
@@ -203,12 +238,26 @@ class PathVisualizer:
                     nLines, _ = self.evaluatePointCollisions(segmentPoints, None, 0.4)
                     normalLinesAll.extend(nLines)
 
+            linkSegmentPointMap = self.buildLinkSegmentPointMap(stepItem)
+            for segmentId in sorted(linkSegmentPointMap.keys()):
+                segmentPoints = linkSegmentPointMap[segmentId]
+                nLines, _ = self.evaluatePointCollisions(segmentPoints, None, 0.4)
+                linkLinesAll.extend(nLines)
+
             if normalLinesAll:
                 normalActor = self.createLinesActor(normalLinesAll, stepColor, 2.0)
                 renderer.AddActor(normalActor)
                 self.stepActors.append(normalActor)
             else:
                 self.stepActors.append(vtk.vtkActor())
+
+            if linkLinesAll:
+                linkActor = self.createLinesActor(linkLinesAll, (0.65, 0.65, 0.65), 1.0, 0.6)
+                linkActor.SetVisibility(0)
+                renderer.AddActor(linkActor)
+                self.stepLinkActors.append(linkActor)
+            else:
+                self.stepLinkActors.append(None)
 
             if collisionLinesAll:
                 collisionActor = self.createLinesActor(collisionLinesAll, (1.0, 0.0, 0.0), 4.0)
