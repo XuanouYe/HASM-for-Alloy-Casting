@@ -418,6 +418,8 @@ def generateShellRemovalPaths(targetMesh: trimesh.Trimesh,
         zLevels = np.append(zLevels, zMin)
 
     allPaths = []
+    contourOffset = toolRadius
+    rasterOffset = toolRadius + roughStock
 
     for zValue in zLevels:
         if zValue < localSafeZ:
@@ -443,12 +445,14 @@ def generateShellRemovalPaths(targetMesh: trimesh.Trimesh,
 
         keepOutPoly = MultiPolygon()
         if keepOutMesh is not None and not keepOutMesh.is_empty:
-            keepOutPolys2d = robustSectionIn2d(keepOutMesh, zValue, to3dMat)
+            keepOutPolys2d = robustSection(keepOutMesh, zValue)
             if keepOutPolys2d:
                 keepOutPoly = cleanPolygon(keepOutPolys2d).buffer(
                     toolRadius + safetyMargin)
 
-        fillablePoly = outerUnion.buffer(-(toolRadius + roughStock))
+        fillablePoly = outerUnion.buffer(-rasterOffset)
+        if fillablePoly.is_empty:
+            fillablePoly = outerUnion.buffer(-contourOffset)
         if fillablePoly.is_empty:
             continue
 
@@ -459,7 +463,7 @@ def generateShellRemovalPaths(targetMesh: trimesh.Trimesh,
 
         if useContour:
             for passIdx in range(contourPasses):
-                offsetDist = toolRadius + roughStock + passIdx * stepOver
+                offsetDist = contourOffset + passIdx * stepOver
                 contourRing = outerUnion.buffer(-offsetDist)
                 if contourRing.is_empty:
                     break
