@@ -228,8 +228,8 @@ class ClPathLinker:
 
     def buildLevel1Link(self, endPt: Dict[str, Any], startPt: Dict[str, Any],
                         endAxis: List[float], startAxis: List[float],
-                        localSafeZ: float, globalClearZ: float,
-                        linkTol: float, linkSegId: int) -> List[Dict[str, Any]]:
+                        localSafeZ: float, linkTol: float,
+                        linkSegId: int) -> List[Dict[str, Any]]:
         endPos = endPt.get("position", [0.0, 0.0, 0.0])
         startPos = startPt.get("position", [0.0, 0.0, 0.0])
         return self._buildSafeLinkPoints(endPos, endAxis, startPos, startAxis,
@@ -274,15 +274,6 @@ class ClPathLinker:
             self.makePoint(startPos,      startAxis, "approach", linkSegId),
         ]
 
-    def _buildSegmentFirstPointIdSet(self, pointsSorted: List[Dict[str, Any]]) -> set:
-        segMinPid: Dict[int, int] = {}
-        for pt in pointsSorted:
-            sid = int(pt.get("segmentId", 0))
-            pid = int(pt.get("pointId", 0))
-            if sid not in segMinPid or pid < segMinPid[sid]:
-                segMinPid[sid] = pid
-        return set(segMinPid.values())
-
     def insertLinkPoints(self, step: Dict[str, Any], allowDirect: bool,
                          globalClearZ: Optional[float] = None) -> None:
         clPoints = step.get("clPoints", [])
@@ -296,7 +287,6 @@ class ClPathLinker:
         usedGlobalClearZ = float(globalClearZ) if globalClearZ is not None else self.globalClearanceZ
         effectiveClearZ = max(clearanceZ, usedGlobalClearZ)
         linkTol = float(self.retractAxisLength * 0.1)
-        segFirstPidSet = self._buildSegmentFirstPointIdSet(pointsSorted)
         mergedPoints: List[Dict[str, Any]] = []
         lastSegmentId = None
         segEndPt = None
@@ -322,7 +312,6 @@ class ClPathLinker:
                 ptCopy.get("position", [0, 0, 0]))
             axisChange = self.computeAxisAngle(segEndAxis, startAxis)
             crossSegment = (segmentId != lastSegmentId)
-            isSegmentStart = int(ptCopy.get("pointId", -1)) in segFirstPidSet
 
             needsLink = (crossSegment
                          or moveDist > self.directLinkThreshold
@@ -332,14 +321,17 @@ class ClPathLinker:
                 currentLinkSegId = linkSegCounter
                 linkSegCounter -= 1
                 level = self.classifyLink(
-                    segEndPt, ptCopy, segEndAxis, startAxis, allowDirect, crossSegment)
-                if level == 1:
+                    segEndPt, ptCopy, segEndAxis, startAxis,
+                    allowDirect and not crossSegment, crossSegment)
+                if level == 0:
+                    pass
+                elif level == 1:
                     localSafeZ = (max(float(segEndPt["position"][2]),
                                       float(ptCopy["position"][2]))
                                   + self.safeHeight)
                     mergedPoints.extend(self.buildLevel1Link(
                         segEndPt, ptCopy, segEndAxis, startAxis,
-                        localSafeZ, effectiveClearZ, linkTol, currentLinkSegId))
+                        localSafeZ, linkTol, currentLinkSegId))
                 elif level == 2:
                     mergedPoints.extend(self.buildLevel2Link(
                         segEndPt, ptCopy, segEndAxis, startAxis,
