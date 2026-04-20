@@ -377,15 +377,16 @@ def generateDropCutterPaths(targetMesh: trimesh.Trimesh, keepOutMesh: trimesh.Tr
             yVal = scan if scanAxis == 'x' else t
             ix = int(round((xVal - xMin) / gridRes))
             iy = int(round((yVal - yMin) / gridRes))
-            if 0 <= ix < nx and 0 <= iy < ny:
-                if targetFootprint[ix, iy]:
-                    if clTarget[ix, iy] >= clKeepOut[ix, iy] - 1e-3:
-                        zVal = float(clFinal[ix, iy])
-                        seg.append([float(xVal), float(yVal), zVal])
-                        continue
-            if len(seg) >= 2:
-                paths.append(np.array(seg, dtype=float))
-            seg = []
+            inBounds = 0 <= ix < nx and 0 <= iy < ny
+            if inBounds and targetFootprint[ix, iy]:
+                blockedByKeepOut = clTarget[ix, iy] < clKeepOut[ix, iy] - 1e-3
+                if blockedByKeepOut:
+                    if len(seg) >= 2:
+                        paths.append(np.array(seg, dtype=float))
+                    seg = []
+                else:
+                    zVal = float(clFinal[ix, iy])
+                    seg.append([float(xVal), float(yVal), zVal])
         if len(seg) >= 2:
             paths.append(np.array(seg, dtype=float))
 
@@ -412,7 +413,7 @@ def generateShellRemovalPaths(targetMesh: trimesh.Trimesh,
     zMax = float(boundsArray[1, 2])
     localSafeZ = zMin + bottomClearance if bottomClearance > 0.0 else -np.inf
 
-    zLevels = np.arange(zMax - layerStep, zMin, -layerStep, dtype=float)
+    zLevels = np.arange(zMax, zMin - layerStep * 0.1, -layerStep, dtype=float)
     if len(zLevels) == 0 or zLevels[-1] > zMin + layerStep * 0.1:
         zLevels = np.append(zLevels, zMin)
 

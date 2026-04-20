@@ -325,7 +325,6 @@ class ClPathLinker:
             isSegmentStart = int(ptCopy.get("pointId", -1)) in segFirstPidSet
 
             needsLink = (crossSegment
-                         or isSegmentStart
                          or moveDist > self.directLinkThreshold
                          or axisChange > self.rotationChangeThreshold)
 
