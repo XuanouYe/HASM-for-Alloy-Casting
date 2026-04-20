@@ -414,17 +414,17 @@ def generateShellRemovalPaths(targetMesh: trimesh.Trimesh,
     localSafeZ = zMin + bottomClearance if bottomClearance > 0.0 else -np.inf
 
     zLevels = np.arange(zMax, zMin - layerStep * 0.1, -layerStep, dtype=float)
-    if len(zLevels) == 0 or zLevels[-1] > zMin + layerStep * 0.1:
+    if len(zLevels) == 0:
+        zLevels = np.array([zMax, zMin], dtype=float)
+    elif zLevels[-1] > zMin + layerStep * 0.5:
         zLevels = np.append(zLevels, zMin)
 
     allPaths = []
+    contourOffset = toolRadius
+    rasterOffset = toolRadius + roughStock
 
     for zValue in zLevels:
         if zValue < localSafeZ:
-            continue
-
-        targetPolys = robustSection(targetMesh, zValue)
-        if not targetPolys:
             continue
 
         try:
@@ -433,7 +433,10 @@ def generateShellRemovalPaths(targetMesh: trimesh.Trimesh,
                 plane_normal=[0.0, 0.0, 1.0])
             if targetSlice is None:
                 continue
-            _, to3dMat = targetSlice.to_2D()
+            slice2d, to3dMat = targetSlice.to_2D()
+            targetPolys = slice2d.polygons_full
+            if not targetPolys:
+                continue
         except Exception:
             continue
 
@@ -448,7 +451,9 @@ def generateShellRemovalPaths(targetMesh: trimesh.Trimesh,
                 keepOutPoly = cleanPolygon(keepOutPolys2d).buffer(
                     toolRadius + safetyMargin)
 
-        fillablePoly = outerUnion.buffer(-(toolRadius + roughStock))
+        fillablePoly = outerUnion.buffer(-rasterOffset)
+        if fillablePoly.is_empty:
+            fillablePoly = outerUnion.buffer(-contourOffset)
         if fillablePoly.is_empty:
             continue
 
@@ -459,7 +464,7 @@ def generateShellRemovalPaths(targetMesh: trimesh.Trimesh,
 
         if useContour:
             for passIdx in range(contourPasses):
-                offsetDist = toolRadius + roughStock + passIdx * stepOver
+                offsetDist = contourOffset + passIdx * stepOver
                 contourRing = outerUnion.buffer(-offsetDist)
                 if contourRing.is_empty:
                     break
