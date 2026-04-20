@@ -72,6 +72,7 @@ parameterSchema = {
         "layerStepDown":            {"type": float, "min": 0.01, "max": 10.0,   "default": 1.0,   "unit": "mm",     "required": True,  "description": "层切深"},
         "waterlineStepDown":        {"type": float, "min": 0.01, "max": 5.0,    "default": 0.5,   "unit": "mm",     "required": True,  "description": "等高线切深"},
         "safeHeight":               {"type": float, "min": 1.0,  "max": 100.0,  "default": 5.0,   "unit": "mm",     "required": True,  "description": "安全高度"},
+        "minToolpathZ":             {"type": float, "min": -1000.0, "max": 5000.0, "default": 3.0, "unit": "mm",    "required": False, "description": "最小刀路Z高度"},
         "axisMode":                 {"type": str,   "options": ["hemisphere","custom"], "default": "hemisphere",    "required": True,  "description": "轴模式"},
         "axisCount":                {"type": int,   "min": 1,    "max": 100,    "default": 48,                      "required": True,  "description": "候选轴数"},
         "minAxisZ":                 {"type": float, "min": -1.0, "max": 1.0,    "default": 0.02,                    "required": False, "description": "最小轴Z分量"},

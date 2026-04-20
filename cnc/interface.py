@@ -15,20 +15,22 @@ def generateCncJobInterface(partStl: str, moldStl: str, gateStl: str, riserStl: 
     safetyMargin = float(subCfg.get("toolSafetyMargin", 0.5))
     sdfVoxelSize = float(subCfg.get("sdfVoxelSize", max(toolDiameter * 0.075, 0.2)))
 
+    feedrate = float(subCfg.get("feedRate", 500.0))
+    stepOver = float(subCfg.get("stepOver", 1.0))
+    layerStep = float(subCfg.get("layerStepDown", 1.0))
+    safeHeight = float(subCfg.get("safeHeight", 5.0))
+    minToolpathZ = float(subCfg.get("minToolpathZ", 3.0))
+    maxRetractOffset = float(subCfg.get("maxRetractOffset", 100.0))
+    angleThreshold = float(subCfg.get("angleThreshold", 1.047))
+
     toolParams = {
         "diameter": toolDiameter,
         "toolLength": toolLength,
         "shankDiameter": shankDiameter,
         "safetyMargin": safetyMargin,
-        "sdfVoxelSize": sdfVoxelSize
+        "sdfVoxelSize": sdfVoxelSize,
+        "minToolpathZ": minToolpathZ
     }
-
-    feedrate = float(subCfg.get("feedRate", 500.0))
-    stepOver = float(subCfg.get("stepOver", 1.0))
-    layerStep = float(subCfg.get("layerStepDown", 1.0))
-    safeHeight = float(subCfg.get("safeHeight", 5.0))
-    maxRetractOffset = float(subCfg.get("maxRetractOffset", 100.0))
-    angleThreshold = float(subCfg.get("angleThreshold", 1.047))
 
     axisMode = str(subCfg.get("axisMode", "hemisphere"))
     axisCount = int(subCfg.get("axisCount", 48))
@@ -204,6 +206,7 @@ if __name__ == "__main__":
                     "stepOver": 1.2,
                     "layerStepDown": 1.0,
                     "safeHeight": 5.0,
+                    "minToolpathZ": 3.0,
                     "maxRetractOffset": 100.0,
                     "axisMode": "hemisphere",
                     "axisCount": 48,

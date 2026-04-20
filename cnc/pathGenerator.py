@@ -242,15 +242,17 @@ class FiveAxisCncPathGenerator:
     def _emitSegments(self, localPaths: List[np.ndarray], axisUnit: np.ndarray,
                       feedrate: float, rotBack: np.ndarray,
                       outputSegmentId: int, pointId: int, axisIndex: int,
-                      worldSafeZ: float = -np.inf):
+                      worldSafeZ: float = -np.inf,
+                      minToolpathZ: float = -np.inf):
         segments = []
         allClPoints = []
+        effectiveMinZ = max(float(worldSafeZ), float(minToolpathZ))
         for pathLocal in localPaths:
             pathArray = np.asarray(pathLocal, dtype=float)
             if len(pathArray) < 2:
                 continue
             finalWcsPath = applyRotation(pathArray, rotBack)
-            safeRows = finalWcsPath[:, 2] >= worldSafeZ
+            safeRows = finalWcsPath[:, 2] >= effectiveMinZ
             currentRun = []
             for i, safe in enumerate(safeRows):
                 if safe:
@@ -320,6 +322,7 @@ class FiveAxisCncPathGenerator:
         sweepTol = float(stepParam.get("sweepTol", toolRadius * 0.1))
         platformSafeZ = float(globalMinZ + toolRadius + safetyMargin)
         effectiveWorldSafeZ = max(worldSafeZ, platformSafeZ)
+        minToolpathZ = float(toolParams.get("minToolpathZ", 3.0))
         segments = []
         allClPoints = []
         pointId = 0
@@ -365,7 +368,8 @@ class FiveAxisCncPathGenerator:
             stepSegs, stepPts, outputSegmentId, pointId = self._emitSegments(
                 validPathsLocal, axisUnit, feedrate, rotBack,
                 outputSegmentId, pointId, axisIndex,
-                worldSafeZ=effectiveWorldSafeZ)
+                worldSafeZ=effectiveWorldSafeZ,
+                minToolpathZ=minToolpathZ)
             segments.extend(stepSegs)
             allClPoints.extend(stepPts)
         return {
@@ -391,6 +395,7 @@ class FiveAxisCncPathGenerator:
         feedrate = float(stepParam.get("feedrate", 500.0))
         platformSafeZ = float(globalMinZ + toolRadius + safetyMargin)
         effectiveWorldSafeZ = max(worldSafeZ, platformSafeZ)
+        minToolpathZ = float(toolParams.get("minToolpathZ", 3.0))
         removalParams = dict(stepParam)
         removalParams["mode"] = "risergateremoval"
         removalParams.setdefault("stepOver", toolRadius * 1.5)
@@ -428,7 +433,8 @@ class FiveAxisCncPathGenerator:
             stepSegs, stepPts, outputSegmentId, pointId = self._emitSegments(
                 validPathsLocal, axisUnit, feedrate, rotBack,
                 outputSegmentId, pointId, 0,
-                worldSafeZ=effectiveWorldSafeZ)
+                worldSafeZ=effectiveWorldSafeZ,
+                minToolpathZ=minToolpathZ)
             segments.extend(stepSegs)
             allClPoints.extend(stepPts)
         stepData = {
@@ -461,6 +467,7 @@ class FiveAxisCncPathGenerator:
         step1SafeClearance = float(stepParam.get("step1SafeClearance", safetyMargin * 1.5))
         platformSafeZ = float(globalMinZ + toolRadius + safetyMargin)
         effectiveWorldSafeZ = max(worldSafeZ, platformSafeZ)
+        minToolpathZ = float(toolParams.get("minToolpathZ", 3.0))
         coarseParams = dict(stepParam)
         coarseParams["mode"] = "shellRemovalRoughing"
         coarseParams["stepOver"] = coarseStepOver
@@ -506,7 +513,8 @@ class FiveAxisCncPathGenerator:
             stepSegs, stepPts, outputSegmentId, pointId = self._emitSegments(
                 validPathsLocal, axisUnit, feedrate, rotBack,
                 outputSegmentId, pointId, axisIndex,
-                worldSafeZ=effectiveWorldSafeZ)
+                worldSafeZ=effectiveWorldSafeZ,
+                minToolpathZ=minToolpathZ)
             segments.extend(stepSegs)
             allClPoints.extend(stepPts)
         stepData = {
