@@ -30,36 +30,34 @@ def cleanPolygon(polys: List[Any]) -> Any:
     return unary_union(cleanPolys)
 
 
-def robustSectionWith2d(mesh: trimesh.Trimesh, zValue: float,
-                        tolerance: float = 0.05) -> Any:
-    def tryOne(zVal: float):
+def robustSection(mesh: trimesh.Trimesh, zValue: float, tolerance: float = 0.05) -> Any:
+    def trySection(zVal: float):
         try:
             sectionResult = mesh.section(
                 plane_origin=[0.0, 0.0, zVal],
                 plane_normal=[0.0, 0.0, 1.0])
             if sectionResult is None:
-                return None, None
-            slice2d, to3dMat = sectionResult.to_2D()
+                return None
+            slice2d, _ = sectionResult.to_2D()
             polys = slice2d.polygons_full
-            if not polys:
-                return None, None
-            return polys, to3dMat
+            return polys if polys else None
         except Exception:
-            return None, None
+            return None
 
-    polys, to3dMat = tryOne(zValue)
-    if polys is not None:
-        return polys, to3dMat
-    polys, to3dMat = tryOne(zValue - tolerance)
-    if polys is not None:
-        return polys, to3dMat
-    return tryOne(zValue + tolerance)
+    result = trySection(zValue)
+    if result is not None:
+        return result
+    result = trySection(zValue - tolerance)
+    if result is not None:
+        return result
+    return trySection(zValue + tolerance)
 
 
-def sectionInSharedFrame(mesh: trimesh.Trimesh, zValue: float,
-                         to3dMat: np.ndarray, tolerance: float = 0.05) -> Any:
+def robustSectionIn2d(mesh: trimesh.Trimesh, zValue: float,
+                      to3dMat: np.ndarray, tolerance: float = 0.05) -> Any:
     invMat = np.linalg.inv(to3dMat)
-    def tryOne(zVal: float):
+
+    def trySectionIn2d(zVal: float):
         try:
             sec = mesh.section(
                 plane_origin=[0.0, 0.0, zVal],
@@ -85,13 +83,13 @@ def sectionInSharedFrame(mesh: trimesh.Trimesh, zValue: float,
         except Exception:
             return None
 
-    result = tryOne(zValue)
+    result = trySectionIn2d(zValue)
     if result is not None:
         return result
-    result = tryOne(zValue - tolerance)
+    result = trySectionIn2d(zValue - tolerance)
     if result is not None:
         return result
-    return tryOne(zValue + tolerance)
+    return trySectionIn2d(zValue + tolerance)
 
 
 def extractLineStrings(geomValue: Any) -> List[Any]:
@@ -179,13 +177,22 @@ class ZLevelRoughingStrategy(IToolpathStrategy):
         for zValue in zLevels:
             if zValue < localSafeZ:
                 continue
-            targetPolys, to3dMat = robustSectionWith2d(targetMesh, zValue)
-            if not targetPolys or to3dMat is None:
+            targetPolys = robustSection(targetMesh, zValue)
+            if not targetPolys:
+                continue
+            try:
+                targetSlice = targetMesh.section(
+                    plane_origin=[0.0, 0.0, zValue],
+                    plane_normal=[0.0, 0.0, 1.0])
+                if targetSlice is None:
+                    continue
+                _, to3dMat = targetSlice.to_2D()
+            except Exception:
                 continue
             machinablePoly = cleanPolygon(targetPolys).buffer(-(toolRadius + roughStock))
             keepOutPoly = MultiPolygon()
             if keepOutMesh is not None and not keepOutMesh.is_empty:
-                keepOutPolys = sectionInSharedFrame(keepOutMesh, zValue, to3dMat)
+                keepOutPolys = robustSection(keepOutMesh, zValue)
                 if keepOutPolys:
                     keepOutPoly = cleanPolygon(keepOutPolys).buffer(
                         toolRadius + safetyMargin + roughStock)
@@ -200,9 +207,25 @@ class ZLevelRoughingStrategy(IToolpathStrategy):
             for polyItem in polyGeoms:
                 if polyItem.is_empty:
                     continue
-                rasterPaths = _rasterFillPoly(polyItem, stepOver, to3dMat, zValue, reverseFlag)
-                allPaths.extend(rasterPaths)
-                reverseFlag = not reverseFlag
+                minX, minY, maxX, maxY = polyItem.bounds
+                yList = np.arange(minY, maxY + stepOver * 0.5, stepOver, dtype=float)
+                for yValue in yList:
+                    scanLine = LineString([(minX - 1.0, yValue), (maxX + 1.0, yValue)])
+                    interResult = scanLine.intersection(polyItem)
+                    lineItems = extractLineStrings(interResult)
+                    for lineItem in lineItems:
+                        coordArray = np.asarray(lineItem.coords, dtype=float)
+                        if len(coordArray) < 2:
+                            continue
+                        if reverseFlag:
+                            coordArray = coordArray[::-1]
+                        coordHomo = np.column_stack(
+                            [coordArray, np.zeros(len(coordArray)),
+                             np.ones(len(coordArray))])
+                        path3d = (to3dMat @ coordHomo.T).T[:, :3]
+                        if len(path3d) >= 2:
+                            allPaths.append(path3d)
+                    reverseFlag = not reverseFlag
         return allPaths
 
 
@@ -227,8 +250,17 @@ class RiserGateRemovalStrategy(IToolpathStrategy):
         for zValue in zLevels:
             if zValue < localSafeZ:
                 continue
-            targetPolys, to3dMat = robustSectionWith2d(targetMesh, zValue)
-            if not targetPolys or to3dMat is None:
+            targetPolys = robustSection(targetMesh, zValue)
+            if not targetPolys:
+                continue
+            try:
+                targetSlice = targetMesh.section(
+                    plane_origin=[0.0, 0.0, zValue],
+                    plane_normal=[0.0, 0.0, 1.0])
+                if targetSlice is None:
+                    continue
+                _, to3dMat = targetSlice.to_2D()
+            except Exception:
                 continue
             outerUnion = cleanPolygon(targetPolys)
             if outerUnion.is_empty:
@@ -382,9 +414,7 @@ def generateShellRemovalPaths(targetMesh: trimesh.Trimesh,
     localSafeZ = zMin + bottomClearance if bottomClearance > 0.0 else -np.inf
 
     zLevels = np.arange(zMax, zMin - layerStep * 0.1, -layerStep, dtype=float)
-    if len(zLevels) == 0:
-        zLevels = np.array([zMax, zMin], dtype=float)
-    elif zLevels[-1] > zMin + layerStep * 0.5:
+    if len(zLevels) == 0 or zLevels[-1] > zMin + layerStep * 0.1:
         zLevels = np.append(zLevels, zMin)
 
     allPaths = []
@@ -395,8 +425,18 @@ def generateShellRemovalPaths(targetMesh: trimesh.Trimesh,
         if zValue < localSafeZ:
             continue
 
-        targetPolys, to3dMat = robustSectionWith2d(targetMesh, zValue)
-        if not targetPolys or to3dMat is None:
+        targetPolys = robustSection(targetMesh, zValue)
+        if not targetPolys:
+            continue
+
+        try:
+            targetSlice = targetMesh.section(
+                plane_origin=[0.0, 0.0, zValue],
+                plane_normal=[0.0, 0.0, 1.0])
+            if targetSlice is None:
+                continue
+            _, to3dMat = targetSlice.to_2D()
+        except Exception:
             continue
 
         outerUnion = cleanPolygon(targetPolys)
@@ -428,20 +468,31 @@ def generateShellRemovalPaths(targetMesh: trimesh.Trimesh,
                 if contourRing.is_empty:
                     break
                 if not keepOutPoly.is_empty:
-                    contourRegion = contourRegion.difference(keepOutPoly)
-                    if contourRegion.is_empty:
+                    contourRing = contourRing.difference(keepOutPoly)
+                    if contourRing.is_empty:
                         break
-                if contourRegion.geom_type == 'Polygon':
-                    contourPolys = [Polygon(contourRegion.exterior)]
-                elif contourRegion.geom_type == 'MultiPolygon':
-                    contourPolys = [Polygon(p.exterior) for p in contourRegion.geoms]
-                elif contourRegion.geom_type == 'GeometryCollection':
-                    contourPolys = [Polygon(g.exterior) for g in contourRegion.geoms
-                                    if g.geom_type == 'Polygon']
-                else:
-                    contourPolys = []
-                for contourPoly in contourPolys:
-                    allPaths.extend(_contourPaths(contourPoly, to3dMat))
+                boundary = contourRing.boundary
+                if boundary is None or boundary.is_empty:
+                    break
+                geomType = boundary.geom_type
+                lineGeoms = []
+                if geomType == 'LineString':
+                    lineGeoms = [boundary]
+                elif geomType == 'MultiLineString':
+                    lineGeoms = list(boundary.geoms)
+                elif geomType == 'GeometryCollection':
+                    lineGeoms = [g for g in boundary.geoms
+                                 if g.geom_type in ('LineString', 'LinearRing')]
+                for lineGeom in lineGeoms:
+                    coords2d = np.asarray(lineGeom.coords, dtype=float)
+                    if len(coords2d) < 2:
+                        continue
+                    coordHomo = np.column_stack(
+                        [coords2d, np.zeros(len(coords2d)),
+                         np.ones(len(coords2d))])
+                    path3d = (to3dMat @ coordHomo.T).T[:, :3]
+                    if len(path3d) >= 2:
+                        allPaths.append(path3d)
 
         polyGeoms = (list(fillablePoly.geoms)
                      if fillablePoly.geom_type == 'MultiPolygon' else [fillablePoly])

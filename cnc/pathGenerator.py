@@ -467,7 +467,7 @@ class FiveAxisCncPathGenerator:
         step1SafeClearance = float(stepParam.get("step1SafeClearance", safetyMargin * 1.5))
         platformSafeZ = float(globalMinZ + toolRadius + safetyMargin)
         effectiveWorldSafeZ = max(worldSafeZ, platformSafeZ)
-        minToolpathZ = float(toolParams.get("minToolpathZ", effectiveWorldSafeZ))
+        minToolpathZ = float(toolParams.get("minToolpathZ", 3.0))
         coarseParams = dict(stepParam)
         coarseParams["mode"] = "shellRemovalRoughing"
         coarseParams["stepOver"] = coarseStepOver
