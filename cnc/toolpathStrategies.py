@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import scipy.ndimage as nd
 import trimesh
@@ -51,6 +51,32 @@ def robustSection(mesh: trimesh.Trimesh, zValue: float, tolerance: float = 0.05)
     if result is not None:
         return result
     return trySection(zValue + tolerance)
+
+
+def robustSectionWithMat(mesh: trimesh.Trimesh, zValue: float,
+                          tolerance: float = 0.05) -> Tuple[Optional[Any], Optional[np.ndarray]]:
+    def trySectionWithMat(zVal: float):
+        try:
+            sec = mesh.section(
+                plane_origin=[0.0, 0.0, zVal],
+                plane_normal=[0.0, 0.0, 1.0])
+            if sec is None:
+                return None, None
+            sl2d, mat = sec.to_2D()
+            polys = sl2d.polygons_full
+            if not polys:
+                return None, None
+            return polys, mat
+        except Exception:
+            return None, None
+
+    polys, mat = trySectionWithMat(zValue)
+    if polys is not None:
+        return polys, mat
+    polys, mat = trySectionWithMat(zValue - tolerance)
+    if polys is not None:
+        return polys, mat
+    return trySectionWithMat(zValue + tolerance)
 
 
 def robustSectionIn2d(mesh: trimesh.Trimesh, zValue: float,
@@ -177,24 +203,15 @@ class ZLevelRoughingStrategy(IToolpathStrategy):
         for zValue in zLevels:
             if zValue < localSafeZ:
                 continue
-            targetPolys = robustSection(targetMesh, zValue)
-            if not targetPolys:
-                continue
-            try:
-                targetSlice = targetMesh.section(
-                    plane_origin=[0.0, 0.0, zValue],
-                    plane_normal=[0.0, 0.0, 1.0])
-                if targetSlice is None:
-                    continue
-                _, to3dMat = targetSlice.to_2D()
-            except Exception:
+            targetPolys, to3dMat = robustSectionWithMat(targetMesh, zValue)
+            if targetPolys is None or to3dMat is None:
                 continue
             machinablePoly = cleanPolygon(targetPolys).buffer(-(toolRadius + roughStock))
             keepOutPoly = MultiPolygon()
             if keepOutMesh is not None and not keepOutMesh.is_empty:
-                keepOutPolys = robustSection(keepOutMesh, zValue)
-                if keepOutPolys:
-                    keepOutPoly = cleanPolygon(keepOutPolys).buffer(
+                keepOutPolys2d = robustSectionIn2d(keepOutMesh, zValue, to3dMat)
+                if keepOutPolys2d:
+                    keepOutPoly = cleanPolygon(keepOutPolys2d).buffer(
                         toolRadius + safetyMargin + roughStock)
             if machinablePoly.is_empty:
                 continue
@@ -250,17 +267,8 @@ class RiserGateRemovalStrategy(IToolpathStrategy):
         for zValue in zLevels:
             if zValue < localSafeZ:
                 continue
-            targetPolys = robustSection(targetMesh, zValue)
-            if not targetPolys:
-                continue
-            try:
-                targetSlice = targetMesh.section(
-                    plane_origin=[0.0, 0.0, zValue],
-                    plane_normal=[0.0, 0.0, 1.0])
-                if targetSlice is None:
-                    continue
-                _, to3dMat = targetSlice.to_2D()
-            except Exception:
+            targetPolys, to3dMat = robustSectionWithMat(targetMesh, zValue)
+            if targetPolys is None or to3dMat is None:
                 continue
             outerUnion = cleanPolygon(targetPolys)
             if outerUnion.is_empty:
@@ -407,13 +415,15 @@ def generateShellRemovalPaths(targetMesh: trimesh.Trimesh,
     bottomClearance = float(params.get('bottomClearance', 0.0))
     useContour = bool(params.get('step1UseContour', True))
     contourPasses = int(params.get('step1ContourPasses', 2))
+    tolerance = float(params.get('sectionTolerance', 0.05))
 
     boundsArray = np.asarray(targetMesh.bounds, dtype=float)
     zMin = float(boundsArray[0, 2])
     zMax = float(boundsArray[1, 2])
     localSafeZ = zMin + bottomClearance if bottomClearance > 0.0 else -np.inf
 
-    zLevels = np.arange(zMax, zMin - layerStep * 0.1, -layerStep, dtype=float)
+    zStart = zMax - layerStep * 0.5
+    zLevels = np.arange(zStart, zMin - layerStep * 0.1, -layerStep, dtype=float)
     if len(zLevels) == 0 or zLevels[-1] > zMin + layerStep * 0.1:
         zLevels = np.append(zLevels, zMin)
 
@@ -425,18 +435,8 @@ def generateShellRemovalPaths(targetMesh: trimesh.Trimesh,
         if zValue < localSafeZ:
             continue
 
-        targetPolys = robustSection(targetMesh, zValue)
-        if not targetPolys:
-            continue
-
-        try:
-            targetSlice = targetMesh.section(
-                plane_origin=[0.0, 0.0, zValue],
-                plane_normal=[0.0, 0.0, 1.0])
-            if targetSlice is None:
-                continue
-            _, to3dMat = targetSlice.to_2D()
-        except Exception:
+        targetPolys, to3dMat = robustSectionWithMat(targetMesh, zValue, tolerance)
+        if targetPolys is None or to3dMat is None:
             continue
 
         outerUnion = cleanPolygon(targetPolys)
@@ -445,7 +445,7 @@ def generateShellRemovalPaths(targetMesh: trimesh.Trimesh,
 
         keepOutPoly = MultiPolygon()
         if keepOutMesh is not None and not keepOutMesh.is_empty:
-            keepOutPolys2d = robustSectionIn2d(keepOutMesh, zValue, to3dMat)
+            keepOutPolys2d = robustSectionIn2d(keepOutMesh, zValue, to3dMat, tolerance)
             if keepOutPolys2d:
                 keepOutPoly = cleanPolygon(keepOutPolys2d).buffer(
                     toolRadius + safetyMargin)
