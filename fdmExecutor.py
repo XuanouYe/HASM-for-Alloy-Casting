@@ -3,9 +3,11 @@ import posixpath
 import subprocess
 import struct
 import math
+import numpy as np
 from pathlib import Path, PureWindowsPath
 from typing import Dict, Optional, List, Tuple, Any
 from controlConfig import ConfigManager
+from processTransition import appendTransitionToGcode
 
 FDM_ENGINE_PATH = "C:\\Users\\XuanouYe\\Desktop\\Thesis\\04-Implementation\\HASM-for-Alloy-Casting\\external\\CuraEngine\\build\\Release\\CuraEngine"
 FDM_DEFINITION_FILES = [
@@ -521,4 +523,8 @@ def generateGcodeInterface(stlPath: str, outputPath: str, processConfig: Dict[st
         autoDropToBuildPlate=FDM_AUTO_DROP, autoCenterXY=FDM_AUTO_CENTER_XY,
         axisLimits=axisLimits, additiveConfig=additiveConfig, retractionConfig=retractionConfig
     )
+    sprueInletRaw = processConfig.get('sprueInletPos')
+    if sprueInletRaw is not None:
+        transitionSafeZ = (processConfig.get('additive') or {}).get('transitionSafeZ', 30.0)
+        appendTransitionToGcode(resultPath, np.array(sprueInletRaw), float(transitionSafeZ))
     return {'gcodePath': resultPath, 'status': 'success'}
