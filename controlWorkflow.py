@@ -115,11 +115,20 @@ class WorkflowManager:
                     stepRecord.status    = "running"
                     stepRecord.startTime = datetime.now().isoformat()
 
-                    # FIX: 传完整 self.config，不再传展开的单段 stepConfig
+                    if stepKey == "additive":
+                        gatingResult = self.config.get("gatingResult") if isinstance(self.config, dict) else None
+                        if gatingResult is not None and getattr(gatingResult, "runnerPath", None):
+                            sprueInlet = gatingResult.runnerPath[0]
+                            self.config["sprueInletPos"] = [float(v) for v in sprueInlet]
+
                     output = moduleFunc(self.projectId, self.config)
 
                     stepRecord.status  = "completed"
                     stepRecord.output  = output
+                    if isinstance(output, dict):
+                        gatingComponents = output.get("gatingComponents")
+                        if gatingComponents is not None:
+                            self.config["gatingResult"] = gatingComponents
                     stepRecord.endTime = datetime.now().isoformat()
                     logger.info(f"Step completed successfully: {stepDisplay}")
 
