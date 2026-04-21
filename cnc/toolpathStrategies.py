@@ -445,7 +445,7 @@ def generateShellRemovalPaths(targetMesh: trimesh.Trimesh,
 
         keepOutPoly = MultiPolygon()
         if keepOutMesh is not None and not keepOutMesh.is_empty:
-            keepOutPolys2d = robustSection(keepOutMesh, zValue)
+            keepOutPolys2d = robustSectionIn2d(keepOutMesh, zValue, to3dMat)
             if keepOutPolys2d:
                 keepOutPoly = cleanPolygon(keepOutPolys2d).buffer(
                     toolRadius + safetyMargin)
