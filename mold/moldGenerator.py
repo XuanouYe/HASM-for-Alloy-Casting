@@ -81,7 +81,7 @@ def executeMoldWorkflow(
         addGating: bool = True,
         surfaceOffset: bool = False,
         config: Optional[dict] = None
-) -> trimesh.Trimesh:
+) -> dict:
     workflowConfig = config or {}
     moldGen = MoldGenerator(workflowConfig)
     currentMesh = moldGen.ensureTrimesh(loadMeshFromFile(inputStlPath))
@@ -93,6 +93,7 @@ def executeMoldWorkflow(
     riserMesh = None
     gatingMeshForNorm = None
     cavityMesh = currentMesh
+    gatingComponents = None
 
     if addGating:
         gatingComponents = moldGen.generateGating(currentMesh)
@@ -124,7 +125,10 @@ def executeMoldWorkflow(
     if riserMesh is not None:
         exportMeshToStl(riserMesh, str(tempDirPath / "riser.stl"))
 
-    return moldShell
+    return {
+        "moldMesh": moldShell,
+        "gatingComponents": gatingComponents
+    }
 
 
 if __name__ == '__main__':
