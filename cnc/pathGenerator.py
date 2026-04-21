@@ -467,7 +467,10 @@ class FiveAxisCncPathGenerator:
         step1SafeClearance = float(stepParam.get("step1SafeClearance", safetyMargin * 1.5))
         platformSafeZ = float(globalMinZ + toolRadius + safetyMargin)
         effectiveWorldSafeZ = max(worldSafeZ, platformSafeZ)
-        minToolpathZ = float(toolParams.get("minToolpathZ", 3.0))
+        minToolpathZ = float(toolParams.get(
+            "minToolpathZ",
+            float(np.asarray(moldMesh.bounds, dtype=float)[0, 2]) + 0.5
+        ))
         coarseParams = dict(stepParam)
         coarseParams["mode"] = "shellRemovalRoughing"
         coarseParams["stepOver"] = coarseStepOver
@@ -525,7 +528,6 @@ class FiveAxisCncPathGenerator:
             "segments": segments,
             "clPoints": allClPoints
         }
-        stepData = self._filterStep1ByPartSdf(stepData, partSdf, step1SafeClearance)
         stepData = self._filterByKeepOutSdfList(stepData, keepOutSdfList, step1SafeClearance)
         return stepData
 
