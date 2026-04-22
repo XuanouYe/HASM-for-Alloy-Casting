@@ -198,17 +198,18 @@ class ClPathLinker:
 
     def classifyLink(self, endPt: Dict[str, Any], startPt: Dict[str, Any],
                      endAxis: List[float], startAxis: List[float],
-                     allowDirect: bool, crossSegment: bool) -> int:
+                     allowDirect: bool, crossSegment: bool,
+                     stepType: str = "") -> int:
         endPos = endPt.get("position", [0.0, 0.0, 0.0])
         startPos = startPt.get("position", [0.0, 0.0, 0.0])
         moveDist = self.computeDistance(endPos, startPos)
         axisChange = self.computeAxisAngle(endAxis, startAxis)
         if axisChange >= self.rotationRetractAngle:
             return 3
-        if (moveDist <= self.directLinkThreshold
-                and axisChange <= self.rotationChangeThreshold
-                and allowDirect
-                and not crossSegment):
+        directAllowed = (moveDist <= self.directLinkThreshold
+                         and axisChange <= self.rotationChangeThreshold
+                         and allowDirect)
+        if directAllowed and (stepType == "shellRemoval" or not crossSegment):
             return 0
         if (moveDist <= self.maxRetractOffset
                 and axisChange <= self.rotationChangeThreshold):
@@ -288,6 +289,7 @@ class ClPathLinker:
         clPoints = step.get("clPoints", [])
         if not clPoints:
             return
+        stepType = str(step.get("stepType", ""))
         pointsSorted = sorted(clPoints,
                               key=lambda p: (int(p.get("segmentId", 0)),
                                              int(p.get("pointId", 0))))
@@ -333,7 +335,7 @@ class ClPathLinker:
                 linkSegCounter -= 1
                 level = self.classifyLink(
                     segEndPt, ptCopy, segEndAxis, startAxis,
-                    allowDirect and not crossSegment, crossSegment)
+                    allowDirect, crossSegment, stepType=stepType)
                 if level == 1:
                     localSafeZ = (max(float(segEndPt["position"][2]),
                                       float(ptCopy["position"][2]))

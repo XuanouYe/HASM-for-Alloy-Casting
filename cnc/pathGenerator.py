@@ -6,7 +6,7 @@ from cnc.geometryUtils import (applyRotation, buildRotationFromTo, concatenateMe
                             normalizeVector, sampleMeshPointsWithNormals)
 from cnc.toolpathEngine import TrimeshToolpathEngine, PointCloudIPW
 from cnc.sweptCollision import SweptVolumeCollisionEngine
-from cnc.toolpathStrategies import ToolpathStrategyFactory
+from cnc.toolpathStrategies import ToolpathStrategyFactory, ShapelyLayerIpw, generateStep1LayerPaths
 from cnc.implicitGeometry import SdfVolume, buildSdfVolume, buildOffsetSdf
 
 
@@ -464,28 +464,26 @@ class FiveAxisCncPathGenerator:
                                stepParam.get("stepOver", toolRadius * 1.5)))
         coarseLayerStep = float(stepParam.get("step1LayerStep",
                                 stepParam.get("layerStep", toolRadius * 1.5)))
-        step1SafeClearance = float(stepParam.get("step1SafeClearance", safetyMargin * 1.5))
         platformSafeZ = float(globalMinZ + toolRadius + safetyMargin)
         effectiveWorldSafeZ = max(worldSafeZ, platformSafeZ)
-        minToolpathZ = float(toolParams.get(
-            "minToolpathZ",
-            float(np.asarray(moldMesh.bounds, dtype=float)[0, 2]) + 0.5
-        ))
+        minToolpathZ = float(toolParams.get("minToolpathZ", globalMinZ + safetyMargin))
         coarseParams = dict(stepParam)
-        coarseParams["mode"] = "shellRemovalRoughing"
         coarseParams["stepOver"] = coarseStepOver
         coarseParams["layerStep"] = coarseLayerStep
         coarseParams["roughStock"] = float(stepParam.get("roughStock", toolRadius * 0.3))
-        coarseParams["step1UseContour"] = bool(stepParam.get("step1UseContour", True))
-        coarseParams["step1ContourPasses"] = int(stepParam.get("step1ContourPasses", 2))
-        coarseParams["_toolpathEngine"] = self.toolpathEngine
+        coarseParams["useContour"] = bool(stepParam.get("step1UseContour", True))
+        coarseParams["contourPasses"] = int(stepParam.get("step1ContourPasses", 2))
+        coarseParams["tolerance"] = float(stepParam.get("sectionTolerance", 0.05))
+        coarseParams["ipwThreshold"] = float(stepParam.get("ipwThreshold", 0.90))
+        coarseParams["directThreshold"] = float(
+            stepParam.get("directThreshold", coarseStepOver * 2.5))
         coarseParams["bottomClearance"] = float(toolParams.get("bottomClearance", 0.0))
         sweepTol = float(stepParam.get("sweepTol", toolRadius * 0.1))
-        strategy = ToolpathStrategyFactory.getStrategy("shellRemovalRoughing")
         segments = []
         allClPoints = []
         pointId = 0
         outputSegmentId = 0
+        sharedIpw = ShapelyLayerIpw()
         for axisIndex, toolAxis in enumerate(step1Axes):
             axisUnit = normalizeVector(np.asarray(toolAxis, dtype=float))
             rotToToolFrame = buildRotationFromTo(
@@ -493,8 +491,8 @@ class FiveAxisCncPathGenerator:
             rotBack = rotToToolFrame.T
             rotatedMold = self.rotateMesh(moldMesh, rotToToolFrame)
             rotatedKeepOut = self.rotateMesh(keepOutMesh, rotToToolFrame)
-            rawPathsLocal = strategy.generate(
-                rotatedMold, rotatedKeepOut, toolRadius, coarseParams, safetyMargin)
+            rawPathsLocal = generateStep1LayerPaths(
+                rotatedMold, rotatedKeepOut, toolRadius, coarseParams, safetyMargin, layerIpw=sharedIpw)
             if keepOutCollisionEngine is not None:
                 rawPathsLocal = keepOutCollisionEngine.filterPaths(
                     rawPathsLocal, axisUnit, rotBack, sweepTol)
@@ -528,7 +526,6 @@ class FiveAxisCncPathGenerator:
             "segments": segments,
             "clPoints": allClPoints
         }
-        stepData = self._filterByKeepOutSdfList(stepData, keepOutSdfList, step1SafeClearance)
         return stepData
 
     def generateJob(self, partStl: str, moldStl: str, gateStl: str, riserStl: str,
@@ -552,6 +549,8 @@ class FiveAxisCncPathGenerator:
         voxelSize = float(toolParams.get("sdfVoxelSize", max(toolRadius * 0.05, 0.2)))
         backendName = str(toolParams.get("sdfBackend", "auto"))
         bottomSafeOffset = float(toolParams.get("bottomSafeOffset", 1.0))
+        if bottomSafeOffset <= 0.0:
+            bottomSafeOffset = 1.0
         stepSafeClearance = float(toolParams.get("stepSafeClearance", safetyMargin))
         gateSafeClearance = float(toolParams.get("gateSafeClearance", safetyMargin * 0.6))
         sweptDiskCount = int(toolParams.get("sweptDiskCount", 16))
