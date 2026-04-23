@@ -260,7 +260,7 @@ class RiserGateRemovalStrategy(IToolpathStrategy):
         zMin = float(boundsArray[0, 2])
         zMax = float(boundsArray[1, 2])
         localSafeZ = zMin + bottomClearance if bottomClearance > 0.0 else -np.inf
-        zLevels = np.arange(zMax, zMin - layerStep * 0.1, -layerStep, dtype=float)
+        zLevels = np.arange(zMax - layerStep * 0.5, zMin - layerStep * 0.1, -layerStep, dtype=float)
         if len(zLevels) == 0:
             zLevels = np.array([zMax, zMin], dtype=float)
         allPaths = []
