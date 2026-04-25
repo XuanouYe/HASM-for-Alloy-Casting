@@ -2,7 +2,6 @@ from pathlib import Path
 from typing import Any, Dict
 from cnc.geometryUtils import concatenateMeshes, generateHemisphereAxes, generateSphereAxes
 from cnc.pathGenerator import FiveAxisCncPathGenerator
-from cnc.visualization import PathVisualizer
 
 
 def generateCncJobInterface(partStl: str, moldStl: str, gateStl: str, riserStl: str,
@@ -185,47 +184,3 @@ def generateCncJobInterface(partStl: str, moldStl: str, gateStl: str, riserStl: 
 
     return clData
 
-
-if __name__ == "__main__":
-    tempCncDir = Path("../tempCncFiles")
-    if tempCncDir.exists():
-        generateCncJobInterface(
-            partStl=str(tempCncDir / "part.stl"),
-            moldStl=str(tempCncDir / "mold.stl"),
-            gateStl=str(tempCncDir / "gate.stl"),
-            riserStl=str(tempCncDir / "riser.stl"),
-            outputJsonPath=str(tempCncDir / "cncToolpath.json"),
-            processConfig={
-                "subtractive": {
-                    "toolDiameter": 6.0,
-                    "toolLength": 24.0,
-                    "shankDiameter": 6.0,
-                    "toolSafetyMargin": 0.5,
-                    "sdfVoxelSize": 0.3,
-                    "feedRate": 500.0,
-                    "stepOver": 1.2,
-                    "layerStepDown": 1.0,
-                    "safeHeight": 5.0,
-                    "minToolpathZ": 3.0,
-                    "maxRetractOffset": 100.0,
-                    "axisMode": "hemisphere",
-                    "axisCount": 48,
-                    "minAxisZ": 0.02,
-                    "finishStepOver": 0.45,
-                    "finishProjectionStep": 0.25,
-                    "finishStock": 0.03,
-                    "step3AxisCount": 16,
-                    "step3AxisSampleCount": 16000,
-                    "step3TargetCoverage": 0.995,
-                    "step3AxisDiversityDot": 0.985,
-                    "angleThreshold": 1.047,
-                    "step1TiltAngleDeg": 35.0,
-                    "step1TiltCount": 2,
-                    "step1UseContour": True,
-                    "step1ContourPasses": 2,
-                    "step1SafeClearance": 0.75,
-                }
-            },
-            jobId="JOB_TEST",
-            visualize=True
-        )

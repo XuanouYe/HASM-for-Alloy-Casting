@@ -336,6 +336,7 @@ def visualizeInnerSurfaceOffset(meshPath: str, configDict: dict):
     visualizationPlotter.subplot(0, 2)
     visualizationPlotter.add_text("处理后铸件（内腔扩张）", position="upper_edge", font_size=10)
     visualizationPlotter.add_mesh(pv.wrap(processedCasting), color="lightcoral", show_edges=True, opacity=0.6)
+    visualizationPlotter.subplot(0, 2)
     addCoordinateAxes(visualizationPlotter, processedCasting)
     visualizationPlotter.link_views()
     visualizationPlotter.show()
