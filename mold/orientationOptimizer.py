@@ -380,7 +380,7 @@ def optimizeMoldOrientation(
 
 if __name__ == "__main__":
     results = optimizeMoldOrientation(
-        inputCasting="testModels/hollow.cylinder.down.stl",
+        inputCasting="../testModels/cylinder.down.stl",
         outputCastingPath="cylinder.down.optimized.stl",
         saveBestMoldPath="cylinder.down.mold.optimized.stl",
         gaPopulationSize=15,

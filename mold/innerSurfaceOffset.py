@@ -8,70 +8,7 @@ from shapely import ops
 from mold.supportRegionDetector import SupportRegionDetector
 from geometryAdapters import loadMeshFromFile
 
-
-def _extractCavitiesByEvenOdd(path2d) -> Optional[BaseGeometry]:
-    if path2d is None or path2d.is_empty:
-        return None
-    try:
-        closedPolys = [p for p in path2d.polygons_closed if p is not None and not p.is_empty and p.area > 0]
-    except Exception:
-        return None
-    if not closedPolys:
-        return None
-    closedPolys.sort(key=lambda p: p.area, reverse=True)
-    n = len(closedPolys)
-    depth = [0] * n
-    for i in range(n):
-        for j in range(n):
-            if i == j:
-                continue
-            if closedPolys[j].contains(closedPolys[i]):
-                depth[i] += 1
-    cavities = []
-    for i, poly in enumerate(closedPolys):
-        if depth[i] % 2 == 1:
-            cavities.append(Polygon(poly.exterior).buffer(0))
-    if not cavities:
-        return None
-    result = ops.unary_union(cavities).buffer(0)
-    return result if not result.is_empty else None
-
-
-def _extractSolidByEvenOdd(path2d) -> Optional[BaseGeometry]:
-    if path2d is None or path2d.is_empty:
-        return None
-    try:
-        closedPolys = [p for p in path2d.polygons_closed if p is not None and not p.is_empty and p.area > 0]
-    except Exception:
-        return None
-    if not closedPolys:
-        return None
-    closedPolys.sort(key=lambda p: p.area, reverse=True)
-    n = len(closedPolys)
-    depth = [0] * n
-    for i in range(n):
-        for j in range(n):
-            if i == j:
-                continue
-            if closedPolys[j].contains(closedPolys[i]):
-                depth[i] += 1
-    solidParts = []
-    for i, poly in enumerate(closedPolys):
-        if depth[i] % 2 == 0:
-            holes = []
-            for j, other in enumerate(closedPolys):
-                if depth[j] == depth[i] + 1:
-                    if poly.contains(other):
-                        holes.append(other.exterior)
-            withHoles = Polygon(poly.exterior, holes).buffer(0)
-            solidParts.append(withHoles)
-    if not solidParts:
-        return None
-    result = ops.unary_union(solidParts).buffer(0)
-    return result if not result.is_empty else None
-
-
-def _decomposeToPolygons(geom: BaseGeometry) -> List[Polygon]:
+def decomposeToPolygons(geom: BaseGeometry) -> List[Polygon]:
     if geom is None or geom.is_empty:
         return []
     if isinstance(geom, Polygon):
@@ -81,12 +18,11 @@ def _decomposeToPolygons(geom: BaseGeometry) -> List[Polygon]:
     if hasattr(geom, 'geoms'):
         result = []
         for g in geom.geoms:
-            result.extend(_decomposeToPolygons(g))
+            result.extend(decomposeToPolygons(g))
         return result
     return []
 
-
-def _buildCavityColumnMask(cavityLayerGeoms: List[Optional[BaseGeometry]]) -> Optional[BaseGeometry]:
+def buildCavityColumnMask(cavityLayerGeoms: List[Optional[BaseGeometry]]) -> Optional[BaseGeometry]:
     parts = []
     for geom in cavityLayerGeoms:
         if geom is not None and not geom.is_empty:
@@ -96,8 +32,7 @@ def _buildCavityColumnMask(cavityLayerGeoms: List[Optional[BaseGeometry]]) -> Op
     result = ops.unary_union(parts).buffer(0)
     return result if not result.is_empty else None
 
-
-def _samplePrintLines(cavityPoly: Polygon, axis: np.ndarray, numLines: int) -> List[LineString]:
+def samplePrintLines(cavityPoly: Polygon, axis: np.ndarray, numLines: int) -> List[LineString]:
     coords = np.array(cavityPoly.exterior.coords)
     centered = coords - coords.mean(axis=0)
     perp = np.array([-axis[1], axis[0]])
@@ -121,46 +56,20 @@ def _samplePrintLines(cavityPoly: Polygon, axis: np.ndarray, numLines: int) -> L
             lines.extend(list(clipped.geoms))
     return lines
 
-
-def _isBridgeLine(line: LineString, belowSolidGeom: BaseGeometry, pillarRadius: float) -> bool:
-    coords = list(line.coords)
-    if len(coords) < 2:
-        return False
-    ptA = coords[0]
-    ptB = coords[-1]
-    circleA = Point(ptA[0], ptA[1]).buffer(pillarRadius)
-    circleB = Point(ptB[0], ptB[1]).buffer(pillarRadius)
-    contactA = circleA.intersects(belowSolidGeom)
-    contactB = circleB.intersects(belowSolidGeom)
-    return contactA and contactB
-
-
-def _isCantilever(
-    cavityPoly: Polygon,
-    aboveCavityGeom: Optional[BaseGeometry],
-    belowSolidGeom: Optional[BaseGeometry],
-    lateralStep: float,
-    pillarRadius: float,
-    areaEps: float,
-    bridgeLineSamples: int = 7
-) -> bool:
+def isCantilever(cavityPoly: Polygon, aboveCavityGeom: Optional[BaseGeometry], belowSolidGeom: Optional[BaseGeometry], lateralStep: float, pillarRadius: float, areaEps: float, bridgeLineSamples: int = 7) -> bool:
     if aboveCavityGeom is not None and not aboveCavityGeom.is_empty:
         allowedZone = aboveCavityGeom.buffer(lateralStep).buffer(0)
         if not allowedZone.is_empty:
             exceeding = cavityPoly.difference(allowedZone).buffer(0)
             if exceeding.is_empty or exceeding.area < areaEps:
                 return False
-
     area = cavityPoly.area
     if area < areaEps:
         return False
-
     if belowSolidGeom is None or belowSolidGeom.is_empty:
         return True
-
     perimeter = cavityPoly.length
     circularity = 4.0 * np.pi * area / (perimeter ** 2) if perimeter > 0 else 0.0
-
     coords = np.array(cavityPoly.exterior.coords)
     if len(coords) < 3:
         return True
@@ -173,7 +82,6 @@ def _isCantilever(
     eigVals = eigVals[sortIdx]
     eigVecs = eigVecs[:, sortIdx]
     aspectRatio = eigVals[0] / (eigVals[1] + 1e-12)
-
     if circularity > 0.65 or aspectRatio < 2.5:
         centroid = cavityPoly.centroid
         sampleR = max(np.sqrt(area / np.pi) * 0.7, pillarRadius)
@@ -181,10 +89,8 @@ def _isCantilever(
         supportArea = sampleCircle.intersection(belowSolidGeom).area
         coverRatio = supportArea / sampleCircle.area if sampleCircle.area > 0 else 0.0
         return coverRatio < 0.5
-
     axis = eigVecs[:, 0]
-    printLines = _samplePrintLines(cavityPoly, axis, bridgeLineSamples)
-
+    printLines = samplePrintLines(cavityPoly, axis, bridgeLineSamples)
     if not printLines:
         projections = centered @ axis
         topMask = projections >= np.percentile(projections, 85)
@@ -196,11 +102,9 @@ def _isCantilever(
         contactA = pillarA.intersects(belowSolidGeom)
         contactB = pillarB.intersects(belowSolidGeom)
         return not (contactA and contactB)
-
     bridgeCount = 0
     cantileverCount = 0
     unsupportedCount = 0
-
     for line in printLines:
         lineCoords = list(line.coords)
         if len(lineCoords) < 2:
@@ -217,51 +121,37 @@ def _isCantilever(
             cantileverCount += 1
         else:
             unsupportedCount += 1
-
     total = bridgeCount + cantileverCount + unsupportedCount
     if total == 0:
         return True
-
     if bridgeCount == total:
         return False
-
     if cantileverCount > 0:
         return True
-
     cantileverRatio = (cantileverCount + unsupportedCount) / total
     return cantileverRatio >= 0.5
 
-
 class InnerCavityOffsetPlanner:
-    def __init__(self, supportAngle: float, layerHeight: float,
-                 areaEps: float, minWallThickness: float,
-                 pillarRadius: float, bridgeLineSamples: int = 7):
+    def __init__(self, supportAngle: float, layerHeight: float, areaEps: float, minWallThickness: float, pillarRadius: float, bridgeLineSamples: int = 7):
         self.supportAngle = supportAngle
         self.layerHeight = layerHeight
         self.areaEps = areaEps
         self.minWallThickness = minWallThickness
         self.pillarRadius = pillarRadius
         self.bridgeLineSamples = bridgeLineSamples
-        self.lateralStep = layerHeight * np.tan(np.deg2rad(supportAngle))
+        self.detector = SupportRegionDetector({"supportAngle": self.supportAngle, "layerHeight": self.layerHeight})
+        self.lateralStep = self.detector.calculateMaxBridgeDistance()
 
-    def computeOffsetLayers(
-        self,
-        cavityLayerGeoms: List[Optional[BaseGeometry]],
-        solidLayerGeoms: List[Optional[BaseGeometry]]
-    ) -> List[Optional[BaseGeometry]]:
+    def computeOffsetLayers(self, cavityLayerGeoms: List[Optional[BaseGeometry]], solidLayerGeoms: List[Optional[BaseGeometry]]) -> List[Optional[BaseGeometry]]:
         n = len(cavityLayerGeoms)
         deltaAccum = [None] * n
-
-        cavityColumnMask = _buildCavityColumnMask(cavityLayerGeoms)
-
+        cavityColumnMask = buildCavityColumnMask(cavityLayerGeoms)
         for k in range(1, n):
             ckPrev = cavityLayerGeoms[k - 1]
             ck = cavityLayerGeoms[k]
             belowSolid = solidLayerGeoms[k - 1] if k > 0 else None
-
             if ckPrev is None or ckPrev.is_empty or ckPrev.area < self.areaEps:
                 continue
-
             if ck is None or ck.is_empty:
                 overhangRegion = ckPrev.buffer(0)
             else:
@@ -270,29 +160,20 @@ class InnerCavityOffsetPlanner:
                     overhangRegion = ckPrev.buffer(0)
                 else:
                     overhangRegion = ckPrev.difference(allowedShrink).buffer(0)
-
             if overhangRegion is None or overhangRegion.is_empty or overhangRegion.area < self.areaEps:
                 continue
-
-            components = _decomposeToPolygons(overhangRegion)
+            components = decomposeToPolygons(overhangRegion)
             activeParts = []
             for comp in components:
                 if comp.area < self.areaEps:
                     continue
-                if _isCantilever(
-                    comp, ck, belowSolid,
-                    self.lateralStep, self.pillarRadius, self.areaEps,
-                    self.bridgeLineSamples
-                ):
+                if isCantilever(comp, ck, belowSolid, self.lateralStep, self.pillarRadius, self.areaEps, self.bridgeLineSamples):
                     activeParts.append(comp)
-
             if not activeParts:
                 continue
-
             activeSk = ops.unary_union(activeParts).buffer(0)
             if activeSk is None or activeSk.is_empty:
                 continue
-
             for j in range(k - 1, -1, -1):
                 dist = (k - 1 - j) * self.lateralStep
                 rjk = activeSk.buffer(dist).buffer(0) if dist > 0 else activeSk.buffer(0)
@@ -306,14 +187,12 @@ class InnerCavityOffsetPlanner:
                     deltaAccum[j] = rjk
                 else:
                     deltaAccum[j] = deltaAccum[j].union(rjk).buffer(0)
-
         offsetCavityLayerGeoms = []
         for j in range(n):
             cj = cavityLayerGeoms[j]
             if cj is None or cj.is_empty:
                 offsetCavityLayerGeoms.append(cj)
                 continue
-
             solidJ = solidLayerGeoms[j] if j < len(solidLayerGeoms) else None
             if solidJ is not None and not solidJ.is_empty:
                 bj = solidJ.buffer(-self.minWallThickness).buffer(0)
@@ -321,24 +200,18 @@ class InnerCavityOffsetPlanner:
                     bj = cj
             else:
                 bj = cj
-
             if deltaAccum[j] is not None and not deltaAccum[j].is_empty:
                 candidate = cj.union(deltaAccum[j]).buffer(0)
             else:
                 candidate = cj
-
             if bj is not None and not bj.is_empty:
                 result = candidate.intersection(bj).buffer(0)
             else:
                 result = candidate
-
             if result is None or result.is_empty or result.area < cj.area - self.areaEps:
                 result = cj
-
             offsetCavityLayerGeoms.append(result)
-
         return offsetCavityLayerGeoms
-
 
 class InnerCavityVolumeBuilder:
     def __init__(self, layerHeight: float, areaEps: float, booleanEngine: str):
@@ -347,13 +220,7 @@ class InnerCavityVolumeBuilder:
         self.booleanEngine = booleanEngine
         self.zEps = 0.005
 
-    def buildCutVolume(
-        self,
-        originalCavityLayerGeoms: List[Optional[BaseGeometry]],
-        offsetCavityLayerGeoms: List[Optional[BaseGeometry]],
-        sliceHeights: List[float],
-        cavityColumnMask: Optional[BaseGeometry] = None
-    ) -> Optional[trimesh.Trimesh]:
+    def buildCutVolume(self, originalCavityLayerGeoms: List[Optional[BaseGeometry]], offsetCavityLayerGeoms: List[Optional[BaseGeometry]], sliceHeights: List[float], cavityColumnMask: Optional[BaseGeometry] = None) -> Optional[trimesh.Trimesh]:
         extrudedLayers = []
         for j in range(len(sliceHeights)):
             origGeom = originalCavityLayerGeoms[j]
@@ -369,25 +236,20 @@ class InnerCavityVolumeBuilder:
                 deltaGeom = deltaGeom.intersection(cavityColumnMask).buffer(0)
             if deltaGeom is None or deltaGeom.is_empty or deltaGeom.area < self.areaEps:
                 continue
-            extruded = self._shapelyToExtrudedMesh(
-                deltaGeom,
-                float(sliceHeights[j]) - self.zEps,
-                self.layerHeight + 2 * self.zEps
-            )
+            extruded = self.shapelyToExtrudedMesh(deltaGeom, float(sliceHeights[j]) - self.zEps, self.layerHeight + 2 * self.zEps)
             if extruded is not None:
                 extrudedLayers.append(extruded)
-
         if not extrudedLayers:
             return None
         if len(extrudedLayers) == 1:
             return extrudedLayers[0]
         return trimesh.boolean.union(extrudedLayers, engine=self.booleanEngine, check_volume=False)
 
-    def _shapelyToExtrudedMesh(self, geom: BaseGeometry, zBottom: float, height: float) -> Optional[trimesh.Trimesh]:
+    def shapelyToExtrudedMesh(self, geom: BaseGeometry, zBottom: float, height: float) -> Optional[trimesh.Trimesh]:
         if geom is None or geom.is_empty:
             return None
         geom = geom.buffer(0)
-        polys = _decomposeToPolygons(geom)
+        polys = decomposeToPolygons(geom)
         meshes = []
         for poly in polys:
             if not poly.is_valid or poly.area < self.areaEps:
@@ -401,12 +263,10 @@ class InnerCavityVolumeBuilder:
             return meshes[0]
         return trimesh.boolean.union(meshes, engine=self.booleanEngine, check_volume=False)
 
-
-def _ensureTrimesh(meshOrScene) -> trimesh.Trimesh:
+def ensureTrimesh(meshOrScene) -> trimesh.Trimesh:
     if isinstance(meshOrScene, trimesh.Scene):
         return meshOrScene.dump(concatenate=True)
     return meshOrScene
-
 
 class InnerSurfaceOffset:
     def __init__(self, config: dict):
@@ -422,63 +282,35 @@ class InnerSurfaceOffset:
 
     def removeInnerSurfaceOverhangs(self, moldMesh: trimesh.Trimesh) -> trimesh.Trimesh:
         workMesh = moldMesh.copy()
-        sliceHeights = self.detector._generateSliceHeights(workMesh)
-        layerPaths = self.detector._sliceMeshToLayers(workMesh, sliceHeights)
-
-        solidLayerGeoms = [_extractSolidByEvenOdd(p) for p in layerPaths]
-        cavityLayerGeoms = [_extractCavitiesByEvenOdd(p) for p in layerPaths]
-
-        cavityColumnMask = _buildCavityColumnMask(cavityLayerGeoms)
-
-        planner = InnerCavityOffsetPlanner(
-            supportAngle=self.supportAngle,
-            layerHeight=self.layerHeight,
-            areaEps=self.areaEps,
-            minWallThickness=self.minWallThickness,
-            pillarRadius=self.pillarRadius,
-            bridgeLineSamples=self.bridgeLineSamples
-        )
+        sliceHeights = self.detector.generateSliceHeights(workMesh)
+        layerPaths = self.detector.sliceMeshToLayers(workMesh, sliceHeights)
+        solidLayerGeoms = [self.detector.path2DToShapely(p) for p in layerPaths]
+        cavityLayerGeoms = [self.detector.extractCavities(p) for p in layerPaths]
+        cavityColumnMask = buildCavityColumnMask(cavityLayerGeoms)
+        planner = InnerCavityOffsetPlanner(supportAngle=self.supportAngle, layerHeight=self.layerHeight, areaEps=self.areaEps, minWallThickness=self.minWallThickness, pillarRadius=self.pillarRadius, bridgeLineSamples=self.bridgeLineSamples)
         offsetCavityLayerGeoms = planner.computeOffsetLayers(cavityLayerGeoms, solidLayerGeoms)
-
-        builder = InnerCavityVolumeBuilder(
-            layerHeight=self.layerHeight,
-            areaEps=self.areaEps,
-            booleanEngine=self.booleanEngine
-        )
-        cutVolumeMesh = builder.buildCutVolume(
-            cavityLayerGeoms, offsetCavityLayerGeoms, list(sliceHeights), cavityColumnMask
-        )
-
+        builder = InnerCavityVolumeBuilder(layerHeight=self.layerHeight, areaEps=self.areaEps, booleanEngine=self.booleanEngine)
+        cutVolumeMesh = builder.buildCutVolume(cavityLayerGeoms, offsetCavityLayerGeoms, list(sliceHeights), cavityColumnMask)
         if cutVolumeMesh is None:
             return workMesh
-
-        result = trimesh.boolean.difference(
-            [workMesh, cutVolumeMesh],
-            engine=self.booleanEngine,
-            check_volume=False
-        )
-        return _ensureTrimesh(result)
-
+        result = trimesh.boolean.difference([workMesh, cutVolumeMesh], engine=self.booleanEngine, check_volume=False)
+        return ensureTrimesh(result)
 
 def removeInnerSurfaceOverhangs(moldMesh: trimesh.Trimesh, config: dict) -> trimesh.Trimesh:
     processor = InnerSurfaceOffset(config)
     return processor.removeInnerSurfaceOverhangs(moldMesh)
 
-
-def _moldToCasting(moldMesh: trimesh.Trimesh, booleanEngine: str) -> trimesh.Trimesh:
+def moldToCasting(moldMesh: trimesh.Trimesh, booleanEngine: str) -> trimesh.Trimesh:
     hull = trimesh.convex.convex_hull(moldMesh)
     casting = trimesh.boolean.difference([hull, moldMesh], engine=booleanEngine, check_volume=False)
-    return _ensureTrimesh(casting)
-
+    return ensureTrimesh(casting)
 
 def visualizeInnerSurfaceOffset(meshPath: str, configDict: dict):
     booleanEngine = configDict.get("booleanEngine", "manifold")
     originalMoldMesh = loadMeshFromFile(meshPath)
     processedMoldMesh = removeInnerSurfaceOverhangs(originalMoldMesh, configDict)
-
-    originalCasting = _moldToCasting(originalMoldMesh, booleanEngine)
-    processedCasting = _moldToCasting(processedMoldMesh, booleanEngine)
-
+    originalCasting = moldToCasting(originalMoldMesh, booleanEngine)
+    processedCasting = moldToCasting(processedMoldMesh, booleanEngine)
     visualizationPlotter = pv.Plotter(shape=(1, 2))
     visualizationPlotter.subplot(0, 0)
     visualizationPlotter.add_text("原始铸件", position="upper_edge", font_size=10)
@@ -488,7 +320,6 @@ def visualizeInnerSurfaceOffset(meshPath: str, configDict: dict):
     visualizationPlotter.add_mesh(pv.wrap(processedCasting), color="lightcoral", show_edges=True, opacity=1.0)
     visualizationPlotter.link_views()
     visualizationPlotter.show()
-
 
 if __name__ == "__main__":
     offsetConfig = {
@@ -500,5 +331,5 @@ if __name__ == "__main__":
         "pillarRadius": 0.2,
         "bridgeLineSamples": 20
     }
-    testFilePath = "../testModels/cylinder.mold.stl"
+    testFilePath = "../testModels/cylinder.up.stl"
     visualizeInnerSurfaceOffset(testFilePath, offsetConfig)
