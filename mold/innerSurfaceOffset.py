@@ -350,5 +350,5 @@ if __name__ == "__main__":
         "pillarRadius": 0.2,
         "bridgeLineSamples": 20
     }
-    testFilePath = "../testModels/cylinder.up.stl"
+    testFilePath = "../testModels/cylinder.down.stl"
     visualizeInnerSurfaceOffset(testFilePath, offsetConfig)
