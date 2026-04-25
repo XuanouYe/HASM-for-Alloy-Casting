@@ -6,6 +6,7 @@ from shapely.geometry import Polygon, MultiPolygon, Point, LineString
 from shapely.geometry.base import BaseGeometry
 from shapely import ops
 from mold.supportRegionDetector import SupportRegionDetector
+from mold.moldGenerator import MoldGenerator
 from geometryAdapters import loadMeshFromFile
 
 def decomposeToPolygons(geom: BaseGeometry) -> List[Polygon]:
@@ -319,24 +320,25 @@ def addCoordinateAxes(plotter: pv.Plotter, mesh: trimesh.Trimesh):
         plotter.add_mesh(arrow, color=color)
         plotter.add_point_labels([endPoint], [label], text_color=color, font_size=12, bold=True, show_points=False)
 
-def visualizeInnerSurfaceOffset(meshPath: str, configDict: dict):
+def visualizeInnerSurfaceOffset(castingMeshPath: str, configDict: dict):
     booleanEngine = configDict.get("booleanEngine", "manifold")
-    originalMoldMesh = loadMeshFromFile(meshPath)
+    castingMesh = ensureTrimesh(loadMeshFromFile(castingMeshPath))
+    moldGen = MoldGenerator(configDict)
+    originalMoldMesh = moldGen.generateMoldShell(castingMesh)
     processedMoldMesh = removeInnerSurfaceOverhangs(originalMoldMesh, configDict)
-    processedCasting = moldToCasting(processedMoldMesh, booleanEngine)
     visualizationPlotter = pv.Plotter(shape=(1, 3))
     visualizationPlotter.subplot(0, 0)
-    visualizationPlotter.add_text("原始模具", position="upper_edge", font_size=10)
-    visualizationPlotter.add_mesh(pv.wrap(originalMoldMesh), color="lightblue", show_edges=True, opacity=0.6)
-    addCoordinateAxes(visualizationPlotter, originalMoldMesh)
+    visualizationPlotter.add_text("原始铸件", position="upper_edge", font_size=10)
+    visualizationPlotter.add_mesh(pv.wrap(castingMesh), color="lightblue", show_edges=True, opacity=0.6)
+    addCoordinateAxes(visualizationPlotter, castingMesh)
     visualizationPlotter.subplot(0, 1)
-    visualizationPlotter.add_text("处理后模具（中间产物）", position="upper_edge", font_size=10)
-    visualizationPlotter.add_mesh(pv.wrap(processedMoldMesh), color="lightyellow", show_edges=True, opacity=0.6)
-    addCoordinateAxes(visualizationPlotter, processedMoldMesh)
+    visualizationPlotter.add_text("原始模具", position="upper_edge", font_size=10)
+    visualizationPlotter.add_mesh(pv.wrap(originalMoldMesh), color="lightyellow", show_edges=True, opacity=0.6)
+    addCoordinateAxes(visualizationPlotter, originalMoldMesh)
     visualizationPlotter.subplot(0, 2)
-    visualizationPlotter.add_text("处理后铸件（内腔扩张）", position="upper_edge", font_size=10)
-    visualizationPlotter.add_mesh(pv.wrap(processedCasting), color="lightcoral", show_edges=True, opacity=0.6)
-    addCoordinateAxes(visualizationPlotter, processedCasting)
+    visualizationPlotter.add_text("处理后模具（内腔悬垂修正）", position="upper_edge", font_size=10)
+    visualizationPlotter.add_mesh(pv.wrap(processedMoldMesh), color="lightcoral", show_edges=True, opacity=0.6)
+    addCoordinateAxes(visualizationPlotter, processedMoldMesh)
     visualizationPlotter.link_views()
     visualizationPlotter.show()
 
@@ -348,7 +350,8 @@ if __name__ == "__main__":
         "minWallThickness": 1.0,
         "booleanEngine": "manifold",
         "pillarRadius": 0.2,
-        "bridgeLineSamples": 20
+        "bridgeLineSamples": 20,
+        "boundingBoxOffset": 2.0
     }
-    testFilePath = "../testModels/cylinder.down.stl"
+    testFilePath = "../testModels/cylinder.up.stl"
     visualizeInnerSurfaceOffset(testFilePath, offsetConfig)
