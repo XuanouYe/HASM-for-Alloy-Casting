@@ -305,19 +305,39 @@ def moldToCasting(moldMesh: trimesh.Trimesh, booleanEngine: str) -> trimesh.Trim
     casting = trimesh.boolean.difference([hull, moldMesh], engine=booleanEngine, check_volume=False)
     return ensureTrimesh(casting)
 
+def addCoordinateAxes(plotter: pv.Plotter, mesh: trimesh.Trimesh):
+    bounds = pv.wrap(mesh).bounds
+    axisLength = max(bounds[1] - bounds[0], bounds[3] - bounds[2], bounds[5] - bounds[4]) * 0.4
+    origin = np.array([bounds[0], bounds[2], bounds[4]])
+    for direction, color, label in [
+        (np.array([1, 0, 0]), "red", "X"),
+        (np.array([0, 1, 0]), "green", "Y"),
+        (np.array([0, 0, 1]), "blue", "Z"),
+    ]:
+        endPoint = origin + direction * axisLength
+        arrow = pv.Arrow(start=origin, direction=direction, scale=axisLength, tip_length=0.25, tip_radius=0.05, shaft_radius=0.02)
+        plotter.add_mesh(arrow, color=color)
+        plotter.add_point_labels([endPoint], [label], text_color=color, font_size=12, bold=True, show_points=False)
+
 def visualizeInnerSurfaceOffset(meshPath: str, configDict: dict):
     booleanEngine = configDict.get("booleanEngine", "manifold")
     originalMoldMesh = loadMeshFromFile(meshPath)
     processedMoldMesh = removeInnerSurfaceOverhangs(originalMoldMesh, configDict)
     originalCasting = moldToCasting(originalMoldMesh, booleanEngine)
     processedCasting = moldToCasting(processedMoldMesh, booleanEngine)
-    visualizationPlotter = pv.Plotter(shape=(1, 2))
+    visualizationPlotter = pv.Plotter(shape=(1, 3))
     visualizationPlotter.subplot(0, 0)
     visualizationPlotter.add_text("原始铸件", position="upper_edge", font_size=10)
-    visualizationPlotter.add_mesh(pv.wrap(originalCasting), color="lightblue", show_edges=True, opacity=1.0)
+    visualizationPlotter.add_mesh(pv.wrap(originalCasting), color="lightblue", show_edges=True, opacity=0.6)
+    addCoordinateAxes(visualizationPlotter, originalCasting)
     visualizationPlotter.subplot(0, 1)
+    visualizationPlotter.add_text("处理后模具（中间产物）", position="upper_edge", font_size=10)
+    visualizationPlotter.add_mesh(pv.wrap(processedMoldMesh), color="lightyellow", show_edges=True, opacity=0.6)
+    addCoordinateAxes(visualizationPlotter, processedMoldMesh)
+    visualizationPlotter.subplot(0, 2)
     visualizationPlotter.add_text("处理后铸件（内腔扩张）", position="upper_edge", font_size=10)
-    visualizationPlotter.add_mesh(pv.wrap(processedCasting), color="lightcoral", show_edges=True, opacity=1.0)
+    visualizationPlotter.add_mesh(pv.wrap(processedCasting), color="lightcoral", show_edges=True, opacity=0.6)
+    addCoordinateAxes(visualizationPlotter, processedCasting)
     visualizationPlotter.link_views()
     visualizationPlotter.show()
 
