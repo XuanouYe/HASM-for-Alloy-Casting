@@ -10,6 +10,92 @@ from cnc.toolpathStrategies import ToolpathStrategyFactory, ShapelyLayerIpw, gen
 from cnc.implicitGeometry import SdfVolume, buildSdfVolume, buildOffsetSdf
 
 
+class _MachinedVolumeTracker:
+    def __init__(self):
+        self.wcsPoints: np.ndarray = np.empty((0, 3), dtype=float)
+
+    def addPathsWcs(self, pathsWcs: List[np.ndarray], toolRadius: float) -> None:
+        newPts = []
+        sampleStep = max(toolRadius * 0.5, 0.3)
+        for pathWcs in pathsWcs:
+            arr = np.asarray(pathWcs, dtype=float)
+            if len(arr) < 2:
+                continue
+            for i in range(len(arr) - 1):
+                segLen = float(np.linalg.norm(arr[i + 1] - arr[i]))
+                if segLen < 1e-9:
+                    continue
+                nSamples = max(2, int(np.ceil(segLen / sampleStep)))
+                for k in range(nSamples + 1):
+                    t = k / float(nSamples)
+                    newPts.append(arr[i] * (1.0 - t) + arr[i + 1] * t)
+        if newPts:
+            newArr = np.asarray(newPts, dtype=float)
+            self.wcsPoints = (np.vstack([self.wcsPoints, newArr])
+                              if len(self.wcsPoints) > 0 else newArr)
+
+    def buildAlreadyMachinedMesh(self, toolRadius: float) -> Optional[trimesh.Trimesh]:
+        if len(self.wcsPoints) == 0:
+            return None
+        from scipy.spatial import cKDTree
+        radius = toolRadius * 1.05
+        resolution = max(int(np.ceil(radius / 0.4)), 4)
+        try:
+            import open3d as o3d
+            pcd = o3d.geometry.PointCloud()
+            pcd.points = o3d.utility.Vector3dVector(self.wcsPoints)
+            pcd.estimate_normals()
+            mesh_o3d, _ = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(pcd, depth=6)
+            verts = np.asarray(mesh_o3d.vertices)
+            faces = np.asarray(mesh_o3d.triangles)
+            return trimesh.Trimesh(vertices=verts, faces=faces, process=False)
+        except Exception:
+            pass
+        pts = self.wcsPoints
+        minB = pts.min(axis=0) - radius
+        maxB = pts.max(axis=0) + radius
+        nx = max(int(np.ceil((maxB[0] - minB[0]) / (radius * 0.5))), 4)
+        ny = max(int(np.ceil((maxB[1] - minB[1]) / (radius * 0.5))), 4)
+        nz = max(int(np.ceil((maxB[2] - minB[2]) / (radius * 0.5))), 4)
+        xs = np.linspace(minB[0], maxB[0], nx)
+        ys = np.linspace(minB[1], maxB[1], ny)
+        zs = np.linspace(minB[2], maxB[2], nz)
+        gx, gy, gz = np.meshgrid(xs, ys, zs, indexing='ij')
+        gridPts = np.column_stack([gx.ravel(), gy.ravel(), gz.ravel()])
+        from scipy.spatial import cKDTree
+        tree = cKDTree(pts)
+        dists, _ = tree.query(gridPts, k=1)
+        sdfGrid = dists.reshape(nx, ny, nz) - radius
+        try:
+            from skimage import measure
+            verts, faces, _, _ = measure.marching_cubes(sdfGrid, level=0.0)
+            verts[:, 0] = verts[:, 0] * (maxB[0] - minB[0]) / (nx - 1) + minB[0]
+            verts[:, 1] = verts[:, 1] * (maxB[1] - minB[1]) / (ny - 1) + minB[1]
+            verts[:, 2] = verts[:, 2] * (maxB[2] - minB[2]) / (nz - 1) + minB[2]
+            return trimesh.Trimesh(vertices=verts, faces=faces, process=False)
+        except Exception:
+            return None
+
+    def filterLocalPaths(self, pathsLocal: List[np.ndarray],
+                          rotToToolFrame: np.ndarray,
+                          toolRadius: float, stepOver: float) -> List[np.ndarray]:
+        if len(self.wcsPoints) == 0:
+            return pathsLocal
+        from scipy.spatial import cKDTree
+        localPrev = applyRotation(self.wcsPoints, rotToToolFrame)
+        tree = cKDTree(localPrev[:, :2])
+        searchR = toolRadius + stepOver * 0.5
+        filtered = []
+        for pathLocal in pathsLocal:
+            arr = np.asarray(pathLocal, dtype=float)
+            if len(arr) < 2:
+                continue
+            dists, _ = tree.query(arr[:, :2], k=1)
+            if np.any(dists > searchR * 0.2):
+                filtered.append(arr)
+        return filtered
+
+
 class FiveAxisCncPathGenerator:
     def __init__(self, version: str = "4.0"):
         self.version = str(version)
@@ -483,7 +569,7 @@ class FiveAxisCncPathGenerator:
         allClPoints = []
         pointId = 0
         outputSegmentId = 0
-        sharedIpw = ShapelyLayerIpw() if len(step1Axes) > 1 else None
+        machinedTracker = _MachinedVolumeTracker()
         for axisIndex, toolAxis in enumerate(step1Axes):
             axisUnit = normalizeVector(np.asarray(toolAxis, dtype=float))
             rotToToolFrame = buildRotationFromTo(
@@ -491,13 +577,18 @@ class FiveAxisCncPathGenerator:
             rotBack = rotToToolFrame.T
             rotatedMold = self.rotateMesh(moldMesh, rotToToolFrame)
             rotatedKeepOut = self.rotateMesh(keepOutMesh, rotToToolFrame)
+            perAxisIpw = ShapelyLayerIpw()
             rawPathsLocal = generateStep1LayerPaths(
-                rotatedMold, rotatedKeepOut, toolRadius, coarseParams, safetyMargin, layerIpw=sharedIpw)
+                rotatedMold, rotatedKeepOut, toolRadius, coarseParams, safetyMargin,
+                layerIpw=perAxisIpw)
             if keepOutCollisionEngine is not None:
                 rawPathsLocal = keepOutCollisionEngine.filterPaths(
                     rawPathsLocal, axisUnit, rotBack, sweepTol)
             else:
                 rawPathsLocal = [np.asarray(p, dtype=float) for p in rawPathsLocal if len(p) >= 2]
+            if len(machinedTracker.wcsPoints) > 0:
+                rawPathsLocal = machinedTracker.filterLocalPaths(
+                    rawPathsLocal, rotToToolFrame, toolRadius, coarseStepOver)
             rawPathsWcs = [applyRotation(np.asarray(p, dtype=float), rotBack)
                            for p in rawPathsLocal if len(p) >= 2]
             clippedWcs = self.toolpathEngine.clipWcsPathsByZ(rawPathsWcs, effectiveWorldSafeZ)
@@ -511,6 +602,9 @@ class FiveAxisCncPathGenerator:
             validPathsLocal = reClipped
             if not validPathsLocal:
                 continue
+            validPathsWcsForTracker = [applyRotation(np.asarray(p, dtype=float), rotBack)
+                                        for p in validPathsLocal if len(p) >= 2]
+            machinedTracker.addPathsWcs(validPathsWcsForTracker, toolRadius)
             stepSegs, stepPts, outputSegmentId, pointId = self._emitSegments(
                 validPathsLocal, axisUnit, feedrate, rotBack,
                 outputSegmentId, pointId, axisIndex,
