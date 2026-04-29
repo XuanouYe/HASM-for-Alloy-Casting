@@ -483,7 +483,7 @@ class FiveAxisCncPathGenerator:
         allClPoints = []
         pointId = 0
         outputSegmentId = 0
-        sharedIpw = ShapelyLayerIpw()
+        sharedIpw = ShapelyLayerIpw() if len(step1Axes) > 1 else None
         for axisIndex, toolAxis in enumerate(step1Axes):
             axisUnit = normalizeVector(np.asarray(toolAxis, dtype=float))
             rotToToolFrame = buildRotationFromTo(

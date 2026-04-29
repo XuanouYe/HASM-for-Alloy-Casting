@@ -410,18 +410,18 @@ def generateShellRemovalPaths(targetMesh: trimesh.Trimesh,
 
 
 def sliceMeshAtZ(mesh: trimesh.Trimesh, zValue: float,
-                 tolerance: float = 0.05) -> Optional[Any]:
+                 tolerance: float = 0.05) -> Tuple[Optional[Any], Optional[np.ndarray]]:
     if mesh is None or mesh.is_empty:
-        return None
+        return None, None
 
-    def trySlice(zTry: float) -> Optional[Any]:
+    def trySlice(zTry: float) -> Tuple[Optional[Any], Optional[np.ndarray]]:
         try:
             section = mesh.section(
                 plane_origin=[0.0, 0.0, zTry],
                 plane_normal=[0.0, 0.0, 1.0])
             if section is None or len(section.vertices) == 0:
-                return None
-            path2d, _ = section.to_2D()
+                return None, None
+            path2d, mat = section.to_2D()
             vertices2d = np.asarray(path2d.vertices, dtype=float)
             lineList = []
             for entity in path2d.entities:
@@ -435,28 +435,29 @@ def sliceMeshAtZ(mesh: trimesh.Trimesh, zValue: float,
                 if not polyItem.is_empty and polyItem.area > 1e-9:
                     lineList.append(polyItem)
             if not lineList:
-                return None
+                return None, None
             merged = make_valid(unary_union(lineList))
-            return merged if not merged.is_empty else None
+            to3dMat = np.asarray(mat, dtype=float)
+            return (merged if not merged.is_empty else None), to3dMat
         except Exception:
-            return None
+            return None, None
 
     for zTry in [zValue, zValue - tolerance, zValue + tolerance]:
-        result = trySlice(zTry)
+        result, mat = trySlice(zTry)
         if result is not None:
-            return result
-    return None
+            return result, mat
+    return None, None
 
 
 def buildLayerSafePoly(moldMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh,
                        zValue: float, toolRadius: float, roughStock: float,
-                       safetyMargin: float, tolerance: float) -> Tuple[Any, Any]:
-    moldPoly = sliceMeshAtZ(moldMesh, zValue, tolerance)
+                       safetyMargin: float, tolerance: float) -> Tuple[Any, Any, Optional[np.ndarray]]:
+    moldPoly, to3dMat = sliceMeshAtZ(moldMesh, zValue, tolerance)
     if moldPoly is None or moldPoly.is_empty:
-        return MultiPolygon(), MultiPolygon()
+        return MultiPolygon(), MultiPolygon(), None
     keepOutExpanded = MultiPolygon()
     if keepOutMesh is not None and not keepOutMesh.is_empty:
-        keepOutRaw = sliceMeshAtZ(keepOutMesh, zValue, tolerance)
+        keepOutRaw, _ = sliceMeshAtZ(keepOutMesh, zValue, tolerance)
         if keepOutRaw is not None and not keepOutRaw.is_empty:
             keepOutExpanded = make_valid(keepOutRaw.buffer(toolRadius + safetyMargin))
     insetPoly = moldPoly.buffer(-(toolRadius + roughStock))
@@ -464,10 +465,11 @@ def buildLayerSafePoly(moldMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh,
         insetPoly = moldPoly.buffer(-toolRadius)
     if not keepOutExpanded.is_empty:
         insetPoly = insetPoly.difference(keepOutExpanded)
-    return make_valid(insetPoly), keepOutExpanded
+    return make_valid(insetPoly), keepOutExpanded, to3dMat
 
 
 def generateZigzagPaths(fillPoly: Any, stepOver: float,
+                        to3dMat: np.ndarray,
                         reverseDir: bool = False) -> List[np.ndarray]:
     if fillPoly is None or fillPoly.is_empty or stepOver <= 0.0:
         return []
@@ -488,14 +490,18 @@ def generateZigzagPaths(fillPoly: Any, stepOver: float,
                 continue
             if reverseFlag:
                 coords = coords[::-1]
-            path3d = np.column_stack([coords[:, 0], coords[:, 1], np.zeros(len(coords))])
+            coordHomo = np.column_stack(
+                [coords[:, 0], coords[:, 1],
+                 np.zeros(len(coords)), np.ones(len(coords))])
+            path3d = (to3dMat @ coordHomo.T).T[:, :3]
             allPaths.append(path3d.astype(float))
         reverseFlag = not reverseFlag
     return allPaths
 
 
 def generateContourPaths(fillPoly: Any, toolRadius: float,
-                         stepOver: float, passes: int = 2) -> List[np.ndarray]:
+                         stepOver: float, passes: int,
+                         to3dMat: np.ndarray) -> List[np.ndarray]:
     if fillPoly is None or fillPoly.is_empty:
         return []
     contourPaths: List[np.ndarray] = []
@@ -511,7 +517,11 @@ def generateContourPaths(fillPoly: Any, toolRadius: float,
             coords = np.asarray(polyItem.exterior.coords, dtype=float)
             if len(coords) < 2:
                 continue
-            contourPaths.append(np.column_stack([coords[:, 0], coords[:, 1], np.zeros(len(coords))]))
+            coordHomo = np.column_stack(
+                [coords[:, 0], coords[:, 1],
+                 np.zeros(len(coords)), np.ones(len(coords))])
+            path3d = (to3dMat @ coordHomo.T).T[:, :3]
+            contourPaths.append(path3d.astype(float))
     return contourPaths
 
 
@@ -617,9 +627,9 @@ def generateStep1LayerPaths(moldMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trim
     for zVal in zLevels:
         if zVal < localMinZ:
             continue
-        safePoly, _ = buildLayerSafePoly(
+        safePoly, _, to3dMat = buildLayerSafePoly(
             moldMesh, keepOutMesh, float(zVal), toolRadius, roughStock, safetyMargin, tolerance)
-        if safePoly.is_empty:
+        if safePoly.is_empty or to3dMat is None:
             continue
         activePoly = safePoly
         if layerIpw is not None:
@@ -630,15 +640,15 @@ def generateStep1LayerPaths(moldMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trim
                 continue
         rawPaths: List[np.ndarray] = []
         if useContour:
-            rawPaths.extend(generateContourPaths(activePoly, toolRadius, stepOver, contourPasses))
+            rawPaths.extend(generateContourPaths(activePoly, toolRadius, stepOver, contourPasses, to3dMat))
         polyList = list(activePoly.geoms) if activePoly.geom_type == "MultiPolygon" else [activePoly]
         reverseDir = False
         for polyItem in polyList:
             if polyItem.is_empty:
                 continue
-            zigzagPaths = generateZigzagPaths(polyItem, stepOver, reverseDir)
+            zigzagPaths = generateZigzagPaths(polyItem, stepOver, to3dMat, reverseDir)
             if not zigzagPaths:
-                zigzagPaths = generateContourPaths(polyItem, toolRadius, stepOver, contourPasses)
+                zigzagPaths = generateContourPaths(polyItem, toolRadius, stepOver, contourPasses, to3dMat)
             rawPaths.extend(zigzagPaths)
             reverseDir = not reverseDir
         if not rawPaths:
@@ -646,10 +656,7 @@ def generateStep1LayerPaths(moldMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trim
         connectedPaths = connectPathsAvoidingObstacle(rawPaths, safePoly, directThreshold)
         if not connectedPaths:
             continue
-        for pathItem in connectedPaths:
-            pathZ = np.asarray(pathItem, dtype=float).copy()
-            pathZ[:, 2] = float(zVal)
-            allPaths.append(pathZ)
+        allPaths.extend(connectedPaths)
         if layerIpw is not None:
             layerIpw.projectAndMark(connectedPaths, toolRadius)
     return allPaths
