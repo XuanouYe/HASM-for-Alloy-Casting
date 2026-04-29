@@ -449,17 +449,41 @@ def sliceMeshAtZ(mesh: trimesh.Trimesh, zValue: float,
     return None, None
 
 
+def buildKeepOutShadowPoly(keepOutMesh: trimesh.Trimesh, zValue: float,
+                            toolRadius: float, safetyMargin: float,
+                            tolerance: float) -> Any:
+    if keepOutMesh is None or keepOutMesh.is_empty:
+        return MultiPolygon()
+    keepOutZMax = float(np.asarray(keepOutMesh.bounds, dtype=float)[1, 2])
+    shadowPolys = []
+    zSampleStep = max(tolerance * 2.0, toolRadius * 0.5)
+    zScan = keepOutZMax
+    while zScan >= zValue - tolerance:
+        slicePoly, _ = sliceMeshAtZ(keepOutMesh, zScan, tolerance)
+        if slicePoly is not None and not slicePoly.is_empty:
+            shadowPolys.append(make_valid(slicePoly))
+        zScan -= zSampleStep
+    if not shadowPolys:
+        return MultiPolygon()
+    shadowUnion = make_valid(unary_union(shadowPolys))
+    return make_valid(shadowUnion.buffer(toolRadius + safetyMargin))
+
+
 def buildLayerSafePoly(moldMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trimesh,
                        zValue: float, toolRadius: float, roughStock: float,
-                       safetyMargin: float, tolerance: float) -> Tuple[Any, Any, Optional[np.ndarray]]:
+                       safetyMargin: float, tolerance: float,
+                       keepOutShadow: Optional[Any] = None) -> Tuple[Any, Any, Optional[np.ndarray]]:
     moldPoly, to3dMat = sliceMeshAtZ(moldMesh, zValue, tolerance)
     if moldPoly is None or moldPoly.is_empty:
         return MultiPolygon(), MultiPolygon(), None
     keepOutExpanded = MultiPolygon()
     if keepOutMesh is not None and not keepOutMesh.is_empty:
-        keepOutRaw, _ = sliceMeshAtZ(keepOutMesh, zValue, tolerance)
-        if keepOutRaw is not None and not keepOutRaw.is_empty:
-            keepOutExpanded = make_valid(keepOutRaw.buffer(toolRadius + safetyMargin))
+        if keepOutShadow is not None and not keepOutShadow.is_empty:
+            keepOutExpanded = keepOutShadow
+        else:
+            keepOutRaw, _ = sliceMeshAtZ(keepOutMesh, zValue, tolerance)
+            if keepOutRaw is not None and not keepOutRaw.is_empty:
+                keepOutExpanded = make_valid(keepOutRaw.buffer(toolRadius + safetyMargin))
     insetPoly = moldPoly.buffer(-(toolRadius + roughStock))
     if insetPoly.is_empty:
         insetPoly = moldPoly.buffer(-toolRadius)
@@ -623,12 +647,26 @@ def generateStep1LayerPaths(moldMesh: trimesh.Trimesh, keepOutMesh: trimesh.Trim
     if len(zLevels) == 0 or zLevels[-1] > zMin + layerStep * 0.1:
         zLevels = np.append(zLevels, zMin)
     localMinZ = zMin + bottomClearance if bottomClearance > 0.0 else -np.inf
+    accumulatedKeepOutShadow: Any = MultiPolygon()
     allPaths: List[np.ndarray] = []
     for zVal in zLevels:
         if zVal < localMinZ:
             continue
+        currentLayerKeepOut = MultiPolygon()
+        if keepOutMesh is not None and not keepOutMesh.is_empty:
+            slicedKeepOut, _ = sliceMeshAtZ(keepOutMesh, float(zVal), tolerance)
+            if slicedKeepOut is not None and not slicedKeepOut.is_empty:
+                expandedSlice = make_valid(slicedKeepOut.buffer(toolRadius + safetyMargin))
+                currentLayerKeepOut = expandedSlice
+            if not accumulatedKeepOutShadow.is_empty:
+                currentLayerKeepOut = make_valid(
+                    unary_union([currentLayerKeepOut, accumulatedKeepOutShadow])
+                ) if not currentLayerKeepOut.is_empty else accumulatedKeepOutShadow
+            if not currentLayerKeepOut.is_empty:
+                accumulatedKeepOutShadow = currentLayerKeepOut
         safePoly, _, to3dMat = buildLayerSafePoly(
-            moldMesh, keepOutMesh, float(zVal), toolRadius, roughStock, safetyMargin, tolerance)
+            moldMesh, keepOutMesh, float(zVal), toolRadius, roughStock, safetyMargin, tolerance,
+            keepOutShadow=currentLayerKeepOut if not currentLayerKeepOut.is_empty else None)
         if safePoly.is_empty or to3dMat is None:
             continue
         activePoly = safePoly
