@@ -10,6 +10,7 @@ from cnc.gcodeProcessor import generateCncGcodeInterface
 from fdmExecutor import generateGcodeInterface
 from controlConfig import ConfigManager
 from geometryAdapters import exportMeshToStl
+from gui.languageManager import tr
 
 class MainController(QObject):
     def __init__(self, mainWindow, moldController, parameterPanel):
@@ -63,11 +64,11 @@ class MainController(QObject):
         self.currentStlPath = None
         self.mainWindow.setCncButtonEnabled(False)
         self.mainWindow.setGcodeButtonEnabled(False)
-        self.mainWindow.setStatusText("新项目已创建")
+        self.mainWindow.setStatusText(tr("statusNewProject"))
 
     def handleSaveProject(self):
-        self.mainWindow.setStatusText("项目正在保存...")
-        self.mainWindow.showMessage("保存成功", "项目已保存")
+        self.mainWindow.setStatusText(tr("statusSavingProject"))
+        self.mainWindow.showMessage(tr("success"), tr("messageProjectSaved"))
 
     def handleLoadManifest(self, filePath):
         with open(filePath, "r", encoding="utf-8") as f:
@@ -80,22 +81,22 @@ class MainController(QObject):
         self.riserStlPath = files.get("riserStl")
         if self.partStlPath and self.moldStlPath:
             self.mainWindow.setCncButtonEnabled(True)
-            self.mainWindow.showMessage("成功", "制造清单加载成功，可以生成CNC路径")
+            self.mainWindow.showMessage(tr("success"), tr("messageManifestLoaded"))
         else:
-            self.mainWindow.showMessage("警告", "制造清单缺少必要的部件模型或模具模型路径", isError=True)
+            self.mainWindow.showMessage(tr("warning"), tr("messageManifestMissing"), isError=True)
 
     def onModelLoaded(self, filePath):
         self.currentStlPath = filePath
         self.mainWindow.setGcodeButtonEnabled(True)
-        self.mainWindow.setStatusText("铸件模型已加载")
+        self.mainWindow.setStatusText(tr("statusCastingLoaded"))
 
     def onMoldGeneratedForCnc(self):
         self.mainWindow.setCncButtonEnabled(True)
 
     def onMoldExported(self, filePath):
         self.moldStlPath = filePath
-        self.mainWindow.setStatusText(f"模具已导出: {Path(filePath).name}")
-        self.mainWindow.showMessage("导出成功", f"模具STL已保存至:\n{filePath}")
+        self.mainWindow.setStatusText(tr("statusMoldExported", fileName=Path(filePath).name))
+        self.mainWindow.showMessage(tr("exportSuccess"), tr("messageMoldExported", filePath=filePath))
 
     def handleLoadConfig(self, filePath):
         with open(filePath, "r", encoding="utf-8") as f:
@@ -103,7 +104,7 @@ class MainController(QObject):
         self.currentConfigDict = configDict
         self.parameterPanel.loadConfiguration(configDict)
         self.mainWindow.moldProcessPanel.loadConfiguration(configDict)
-        self.mainWindow.showMessage("成功", f"配置已加载: {filePath}")
+        self.mainWindow.showMessage(tr("success"), tr("messageConfigLoaded", filePath=filePath))
 
     def handleSaveConfig(self, filePath):
         panelConfig = self.parameterPanel.getConfiguration()
@@ -116,13 +117,13 @@ class MainController(QObject):
         })
         with open(filePath, "w", encoding="utf-8") as f:
             json.dump(self.currentConfigDict, f, indent=2, ensure_ascii=False)
-        self.mainWindow.showMessage("成功", f"配置已保存: {filePath}")
+        self.mainWindow.showMessage(tr("success"), tr("messageConfigSaved", filePath=filePath))
 
     def handleResetConfig(self):
         self.currentConfigDict = self.configManager.getDefaultConfig()
         self.parameterPanel.loadConfiguration(self.currentConfigDict)
         self.mainWindow.moldProcessPanel.loadConfiguration(self.currentConfigDict)
-        self.mainWindow.showMessage("成功", "已重置为默认配置")
+        self.mainWindow.showMessage(tr("success"), tr("messageConfigReset"))
 
     def handleGenerateGcode(self, outputPath):
         stlToSlice = None
@@ -151,7 +152,7 @@ class MainController(QObject):
     def onGenerateGcodeCompleted(self, result):
         self.mainWindow.setGcodeButtonEnabled(True)
         gcodePath = result.get("result") if "result" in result else result.get("gcodePath", "")
-        self.mainWindow.showMessage("成功", f"G代码已生成:\n{gcodePath}" if gcodePath else "生成完成")
+        self.mainWindow.showMessage(tr("success"), tr("messageGcodeGenerated", gcodePath=gcodePath) if gcodePath else tr("messageGenerationComplete"))
 
     def createEmptyStl(self, path: str):
         mesh = trimesh.Trimesh()
@@ -169,7 +170,7 @@ class MainController(QObject):
             exportMeshToStl(self.moldController.currentMoldShell, tempMoldPath)
             moldStlToUse = tempMoldPath
         if not partStlToUse or not moldStlToUse:
-            self.mainWindow.showMessage("错误", "缺少必要的模型数据。请先加载制造清单或生成模具。", isError=True)
+            self.mainWindow.showMessage(tr("error"), tr("messageMissingModels"), isError=True)
             self.mainWindow.setCncButtonEnabled(True)
             return
         gatePathToUse = self.gateStlPath
@@ -189,7 +190,7 @@ class MainController(QObject):
             riserPathToUse = os.path.join(tempfile.gettempdir(), "emptyRiser.stl")
             self.createEmptyStl(riserPathToUse)
         config = self.parameterPanel.getConfiguration()
-        self.mainWindow.setStatusText("正在计算CNC G代码...")
+        self.mainWindow.setStatusText(tr("statusCncCalculating"))
         self.currentVisualizeFlag = visualize
         self.currentPartStlPath = partStlToUse
         self.currentProcessConfig = config
@@ -209,8 +210,8 @@ class MainController(QObject):
 
     def onGenerateCncCompleted(self, result):
         self.mainWindow.setCncButtonEnabled(True)
-        self.mainWindow.setStatusText("CNC G代码生成完成")
-        self.mainWindow.showMessage("完成", "CNC G代码已成功生成。")
+        self.mainWindow.setStatusText(tr("statusCncComplete"))
+        self.mainWindow.showMessage(tr("complete"), tr("messageCncGenerated"))
         if getattr(self, 'currentVisualizeFlag', False):
             from cnc.pathGenerator import FiveAxisCncPathGenerator
             from gui.pathVisualizerDialog import PathVisualizationDialog

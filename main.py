@@ -7,6 +7,7 @@ from gui.parameterPanel import ProcessParameterPanel
 from gui.mainWindow import MainWindow
 from gui.mainController import MainController
 from gui.moldProcessController import MoldProcessController
+from gui.languageManager import tr
 
 def main():
     app = QApplication(sys.argv)
@@ -31,7 +32,7 @@ def main():
     moldController.cavityVolumeReady.connect(moldProcessPanel.onCavityVolumeReady)
     moldController.updateCastingView.connect(viewer.loadCastingMesh, type=Qt.QueuedConnection)
     moldController.updateMoldView.connect(viewer.loadMoldMesh, type=Qt.QueuedConnection)
-    viewer.viewError.connect(lambda err: moldProcessPanel.onProcessError("渲染错误", err))
+    viewer.viewError.connect(lambda err: moldProcessPanel.onProcessError(tr("error"), err))
     mainController = MainController(mainWindow, moldController, parameterPanel)
     mainWindow.show()
     sys.exit(app.exec_())

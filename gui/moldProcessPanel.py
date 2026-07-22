@@ -7,6 +7,7 @@ from PyQt5.QtWidgets import (
     QMessageBox, QFileDialog, QScrollArea, QSizePolicy
 )
 from controlConfig import ConfigManager
+from gui.languageManager import languageManager, tr
 
 
 class MoldProcessPanel(QWidget):
@@ -34,17 +35,19 @@ class MoldProcessPanel(QWidget):
         self.orientationTimer.setInterval(600)
         self.orientationTimer.timeout.connect(self.onOrientationTimerTick)
         self.initUi()
+        languageManager.languageChanged.connect(self.retranslateUi)
+        self.retranslateUi()
 
     def initUi(self):
         outerLayout = QVBoxLayout()
         outerLayout.setContentsMargins(0, 0, 0, 0)
         outerLayout.setSpacing(0)
-        titleLabel = QLabel("模具生成与处理")
+        self.titleLabel = QLabel(tr("titleMoldProcess"))
         titleFont = QFont()
         titleFont.setPointSize(12)
         titleFont.setBold(True)
-        titleLabel.setFont(titleFont)
-        outerLayout.addWidget(titleLabel)
+        self.titleLabel.setFont(titleFont)
+        outerLayout.addWidget(self.titleLabel)
 
         scrollArea = QScrollArea()
         scrollArea.setWidgetResizable(True)
@@ -66,16 +69,16 @@ class MoldProcessPanel(QWidget):
         self.setStyleSheet(self.getStylesheet())
 
     def createLoadModelGroup(self):
-        group = QGroupBox("模型加载")
+        self.modelLoadingGroup = QGroupBox(tr("groupModelLoading")); group = self.modelLoadingGroup
         layout = QVBoxLayout()
-        self.loadStlButton = QPushButton("加载STL文件")
+        self.loadStlButton = QPushButton(tr("buttonLoadStl"))
         self.loadStlButton.clicked.connect(self.onLoadStlClick)
         layout.addWidget(self.loadStlButton)
         group.setLayout(layout)
         return group
 
     def createAddGatingGroup(self):
-        gatingGroup = QGroupBox("添加浇道")
+        self.addGatingGroup = QGroupBox(tr("groupAddGating")); gatingGroup = self.addGatingGroup
         layout = QVBoxLayout()
         paramLayout = QFormLayout()
         moldSchema = self.configManager.getParameterSchema("mold")
@@ -89,7 +92,7 @@ class MoldProcessPanel(QWidget):
         self.runnerDiameterSpinBox.setSuffix(f" {runnerSpec.get('unit', 'mm')}")
         self.runnerDiameterSpinBox.setDecimals(2)
         self.runnerDiameterSpinBox.setSingleStep(0.5)
-        paramLayout.addRow("浇道直径:", self.runnerDiameterSpinBox)
+        self.runnerDiameterLabel = QLabel(tr("labelRunnerDiameter")); paramLayout.addRow(self.runnerDiameterLabel, self.runnerDiameterSpinBox)
 
         sprueSpec = moldSchema.get("sprueInletOffset", {})
         self.sprueOffsetSpinBox = QDoubleSpinBox()
@@ -99,15 +102,15 @@ class MoldProcessPanel(QWidget):
         )
         self.sprueOffsetSpinBox.setSuffix(f" {sprueSpec.get('unit', 'mm')}")
         self.sprueOffsetSpinBox.setDecimals(1)
-        paramLayout.addRow("浇口偏移:", self.sprueOffsetSpinBox)
+        self.sprueOffsetLabel = QLabel(tr("labelSprueOffset")); paramLayout.addRow(self.sprueOffsetLabel, self.sprueOffsetSpinBox)
         layout.addLayout(paramLayout)
 
-        self.addGatingButton = QPushButton("添加浇道")
+        self.addGatingButton = QPushButton(tr("buttonAddGating"))
         self.addGatingButton.setEnabled(False)
         self.addGatingButton.clicked.connect(self.onAddGatingClick)
         layout.addWidget(self.addGatingButton)
 
-        self.cavityVolumeGroup = QGroupBox("模腔体积估算")
+        self.cavityVolumeGroup = QGroupBox(tr("groupCavityVolume"))
         self.cavityVolumeGroup.setVisible(False)
         cavityLayout = QFormLayout()
         cavityLayout.setContentsMargins(8, 8, 8, 8)
@@ -123,14 +126,14 @@ class MoldProcessPanel(QWidget):
         self.cavityVolumeLabel.setTextFormat(Qt.PlainText)
         self.cavityVolumeLabel.setWordWrap(True)
         self.cavityVolumeLabel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        cavityLayout.addRow("模腔体积:", self.cavityVolumeLabel)
+        self.cavityVolumeTitleLabel = QLabel(tr("labelCavityVolume")); cavityLayout.addRow(self.cavityVolumeTitleLabel, self.cavityVolumeLabel)
 
         self.cavityVolumeMassLabel = QLabel("—")
         self.cavityVolumeMassLabel.setFont(valueFont)
         self.cavityVolumeMassLabel.setTextFormat(Qt.PlainText)
         self.cavityVolumeMassLabel.setWordWrap(True)
         self.cavityVolumeMassLabel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        cavityLayout.addRow("预估质量:", self.cavityVolumeMassLabel)
+        self.cavityVolumeMassTitleLabel = QLabel(tr("labelEstimatedMass")); cavityLayout.addRow(self.cavityVolumeMassTitleLabel, self.cavityVolumeMassLabel)
 
         self.cavityVolumeGroup.setLayout(cavityLayout)
         layout.addWidget(self.cavityVolumeGroup)
@@ -138,7 +141,7 @@ class MoldProcessPanel(QWidget):
         return gatingGroup
 
     def createMoldGenerationGroup(self):
-        group = QGroupBox("模具生成")
+        self.moldGenerationGroup = QGroupBox(tr("groupMoldGeneration")); group = self.moldGenerationGroup
         layout = QVBoxLayout()
         paramLayout = QFormLayout()
         moldSchema = self.configManager.getParameterSchema("mold")
@@ -151,15 +154,15 @@ class MoldProcessPanel(QWidget):
         )
         self.boundingBoxOffsetSpinBox.setSuffix(f" {bboxSpec.get('unit', 'mm')}")
         self.boundingBoxOffsetSpinBox.setDecimals(1)
-        paramLayout.addRow("包围盒偏移:", self.boundingBoxOffsetSpinBox)
+        self.boundingBoxOffsetLabel = QLabel(tr("labelBoundingBoxOffset")); paramLayout.addRow(self.boundingBoxOffsetLabel, self.boundingBoxOffsetSpinBox)
         layout.addLayout(paramLayout)
 
-        self.generateMoldButton = QPushButton("生成模具")
+        self.generateMoldButton = QPushButton(tr("buttonGenerateMold"))
         self.generateMoldButton.setEnabled(False)
         self.generateMoldButton.clicked.connect(self.onGenerateMoldClick)
         layout.addWidget(self.generateMoldButton)
 
-        self.exportMoldButton = QPushButton("导出模具 STL")
+        self.exportMoldButton = QPushButton(tr("buttonExportMold"))
         self.exportMoldButton.setEnabled(False)
         self.exportMoldButton.clicked.connect(self.onExportMoldClick)
         self.exportMoldButton.setStyleSheet(
@@ -170,7 +173,7 @@ class MoldProcessPanel(QWidget):
         )
         layout.addWidget(self.exportMoldButton)
 
-        self.moldBoundsGroup = QGroupBox("模具包围盒规模")
+        self.moldBoundsGroup = QGroupBox(tr("groupMoldBounds"))
         self.moldBoundsGroup.setVisible(False)
         boundsLayout = QFormLayout()
         boundsLayout.setContentsMargins(8, 8, 8, 8)
@@ -199,9 +202,9 @@ class MoldProcessPanel(QWidget):
         return group
 
     def createOrientationGroup(self):
-        orientationGroup = QGroupBox("打印方向调整")
+        self.printOrientationGroup = QGroupBox(tr("groupPrintOrientation")); orientationGroup = self.printOrientationGroup
         orientationLayout = QVBoxLayout()
-        self.optimizeOrientationButton = QPushButton("调整打印方向")
+        self.optimizeOrientationButton = QPushButton(tr("buttonOptimizeOrientation"))
         self.optimizeOrientationButton.setEnabled(False)
         self.optimizeOrientationButton.clicked.connect(self.onOptimizeOrientationClick)
         orientationLayout.addWidget(self.optimizeOrientationButton)
@@ -209,10 +212,10 @@ class MoldProcessPanel(QWidget):
         return orientationGroup
 
     def createSurfaceOffsetGroup(self):
-        surfaceOffsetGroup = QGroupBox("表面偏移")
+        self.surfaceOffsetGroup = QGroupBox(tr("groupSurfaceOffset")); surfaceOffsetGroup = self.surfaceOffsetGroup
         surfaceOffsetLayout = QVBoxLayout()
         offsetInputLayout = QHBoxLayout()
-        offsetInputLayout.addWidget(QLabel("偏移值:"))
+        self.offsetValueLabel = QLabel(tr("labelOffsetValue")); offsetInputLayout.addWidget(self.offsetValueLabel)
         self.surfaceOffsetSpinBox = QDoubleSpinBox()
         self.surfaceOffsetSpinBox.setRange(-10.0, 10.0)
         self.surfaceOffsetSpinBox.setValue(0.5)
@@ -220,17 +223,34 @@ class MoldProcessPanel(QWidget):
         self.surfaceOffsetSpinBox.setDecimals(2)
         offsetInputLayout.addWidget(self.surfaceOffsetSpinBox)
         surfaceOffsetLayout.addLayout(offsetInputLayout)
-        self.adjustStructureButton = QPushButton("执行偏移")
+        self.adjustStructureButton = QPushButton(tr("buttonExecuteOffset"))
         self.adjustStructureButton.setEnabled(False)
         self.adjustStructureButton.clicked.connect(self.onAdjustStructureClick)
         surfaceOffsetLayout.addWidget(self.adjustStructureButton)
         surfaceOffsetGroup.setLayout(surfaceOffsetLayout)
         return surfaceOffsetGroup
 
+    def retranslateUi(self):
+        self.titleLabel.setText(tr("titleMoldProcess"))
+        self.loadStlButton.setText(tr("buttonLoadStl"))
+        self.addGatingButton.setText(tr("buttonAddGating"))
+        self.generateMoldButton.setText(tr("buttonGenerateMold"))
+        self.exportMoldButton.setText(tr("buttonExportMold"))
+        self.optimizeOrientationButton.setText(tr("buttonOptimizeOrientation"))
+        self.adjustStructureButton.setText(tr("buttonExecuteOffset"))
+        for group, key in [(self.modelLoadingGroup, "groupModelLoading"), (self.addGatingGroup, "groupAddGating"), (self.cavityVolumeGroup, "groupCavityVolume"), (self.moldGenerationGroup, "groupMoldGeneration"), (self.moldBoundsGroup, "groupMoldBounds"), (self.printOrientationGroup, "groupPrintOrientation"), (self.surfaceOffsetGroup, "groupSurfaceOffset")]:
+            group.setTitle(tr(key))
+        self.runnerDiameterLabel.setText(tr("labelRunnerDiameter"))
+        self.sprueOffsetLabel.setText(tr("labelSprueOffset"))
+        self.cavityVolumeTitleLabel.setText(tr("labelCavityVolume"))
+        self.cavityVolumeMassTitleLabel.setText(tr("labelEstimatedMass"))
+        self.boundingBoxOffsetLabel.setText(tr("labelBoundingBoxOffset"))
+        self.offsetValueLabel.setText(tr("labelOffsetValue"))
+
     def onLoadStlClick(self):
-        filePath, _ = QFileDialog.getOpenFileName(self, "打开STL文件", "", "STL Files (*.stl);;All Files (*)")
+        filePath, _ = QFileDialog.getOpenFileName(self, tr("dialogOpenStl"), "", "STL Files (*.stl);;All Files (*)")
         if filePath:
-            self.statusMessageChanged.emit(f"加载中: {Path(filePath).name}...")
+            self.statusMessageChanged.emit(tr("statusLoadingFile", fileName=Path(filePath).name))
             self.intentLoadModel.emit(filePath)
 
     def onGenerateMoldClick(self):
@@ -238,7 +258,7 @@ class MoldProcessPanel(QWidget):
         self.addGatingButton.setEnabled(False)
         self.exportMoldButton.setEnabled(False)
         self.moldBoundsGroup.setVisible(False)
-        self.statusMessageChanged.emit("正在生成模具...")
+        self.statusMessageChanged.emit(tr("statusGeneratingMold"))
         config = {
             "boundingBoxOffset": self.boundingBoxOffsetSpinBox.value(),
             "booleanEngine": None
@@ -249,7 +269,7 @@ class MoldProcessPanel(QWidget):
         self.addGatingButton.setEnabled(False)
         self.generateMoldButton.setEnabled(False)
         self.cavityVolumeGroup.setVisible(False)
-        self.statusMessageChanged.emit("正在添加浇道...")
+        self.statusMessageChanged.emit(tr("statusAddingGating"))
         config = {
             "runnerDiameter": self.runnerDiameterSpinBox.value(),
             "sprueInletOffset": self.sprueOffsetSpinBox.value(),
@@ -259,7 +279,7 @@ class MoldProcessPanel(QWidget):
 
     def onExportMoldClick(self):
         filePath, _ = QFileDialog.getSaveFileName(
-            self, "导出模具STL", "mold.stl", "STL Files (*.stl);;All Files (*)"
+            self, tr("dialogExportMoldStl"), "mold.stl", "STL Files (*.stl);;All Files (*)"
         )
         if filePath:
             self.intentExportMold.emit(filePath)
@@ -270,18 +290,18 @@ class MoldProcessPanel(QWidget):
         self.generateMoldButton.setEnabled(False)
         self.orientationDotCount = 0
         self.orientationTimer.start()
-        self.statusMessageChanged.emit("打印方向调整计算中")
+        self.statusMessageChanged.emit(tr("statusOrientationCalculating", dots=""))
         self.intentOptimizeOrientation.emit({})
 
     def onOrientationTimerTick(self):
         self.orientationDotCount = (self.orientationDotCount + 1) % 4
         dots = "." * self.orientationDotCount
-        self.statusMessageChanged.emit(f"打印方向调整计算中{dots}")
+        self.statusMessageChanged.emit(tr("statusOrientationCalculating", dots=dots))
 
     def onAdjustStructureClick(self):
         self.adjustStructureButton.setEnabled(False)
         offsetValue = self.surfaceOffsetSpinBox.value()
-        self.statusMessageChanged.emit(f"正在执行表面偏移({offsetValue} mm)...")
+        self.statusMessageChanged.emit(tr("statusExecutingOffset", offsetValue=offsetValue))
         self.intentAdjustStructure.emit({"offsetValue": offsetValue})
 
     def onModelLoadedSuccess(self):
@@ -295,7 +315,7 @@ class MoldProcessPanel(QWidget):
         self.addGatingButton.setEnabled(True)
         self.optimizeOrientationButton.setEnabled(True)
         self.adjustStructureButton.setEnabled(False)
-        self.statusMessageChanged.emit("模型已加载，可调整打印方向或生成模具")
+        self.statusMessageChanged.emit(tr("statusModelLoadedReady"))
 
     def onMoldGeneratedSuccess(self):
         self.statusFlags["molded"] = True
@@ -305,7 +325,7 @@ class MoldProcessPanel(QWidget):
         self.adjustStructureButton.setEnabled(True)
         self.exportMoldButton.setEnabled(True)
         self.statusMessageChanged.emit(self.buildStatusText())
-        QMessageBox.information(self, "成功", "模具生成完成")
+        QMessageBox.information(self, tr("success"), tr("messageMoldGenerated"))
 
     def onGatingAddedSuccess(self):
         self.statusFlags["gated"] = True
@@ -313,7 +333,7 @@ class MoldProcessPanel(QWidget):
         self.addGatingButton.setEnabled(True)
         self.generateMoldButton.setEnabled(True)
         self.statusMessageChanged.emit(self.buildStatusText())
-        QMessageBox.information(self, "成功", "浇道添加完成，请继续生成模具")
+        QMessageBox.information(self, tr("success"), tr("messageGatingAdded"))
 
     def onOrientationOptimizedSuccess(self, summaryMsg: str):
         self.orientationTimer.stop()
@@ -322,13 +342,13 @@ class MoldProcessPanel(QWidget):
         self.addGatingButton.setEnabled(True)
         self.generateMoldButton.setEnabled(True)
         self.statusMessageChanged.emit(self.buildStatusText())
-        QMessageBox.information(self, "提示", f"打印方向调整已完成\n最优旋转角: {summaryMsg}")
+        QMessageBox.information(self, tr("prompt"), tr("messageOrientationDone", summaryMsg=summaryMsg))
 
     def onStructureAdjustedSuccess(self, offsetValue: float):
         self.statusFlags["adjusted"] = True
         self.adjustStructureButton.setEnabled(True)
         self.statusMessageChanged.emit(self.buildStatusText())
-        QMessageBox.information(self, "提示", f"表面偏移已完成 ({offsetValue} mm)")
+        QMessageBox.information(self, tr("prompt"), tr("messageOffsetDone", offsetValue=offsetValue))
 
     def onProcessError(self, title: str, errMsg: str):
         self.orientationTimer.stop()
@@ -379,10 +399,10 @@ class MoldProcessPanel(QWidget):
 
     def buildStatusText(self):
         parts = []
-        if self.statusFlags["molded"]: parts.append("✓ 模具已生成")
-        if self.statusFlags["gated"]: parts.append("✓ 浇道已添加")
-        if self.statusFlags["oriented"]: parts.append("✓ 方向已调整")
-        if self.statusFlags["adjusted"]: parts.append("✓ 表面已偏移")
+        if self.statusFlags["molded"]: parts.append(tr("statusMolded"))
+        if self.statusFlags["gated"]: parts.append(tr("statusGated"))
+        if self.statusFlags["oriented"]: parts.append(tr("statusOriented"))
+        if self.statusFlags["adjusted"]: parts.append(tr("statusAdjusted"))
         return " | ".join(parts)
 
     def getStylesheet(self):
