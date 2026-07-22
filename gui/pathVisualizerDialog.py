@@ -5,6 +5,7 @@ import numpy as np
 from pyvistaqt import QtInteractor
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QCheckBox
+from gui.languageManager import languageManager, tr
 
 
 stepTypeLabels = {
@@ -26,7 +27,7 @@ class PathVisualizationDialog(QDialog):
                  kinematicsConfig: dict = None, parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WA_DeleteOnClose)
-        self.setWindowTitle("CNC 刀轨可视化")
+        self.setWindowTitle(tr("dialogCncVisualization"))
         self.resize(1200, 800)
         self.targetMesh = targetMesh
         self.clData = clData
@@ -35,6 +36,8 @@ class PathVisualizationDialog(QDialog):
         self.collisionActor = None
         self.initUI()
         self.renderPaths()
+        languageManager.languageChanged.connect(self.retranslateUi)
+        self.retranslateUi()
 
     def closeEvent(self, event):
         self.plotter.close()
@@ -50,9 +53,10 @@ class PathVisualizationDialog(QDialog):
         controlLayout = QHBoxLayout()
 
         stepCount = len(self.clData.get("steps", []))
-        showAllBtn = QPushButton(f"显示全部({stepCount})")
-        showAllBtn.clicked.connect(self.showAllSteps)
-        controlLayout.addWidget(showAllBtn)
+        self.stepCount = stepCount
+        self.showAllBtn = QPushButton(tr("buttonShowAll", stepCount=stepCount))
+        self.showAllBtn.clicked.connect(self.showAllSteps)
+        controlLayout.addWidget(self.showAllBtn)
 
         self.stepButtons = []
         for stepIndex, stepData in enumerate(self.clData.get("steps", [])):
@@ -64,18 +68,24 @@ class PathVisualizationDialog(QDialog):
             controlLayout.addWidget(btn)
             self.stepButtons.append(btn)
 
-        self.showLinkCheck = QCheckBox("显示抬刀/连接")
+        self.showLinkCheck = QCheckBox(tr("checkShowLinks"))
         self.showLinkCheck.setChecked(True)
         self.showLinkCheck.toggled.connect(self.toggleLinkVisibility)
         controlLayout.addWidget(self.showLinkCheck)
 
-        self.collisionCheck = QCheckBox("显示碰撞路径")
+        self.collisionCheck = QCheckBox(tr("checkShowCollision"))
         self.collisionCheck.setChecked(False)
         self.collisionCheck.toggled.connect(self.toggleCollision)
         controlLayout.addWidget(self.collisionCheck)
 
         controlLayout.addStretch()
         mainLayout.addLayout(controlLayout)
+
+    def retranslateUi(self):
+        self.setWindowTitle(tr("dialogCncVisualization"))
+        self.showAllBtn.setText(tr("buttonShowAll", stepCount=self.stepCount))
+        self.showLinkCheck.setText(tr("checkShowLinks"))
+        self.collisionCheck.setText(tr("checkShowCollision"))
 
     def buildMeshPolyData(self) -> pv.PolyData:
         try:

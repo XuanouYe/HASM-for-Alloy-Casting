@@ -8,6 +8,7 @@ from PyQt5.QtWidgets import (
     QCheckBox, QSpinBox, QDoubleSpinBox, QComboBox, QLineEdit,
 )
 from controlConfig import parameterSchema, ConfigManager
+from gui.languageManager import languageManager, tr
 
 
 class ProcessParameterPanel(QWidget):
@@ -20,21 +21,27 @@ class ProcessParameterPanel(QWidget):
         self.changeCallbacks = []
         self.configFilePath = None
         self.configManager = ConfigManager()
+        self.formLabels = {}
+        self.stepLabels = {}
+        self.safeLabels = {}
+        self.axisLabels = []
         self.initUI()
         self.loadDefaultConfig()
+        languageManager.languageChanged.connect(self.retranslateUi)
+        self.retranslateUi()
 
     def initUI(self):
         mainLayout = QVBoxLayout()
         mainLayout.setSpacing(10)
         mainLayout.setContentsMargins(10, 10, 10, 10)
-        titleLabel = QLabel("工艺参数配置")
+        self.titleLabel = QLabel(tr("titleParameterConfig"))
         titleFont = QFont()
         titleFont.setPointSize(12)
         titleFont.setBold(True)
-        titleLabel.setFont(titleFont)
-        mainLayout.addWidget(titleLabel)
-        tabWidget = self.createParameterTabs()
-        mainLayout.addWidget(tabWidget)
+        self.titleLabel.setFont(titleFont)
+        mainLayout.addWidget(self.titleLabel)
+        self.tabWidget = self.createParameterTabs()
+        mainLayout.addWidget(self.tabWidget)
         self.setLayout(mainLayout)
         self.setStyleSheet(self.getStylesheet())
 
@@ -42,13 +49,13 @@ class ProcessParameterPanel(QWidget):
         tabWidget = QTabWidget()
 
         if "additive" in parameterSchema:
-            tabWidget.addTab(self.createAdditiveParametersTab(), "增材工艺")
+            tabWidget.addTab(self.createAdditiveParametersTab(), tr("tabAdditive"))
 
         if "casting" in parameterSchema:
-            tabWidget.addTab(self.createCastingParametersTab(), "铸造工艺")
+            tabWidget.addTab(self.createCastingParametersTab(), tr("tabCasting"))
 
         if "subtractive" in parameterSchema:
-            tabWidget.addTab(self.createSubtractiveParametersTab(), "减材加工")
+            tabWidget.addTab(self.createSubtractiveParametersTab(), tr("tabSubtractive"))
 
         return tabWidget
 
@@ -68,6 +75,7 @@ class ProcessParameterPanel(QWidget):
             control = self.createControlForParameter("additive", paramName, paramSpec)
             if control:
                 label = QLabel(f"{paramSpec.get('description', paramName)}:")
+                self.formLabels[f"additive.{paramName}"] = label
                 layout.addRow(label, control)
         axisLimitsGroup = self.createAxisLimitsGroup("additive")
         layout.addRow(QLabel(""), axisLimitsGroup)
@@ -91,6 +99,7 @@ class ProcessParameterPanel(QWidget):
             control = self.createControlForParameter("casting", paramName, paramSpec)
             if control:
                 label = QLabel(f"{paramSpec.get('description', paramName)}:")
+                self.formLabels[f"casting.{paramName}"] = label
                 layout.addRow(label, control)
         scrollArea.setWidget(contentWidget)
         mainLayout.addWidget(scrollArea)
@@ -126,6 +135,7 @@ class ProcessParameterPanel(QWidget):
             control = self.createControlForParameter("subtractive", paramName, paramSpec)
             if control:
                 label = QLabel(f"{paramSpec.get('description', paramName)}:")
+                self.formLabels[f"subtractive.{paramName}"] = label
                 layout.addRow(label, control)
         contentLayout.addWidget(paramForm)
         contentLayout.addStretch()
@@ -135,7 +145,7 @@ class ProcessParameterPanel(QWidget):
         return widget
 
     def createStepEnableGroup(self) -> QGroupBox:
-        groupBox = QGroupBox("加工步骤选择")
+        self.stepEnableGroup = QGroupBox(tr("groupStepSelection")); groupBox = self.stepEnableGroup
         groupLayout = QFormLayout()
         stepItems = [
             ("enableStep1ShellRemoval",  "Step 1  模壳去除"),
@@ -152,12 +162,14 @@ class ProcessParameterPanel(QWidget):
             checkBox.stateChanged.connect(self.onParameterChanged)
             controlKey = f"subtractive.{paramName}"
             self.parameterControls[controlKey] = checkBox
-            groupLayout.addRow(QLabel(f"{labelText}:"), checkBox)
+            label = QLabel(f"{labelText}:")
+            self.stepLabels[paramName] = label
+            groupLayout.addRow(label, checkBox)
         groupBox.setLayout(groupLayout)
         return groupBox
 
     def createSafeAndPerfGroup(self) -> QGroupBox:
-        groupBox = QGroupBox("性能与安全设置")
+        self.safeAndPerfGroup = QGroupBox(tr("groupPerformanceSafety")); groupBox = self.safeAndPerfGroup
         groupLayout = QFormLayout()
         safeItems = [
             ("sdfBackend",       "SDF后端选择"),
@@ -174,7 +186,9 @@ class ProcessParameterPanel(QWidget):
             paramSpec = subtractiveSchema.get(paramName, {})
             control = self.createControlForParameter("subtractive", paramName, paramSpec)
             if control:
-                groupLayout.addRow(QLabel(f"{labelText}:"), control)
+                label = QLabel(f"{labelText}:")
+                self.safeLabels[paramName] = label
+                groupLayout.addRow(label, control)
         groupBox.setLayout(groupLayout)
         return groupBox
 
@@ -237,7 +251,7 @@ class ProcessParameterPanel(QWidget):
         return control
 
     def createAxisLimitsGroup(self, section: str) -> QWidget:
-        groupBox = QGroupBox("Axis Limits")
+        self.axisLimitsGroup = QGroupBox(tr("groupAxisLimits")); groupBox = self.axisLimitsGroup
         groupLayout = QFormLayout()
 
         schema = parameterSchema.get(section, {}).get("axisLimits", {}).get("default", {})
@@ -266,15 +280,20 @@ class ProcessParameterPanel(QWidget):
                 maxSpinBox.setValue(float(defaultLimits[axis][1]))
 
             axisLayout = QHBoxLayout()
-            axisLayout.addWidget(QLabel("Min:"))
+            minLabel = QLabel(tr("labelMin"))
+            self.axisLabels.append((minLabel, "labelMin"))
+            axisLayout.addWidget(minLabel)
             axisLayout.addWidget(minSpinBox)
-            axisLayout.addWidget(QLabel("Max:"))
+            maxLabel = QLabel(tr("labelMax"))
+            self.axisLabels.append((maxLabel, "labelMax"))
+            axisLayout.addWidget(maxLabel)
             axisLayout.addWidget(maxSpinBox)
 
             axisContainer = QWidget()
             axisContainer.setLayout(axisLayout)
 
-            groupLayout.addRow(QLabel(f"{axis}:"), axisContainer)
+            axisLabel = QLabel(f"{axis}:")
+            groupLayout.addRow(axisLabel, axisContainer)
 
             minControlKey = f"{section}.axisLimits.{axis}.min"
             maxControlKey = f"{section}.axisLimits.{axis}.max"
@@ -286,6 +305,48 @@ class ProcessParameterPanel(QWidget):
 
         groupBox.setLayout(groupLayout)
         return groupBox
+
+    def translateParamName(self, section, paramName, paramSpec=None):
+        if languageManager.currentLanguage == "zh":
+            return (paramSpec or parameterSchema.get(section, {}).get(paramName, {})).get("description", paramName)
+        words = []
+        current = ""
+        for char in paramName:
+            if char.isupper() and current:
+                words.append(current)
+                current = char.lower()
+            else:
+                current += char
+        if current:
+            words.append(current)
+        return " ".join(words).title()
+
+    def retranslateUi(self):
+        self.titleLabel.setText(tr("titleParameterConfig"))
+        if self.tabWidget.count() >= 3:
+            self.tabWidget.setTabText(0, tr("tabAdditive"))
+            self.tabWidget.setTabText(1, tr("tabCasting"))
+            self.tabWidget.setTabText(2, tr("tabSubtractive"))
+        if hasattr(self, "stepEnableGroup"):
+            self.stepEnableGroup.setTitle(tr("groupStepSelection"))
+        if hasattr(self, "safeAndPerfGroup"):
+            self.safeAndPerfGroup.setTitle(tr("groupPerformanceSafety"))
+        if hasattr(self, "axisLimitsGroup"):
+            self.axisLimitsGroup.setTitle(tr("groupAxisLimits"))
+        for controlKey, label in self.formLabels.items():
+            section, paramName = controlKey.split(".", 1)
+            label.setText(f"{self.translateParamName(section, paramName)}:")
+        for paramName, label in self.stepLabels.items():
+            label.setText(f"{self.translateParamName("subtractive", paramName)}:")
+        for paramName, label in self.safeLabels.items():
+            label.setText(f"{self.translateParamName("subtractive", paramName)}:")
+        for controlKey, control in self.parameterControls.items():
+            section, paramName = controlKey.split(".", 1)
+            if ".axisLimits." in controlKey:
+                continue
+            control.setToolTip(self.translateParamName(section, paramName))
+        for label, key in self.axisLabels:
+            label.setText(tr(key))
 
     def onParameterChanged(self) -> None:
         self.updateCurrentConfig()

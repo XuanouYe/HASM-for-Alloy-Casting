@@ -8,6 +8,7 @@ from PyQt5.QtWidgets import (
 from gui.modelViewer import ModelViewerWidget
 from gui.moldProcessPanel import MoldProcessPanel
 from gui.parameterPanel import ProcessParameterPanel
+from gui.languageManager import languageManager, tr
 
 
 class MainWindow(QMainWindow):
@@ -25,7 +26,7 @@ class MainWindow(QMainWindow):
     def __init__(self, moldProcessPanel: MoldProcessPanel, parameterPanel: ProcessParameterPanel,
                  dualModelViewer: ModelViewerWidget):
         super().__init__()
-        self.setWindowTitle("增减材复合制造系统控制平台")
+        self.setWindowTitle(tr("appTitle"))
         self.setGeometry(100, 100, 1600, 900)
 
         self.moldProcessPanel = moldProcessPanel
@@ -35,6 +36,8 @@ class MainWindow(QMainWindow):
         self.initUI()
         self.initMenuBar()
         self.initStatusBar()
+        languageManager.languageChanged.connect(self.retranslateUi)
+        self.retranslateUi()
 
     def initUI(self):
         centralWidget = QWidget()
@@ -50,7 +53,7 @@ class MainWindow(QMainWindow):
 
         self.toggleRightPanelButton = QToolButton()
         self.toggleRightPanelButton.setText("◀")
-        self.toggleRightPanelButton.setToolTip("折叠/展开右侧面板")
+        self.toggleRightPanelButton.setToolTip(tr("tooltipTogglePanel"))
         self.toggleRightPanelButton.clicked.connect(self.onToggleRightPanel)
         toolbarLayout = QHBoxLayout()
         toolbarLayout.addWidget(self.toggleRightPanelButton)
@@ -65,10 +68,10 @@ class MainWindow(QMainWindow):
         scrollContentLayout = QVBoxLayout()
         scrollContentLayout.setContentsMargins(4, 4, 4, 4)
 
-        tabWidget = QTabWidget()
-        tabWidget.addTab(self.moldProcessPanel, "模具生成")
-        tabWidget.addTab(self.parameterPanel, "工艺参数")
-        scrollContentLayout.addWidget(tabWidget)
+        self.tabWidget = QTabWidget()
+        self.tabWidget.addTab(self.moldProcessPanel, tr("tabMoldProcess"))
+        self.tabWidget.addTab(self.parameterPanel, tr("tabProcessParameters"))
+        scrollContentLayout.addWidget(self.tabWidget)
 
         self.rightScrollContent.setLayout(scrollContentLayout)
         self.rightScrollArea.setWidget(self.rightScrollContent)
@@ -79,13 +82,13 @@ class MainWindow(QMainWindow):
         bottomLayout.setContentsMargins(4, 4, 4, 4)
         bottomLayout.setSpacing(6)
 
-        self.unifiedConfigGroup = QGroupBox("配置文件")
+        self.unifiedConfigGroup = QGroupBox(tr("groupConfigFile"))
         unifiedConfigLayout = QHBoxLayout()
-        self.loadUnifiedConfigButton = QPushButton("加载配置")
+        self.loadUnifiedConfigButton = QPushButton(tr("buttonLoadConfig"))
         self.loadUnifiedConfigButton.clicked.connect(self.onLoadConfigClicked)
-        self.saveUnifiedConfigButton = QPushButton("保存配置")
+        self.saveUnifiedConfigButton = QPushButton(tr("buttonSaveConfig"))
         self.saveUnifiedConfigButton.clicked.connect(self.onSaveConfigClicked)
-        self.resetUnifiedConfigButton = QPushButton("重置为默认")
+        self.resetUnifiedConfigButton = QPushButton(tr("buttonResetDefault"))
         self.resetUnifiedConfigButton.clicked.connect(self.onResetConfigClicked)
         unifiedConfigLayout.addWidget(self.loadUnifiedConfigButton)
         unifiedConfigLayout.addWidget(self.saveUnifiedConfigButton)
@@ -94,18 +97,18 @@ class MainWindow(QMainWindow):
         self.unifiedConfigGroup.setLayout(unifiedConfigLayout)
         bottomLayout.addWidget(self.unifiedConfigGroup)
 
-        gcodeGroup = QGroupBox("制造文件")
+        self.gcodeGroup = QGroupBox(tr("groupManufacturingFile"))
         gcodeLayout = QVBoxLayout()
-        self.generateGcodeButton = QPushButton("生成FDM G代码")
+        self.generateGcodeButton = QPushButton(tr("buttonGenerateFdmGcode"))
         self.generateGcodeButton.setEnabled(False)
         self.generateGcodeButton.clicked.connect(self.onGenerateGcodeClicked)
         gcodeLayout.addWidget(self.generateGcodeButton)
-        self.generateCncButton = QPushButton("生成CNC G代码")
+        self.generateCncButton = QPushButton(tr("buttonGenerateCncGcode"))
         self.generateCncButton.setEnabled(False)
         self.generateCncButton.clicked.connect(self.onGenerateCncClicked)
         gcodeLayout.addWidget(self.generateCncButton)
-        gcodeGroup.setLayout(gcodeLayout)
-        bottomLayout.addWidget(gcodeGroup)
+        self.gcodeGroup.setLayout(gcodeLayout)
+        bottomLayout.addWidget(self.gcodeGroup)
 
         rightLayout.addWidget(bottomPanel)
 
@@ -123,35 +126,43 @@ class MainWindow(QMainWindow):
 
     def initMenuBar(self):
         menuBar = self.menuBar()
-        fileMenu = menuBar.addMenu("文件(&F)")
+        self.fileMenu = menuBar.addMenu(tr("menuFile"))
 
-        newAction = QAction("新建项目", self)
-        newAction.setShortcut("Ctrl+N")
-        newAction.triggered.connect(self.intentNewProject.emit)
-        fileMenu.addAction(newAction)
+        self.newAction = QAction(tr("actionNewProject"), self)
+        self.newAction.setShortcut("Ctrl+N")
+        self.newAction.triggered.connect(self.intentNewProject.emit)
+        self.fileMenu.addAction(self.newAction)
 
-        saveAction = QAction("保存项目", self)
-        saveAction.setShortcut("Ctrl+S")
-        saveAction.triggered.connect(self.intentSaveProject.emit)
-        fileMenu.addAction(saveAction)
+        self.saveAction = QAction(tr("actionSaveProject"), self)
+        self.saveAction.setShortcut("Ctrl+S")
+        self.saveAction.triggered.connect(self.intentSaveProject.emit)
+        self.fileMenu.addAction(self.saveAction)
 
-        loadManifestAction = QAction("加载制造清单(Manifest)", self)
-        loadManifestAction.triggered.connect(self.onLoadManifestClicked)
-        fileMenu.addAction(loadManifestAction)
+        self.loadManifestAction = QAction(tr("actionLoadManifest"), self)
+        self.loadManifestAction.triggered.connect(self.onLoadManifestClicked)
+        self.fileMenu.addAction(self.loadManifestAction)
 
-        fileMenu.addSeparator()
-        exitAction = QAction("退出", self)
-        exitAction.setShortcut("Alt+F4")
-        exitAction.triggered.connect(self.close)
-        fileMenu.addAction(exitAction)
+        self.fileMenu.addSeparator()
+        self.exitAction = QAction(tr("actionExit"), self)
+        self.exitAction.setShortcut("Alt+F4")
+        self.exitAction.triggered.connect(self.close)
+        self.fileMenu.addAction(self.exitAction)
 
-        viewMenu = menuBar.addMenu("视图(&V)")
-        resetViewAction = QAction("重置视角", self)
-        resetViewAction.triggered.connect(self.dualModelViewer.resetView)
-        viewMenu.addAction(resetViewAction)
+        self.viewMenu = menuBar.addMenu(tr("menuView"))
+        self.resetViewAction = QAction(tr("actionResetView"), self)
+        self.resetViewAction.triggered.connect(self.dualModelViewer.resetView)
+        self.viewMenu.addAction(self.resetViewAction)
+
+        self.languageMenu = menuBar.addMenu(tr("menuLanguage"))
+        self.chineseAction = QAction(tr("menuChinese"), self, checkable=True)
+        self.englishAction = QAction(tr("menuEnglish"), self, checkable=True)
+        self.chineseAction.triggered.connect(lambda: languageManager.setLanguage("zh"))
+        self.englishAction.triggered.connect(lambda: languageManager.setLanguage("en"))
+        self.languageMenu.addAction(self.chineseAction)
+        self.languageMenu.addAction(self.englishAction)
 
     def initStatusBar(self):
-        self.statusLabel = QLabel("就绪")
+        self.statusLabel = QLabel(tr("statusReady"))
         self.statusBar().addWidget(self.statusLabel, 1)
 
         self.progressBar = QProgressBar()
@@ -163,37 +174,62 @@ class MainWindow(QMainWindow):
         self.timerLabel.setMinimumWidth(80)
         self.statusBar().addPermanentWidget(self.timerLabel)
 
+    def retranslateUi(self):
+        self.setWindowTitle(tr("appTitle"))
+        self.toggleRightPanelButton.setToolTip(tr("tooltipTogglePanel"))
+        self.tabWidget.setTabText(0, tr("tabMoldProcess"))
+        self.tabWidget.setTabText(1, tr("tabProcessParameters"))
+        self.unifiedConfigGroup.setTitle(tr("groupConfigFile"))
+        self.loadUnifiedConfigButton.setText(tr("buttonLoadConfig"))
+        self.saveUnifiedConfigButton.setText(tr("buttonSaveConfig"))
+        self.resetUnifiedConfigButton.setText(tr("buttonResetDefault"))
+        self.gcodeGroup.setTitle(tr("groupManufacturingFile"))
+        self.generateGcodeButton.setText(tr("buttonGenerateFdmGcode"))
+        self.generateCncButton.setText(tr("buttonGenerateCncGcode"))
+        self.fileMenu.setTitle(tr("menuFile"))
+        self.viewMenu.setTitle(tr("menuView"))
+        self.languageMenu.setTitle(tr("menuLanguage"))
+        self.newAction.setText(tr("actionNewProject"))
+        self.saveAction.setText(tr("actionSaveProject"))
+        self.loadManifestAction.setText(tr("actionLoadManifest"))
+        self.exitAction.setText(tr("actionExit"))
+        self.resetViewAction.setText(tr("actionResetView"))
+        self.chineseAction.setText(tr("menuChinese"))
+        self.englishAction.setText(tr("menuEnglish"))
+        self.chineseAction.setChecked(languageManager.currentLanguage == "zh")
+        self.englishAction.setChecked(languageManager.currentLanguage == "en")
+
     def onLoadManifestClicked(self):
-        filePath, _ = QFileDialog.getOpenFileName(self, "加载制造清单", "", "Manifest Files (*.json);;All Files (*)")
+        filePath, _ = QFileDialog.getOpenFileName(self, tr("dialogLoadManifest"), "", "Manifest Files (*.json);;All Files (*)")
         if filePath:
             self.intentLoadManifest.emit(filePath)
 
     def onLoadConfigClicked(self):
-        filePath, _ = QFileDialog.getOpenFileName(self, "加载配置", "", "JSON Files (*.json);;All Files (*)")
+        filePath, _ = QFileDialog.getOpenFileName(self, tr("dialogLoadConfig"), "", "JSON Files (*.json);;All Files (*)")
         if filePath:
             self.intentLoadConfig.emit(filePath)
 
     def onSaveConfigClicked(self):
-        filePath, _ = QFileDialog.getSaveFileName(self, "保存配置", "", "JSON Files (*.json);;All Files (*)")
+        filePath, _ = QFileDialog.getSaveFileName(self, tr("dialogSaveConfig"), "", "JSON Files (*.json);;All Files (*)")
         if filePath:
             self.intentSaveConfig.emit(filePath)
 
     def onResetConfigClicked(self):
-        reply = QMessageBox.question(self, "重置为默认", "确定要重置为默认配置吗?", QMessageBox.Yes | QMessageBox.No,
+        reply = QMessageBox.question(self, tr("buttonResetDefault"), tr("confirmResetConfig"), QMessageBox.Yes | QMessageBox.No,
                                      QMessageBox.No)
         if reply == QMessageBox.Yes:
             self.intentResetConfig.emit()
 
     def onGenerateGcodeClicked(self):
-        outputPath, _ = QFileDialog.getSaveFileName(self, "保存G代码", "", "G-code Files (*.gcode);;All Files (*)")
+        outputPath, _ = QFileDialog.getSaveFileName(self, tr("dialogSaveGcode"), "", "G-code Files (*.gcode);;All Files (*)")
         if outputPath:
             self.generateGcodeButton.setEnabled(False)  # 锁按钮防连点
             self.intentGenerateGcode.emit(outputPath)
 
     def onGenerateCncClicked(self):
-        outputPath, _ = QFileDialog.getSaveFileName(self, "保存CNC G代码", "", "G-code Files (*.gcode);;All Files (*)")
+        outputPath, _ = QFileDialog.getSaveFileName(self, tr("dialogSaveCncGcode"), "", "G-code Files (*.gcode);;All Files (*)")
         if outputPath:
-            reply = QMessageBox.question(self, "可视化", "是否在生成后启动VTK可视化窗口检查刀路？", QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+            reply = QMessageBox.question(self, tr("dialogVisualization"), tr("confirmCncVisualization"), QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
             self.generateCncButton.setEnabled(False)
             self.intentGenerateCnc.emit(outputPath, reply == QMessageBox.Yes)
 
